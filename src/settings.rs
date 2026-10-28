@@ -19,11 +19,17 @@ pub struct Settings {
     pub sound: bool,
     /// Keep a history of copied text.
     pub clipboard: bool,
+    /// Slide the island out of view when idle; hovering the top edge brings it back.
+    pub hide_island: bool,
+    /// Show the Water tab and send water reminders. Off until the user turns it on.
+    pub water: bool,
+    /// Show the Timer tab. Off until the user turns it on.
+    pub timer: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { hide_fullscreen: true, show_clock: true, clock_24h: false, idle_eyes: true, sound: true, clipboard: true }
+        Self { hide_fullscreen: true, show_clock: true, clock_24h: false, idle_eyes: true, sound: true, clipboard: true, hide_island: false, water: false, timer: false }
     }
 }
 
@@ -43,6 +49,9 @@ impl Settings {
         out.idle_eyes = get("idle_eyes", out.idle_eyes);
         out.sound = get("sound", out.sound);
         out.clipboard = get("clipboard", out.clipboard);
+        out.hide_island = get("hide_island", out.hide_island);
+        out.water = get("water", out.water);
+        out.timer = get("timer", out.timer);
         out
     }
 
@@ -64,6 +73,9 @@ impl Settings {
                 "idle_eyes": self.idle_eyes,
                 "sound": self.sound,
                 "clipboard": self.clipboard,
+                "hide_island": self.hide_island,
+                "water": self.water,
+                "timer": self.timer,
             });
             let _ = fs::write(p, body.to_string());
         }

@@ -11,24 +11,20 @@ const RATE: u32 = 44_100;
 
 #[derive(Clone, Copy)]
 pub enum Chime {
-    /// A focus session finished: two notes going up.
-    FocusDone,
-    /// A break finished: two notes going down.
-    BreakOver,
+    /// The timer ran out: two notes going up.
+    TimerDone,
     /// A water or to-do reminder: one soft note.
     Reminder,
 }
 
 /// Play a chime without blocking. Does nothing if it can't be played.
 pub fn play(chime: Chime) {
-    static FOCUS_DONE: OnceLock<Vec<u8>> = OnceLock::new();
-    static BREAK_OVER: OnceLock<Vec<u8>> = OnceLock::new();
+    static TIMER_DONE: OnceLock<Vec<u8>> = OnceLock::new();
     static REMINDER: OnceLock<Vec<u8>> = OnceLock::new();
 
     // E5 and B5 for the pair, G5 for the reminder. Each is (frequency Hz, start s, length s).
     let wav = match chime {
-        Chime::FocusDone => FOCUS_DONE.get_or_init(|| wav(&[(659.3, 0.0, 0.9), (987.8, 0.16, 1.0)], 1.3)),
-        Chime::BreakOver => BREAK_OVER.get_or_init(|| wav(&[(987.8, 0.0, 0.7), (659.3, 0.16, 0.9)], 1.2)),
+        Chime::TimerDone => TIMER_DONE.get_or_init(|| wav(&[(659.3, 0.0, 0.9), (987.8, 0.16, 1.0)], 1.3)),
         Chime::Reminder => REMINDER.get_or_init(|| wav(&[(784.0, 0.0, 0.9)], 1.0)),
     };
     // The buffer lives in a static, so it stays valid while the sound plays in the background.

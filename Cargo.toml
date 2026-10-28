@@ -1,8 +1,8 @@
 [package]
 name = "sky-island"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
-description = "A notch for the top of your Windows screen: music, lyrics, focus timer, water reminders, file shelf and system notices."
+description = "A notch for the top of your Windows screen: music, lyrics, timer, water reminders, file shelf and system notices."
 license = "MIT"
 publish = false
 repository = "https://github.com/Dannyz15/Sky-Island"

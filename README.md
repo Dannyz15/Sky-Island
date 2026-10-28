@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A notch for the top of your Windows screen.</b><br>
-  Music, lyrics, a focus timer, water reminders, a file shelf, a to-do list and a clipboard history, all tucked into one small pill.
+  Music, lyrics, an optional timer you set yourself, an optional water tracker, a file shelf, a to-do list, a calendar and a clipboard history, all tucked into one small pill.
 </p>
 
 <p align="center">
@@ -34,12 +34,13 @@ It is written in Rust, runs natively on Windows 10 and 11, and keeps all of your
 | | Tab | What you get |
 |---|---|---|
 | 🎵 | **Music** | What is playing in Spotify, a browser or any player that reports to Windows. Play, pause, next, previous, album art and a progress bar. Click the album art for synced lyrics. |
-| 🎯 | **Focus** | A focus timer with short and long breaks, adjustable lengths, a progress ring and a count of today's sessions. |
-| 💧 | **Water** | A daily glass counter with a goal and gentle reminders. |
+| ⏱️ | **Timer** | An optional countdown timer you set to the exact second, from 1 second to 24 hours, with quick choices and a progress ring. It is off until you turn it on in Settings. |
+| 💧 | **Water** | An optional daily glass counter with a goal and gentle reminders. It is off until you turn it on in Settings. |
 | 📂 | **Shelf** | A place to park files. Drag them onto the notch, and drag them out again later. |
-| ✅ | **To-do** | A short task list with optional reminders. |
+| ✅ | **To-do** | A task list with reminders at the day and time you choose, and tasks you can edit. |
+| 📅 | **Calendar** | A month view where each day shows its own tasks. |
 | 📋 | **Clipboard** | A history of what you copy, both text and pictures such as screenshots. Click an item to copy it again, or clear everything with one button. |
-| ⚙️ | **Settings** | Start with Windows, hide in fullscreen apps, clock style, idle eyes, sounds, clipboard history, and Quit. |
+| ⚙️ | **Settings** | Start with Windows, hide in fullscreen apps, clock style, idle eyes, sounds, clipboard history, auto-hide, the water tracker, the timer, and Quit. |
 
 ### It is alive even when closed
 
@@ -66,13 +67,19 @@ Hover over the notch to open it. The tab bar at the top switches between the vie
 
 **🎵 Music.** Click the album art to open the lyrics, and click the small album art at the top left of the lyrics to go back. Click any lyric line to jump to that point in the song. Lyrics come from [LRCLIB](https://lrclib.net).
 
-**🎯 Focus.** Choose Focus, Short or Long. While the timer is stopped, use the minus and plus buttons to change its length, then press start. Four focus sessions lead to a long break. The countdown shows in the closed notch, and when a phase ends the notch opens and plays a short chime. Under the title you can see how many sessions you finished today and for how long. The defaults are 25, 5 and 15 minutes. You can turn the chimes off with **Sounds** in Settings.
+**⏱️ Timer.** Switch on **Timer** in Settings and a Timer tab appears. Set the length exactly as you like. Each plus or minus button above and below the hours, minutes and seconds changes that number by exactly one, so you can set the timer a second at a time (the mouse wheel over a number works too). Or click a number and type it: type 25, press Tab or a colon to move on, type 37, then press Enter, and the timer is 25:37. The Up and Down arrow keys change the number by one while you type, and Esc cancels. There are also quick choices: 5, 10, 15, 30 minutes or 1 hour. Press start to begin, press it again to pause and carry on later, and use **Reset** to stop and go back to the full length. The ring empties as the time runs down. The countdown also shows in the closed notch, and when time is up the notch opens and plays a short chime. The length you set is remembered. You can turn the chimes off with **Sounds** in Settings.
 
-**💧 Water.** Press the big plus button each time you drink a glass. Set your daily goal with the minus and plus buttons (1 to 20 glasses, 8 by default). Choose a reminder every 30 minutes, 1 hour or 2 hours, or turn reminders off. Reminders stop once you reach your goal, and the count starts again every day.
+**💧 Water.** Switch on **Water tracker** in Settings and a Water tab appears. Press the big plus button each time you drink a glass. Set your daily goal with the minus and plus buttons (1 to 20 glasses, 8 by default). Choose a reminder every 30 minutes, 1 hour or 2 hours, or turn reminders off. Reminders stop once you reach your goal, and the count starts again every day.
 
 **📂 Shelf.** Drag files from Explorer onto the notch. Click a tile to open the file, or press and drag it into another app. The `×` on a tile removes it from the shelf only, and never deletes the file. The shelf holds up to 50 files, and the mouse wheel scrolls through them.
 
-**✅ To-do.** Click the box at the top and type a task. Press Enter to add it, or Esc to cancel. If you like, choose a reminder of 15 minutes, 1 hour, 3 hours or 1 day. Tick a task to finish it, and use `×` to delete it.
+**✅ To-do.** Click the box at the top and type a task. Press Enter to add it, or Esc to cancel. Tick a task to finish it, and use `×` to delete it. Click a task, or its pencil, to change it later.
+
+The task editor lets you pick a **day** (use the arrows, or None, Today and Tomorrow) and switch on a **reminder** for an exact time. Set the hour and minute with the plus and minus buttons or with the mouse wheel, or use the quick choices: in 15 minutes, 1 hour, 3 hours, or tomorrow at 9:00. When the time comes, the notch opens with a chime. The clock follows your **24-hour clock** setting.
+
+**📅 Calendar.** The month is on the left and today is marked in amber. Click a day to see its tasks on the right, and use the arrows to change month. Click the month name to jump back to today. Press **+ Add task** to add a task to the day you picked, and tick or delete tasks the same way as in the To-do tab. A dot under a date means it has tasks. The same tasks also show in the To-do tab, with their date at the right.
+
+**🙈 Auto-hide.** Turn on **Auto-hide island** in Settings and the notch slides up out of view whenever you are not using it, leaving only a thin edge at the top of the screen. Move the mouse to where it was and it slides back down. It also comes down by itself for timers, reminders and system notices. You can switch auto-hide on or off from the tray icon menu too.
 
 **📋 Clipboard.** Everything you copy is added to the top of the list, newest first. Text shows as one line, and a picture, such as a screenshot, shows as a small preview with its size. Click an item to put it back on the clipboard, and use the `×` to remove one item. The **Clear** button empties the list and the Windows clipboard itself. The list keeps the last 30 items and the mouse wheel scrolls through them.
 
@@ -83,10 +90,9 @@ Everything stays on your computer, in `%APPDATA%\Sky-Island`:
 | File | What it holds |
 |---|---|
 | `settings.json` | Your settings |
-| `focus.json` | The focus, short break and long break lengths |
-| `focus_stats.json` | Today's finished focus sessions and focused time |
+| `timer.json` | The timer length you last set |
 | `water.json` | Today's count, your goal and your reminder choice |
-| `todo.json` | Your tasks |
+| `todo.json` | Your tasks, with their calendar day |
 | `shelf.json` | The paths of the files on the shelf (the files themselves are never copied) |
 | `lyrics\` | Lyrics you have already looked up |
 | `crash.log` | Only written if the app crashes, with the error message |

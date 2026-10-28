@@ -74,6 +74,11 @@ impl Water {
         self.next = INTERVALS[self.interval].map(|m| now + Duration::from_secs(m as u64 * 60));
     }
 
+    /// Count the reminder interval from now, for when the tracker is switched on again.
+    pub fn restart(&mut self, now: Instant) {
+        self.reschedule(now);
+    }
+
     /// Start a new day's count when the date has changed.
     pub fn roll(&mut self, today: u32) {
         if today != self.day {
