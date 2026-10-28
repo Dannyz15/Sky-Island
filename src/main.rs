@@ -109,8 +109,8 @@ const TAB_GAP: f32 = 4.0;
 // Ring and controls shared by the timer and water views, in logical pixels.
 const RING: (f32, f32, f32) = (104.0, 100.0, 48.0); // center x, center y, radius
 const RING_W: f32 = 7.0;
-const FOCUS_CTRL_Y: f32 = 136.0;
-const FOCUS_X: [f32; 3] = [232.0, 293.0, 354.0]; // left, center, right controls (used by the water view)
+const WATER_CTRL_Y: f32 = 136.0;
+const WATER_X: [f32; 3] = [232.0, 293.0, 354.0]; // left, center, right controls (used by the water view)
 // Timer view: preset chips on top, plus / minus buttons above and below the hours, minutes and
 // seconds, then start / pause and reset side by side.
 const TIMER_COLS: [f32; 3] = [237.0, 293.0, 349.0];
@@ -762,7 +762,7 @@ impl App {
             }
             View::Water => {
                 let now = Instant::now();
-                let in_label = |x: f32| (cx - x).abs() <= 26.0 && (cy - FOCUS_CTRL_Y).abs() <= 14.0;
+                let in_label = |x: f32| (cx - x).abs() <= 26.0 && (cy - WATER_CTRL_Y).abs() <= 14.0;
                 let chip = (0..water::INTERVALS.len()).find(|&i| {
                     let r = water_chip_rect(i);
                     cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3
@@ -773,11 +773,11 @@ impl App {
                 } else if let Some(i) = adjust {
                     // Minus is index 0, plus is index 1.
                     self.water.adjust_goal(if i == 0 { -1 } else { 1 });
-                } else if (cx - FOCUS_X[1]).hypot(cy - FOCUS_CTRL_Y) <= 18.0 {
+                } else if (cx - WATER_X[1]).hypot(cy - WATER_CTRL_Y) <= 18.0 {
                     self.water.add(now);
-                } else if in_label(FOCUS_X[0]) {
+                } else if in_label(WATER_X[0]) {
                     self.water.undo();
-                } else if in_label(FOCUS_X[2]) {
+                } else if in_label(WATER_X[2]) {
                     self.water.reset();
                 } else {
                     return;
@@ -1328,7 +1328,7 @@ impl App {
         draw_text_centered(pm, font, "glasses", rx * s, (ry + 24.0) * s, 10.0 * s, [215, 225, 240, a], (rr * 2.0 - 8.0) * s);
 
         // Right: title with goal adjusters, and status.
-        let cx = FOCUS_X[1] * s;
+        let cx = WATER_X[1] * s;
         draw_text_centered(pm, heading, "Water", cx, 76.0 * s, 18.0 * s, white, 190.0 * s);
         for (i, (x, y)) in ADJUST.iter().enumerate() {
             let hot = self.hot((x - ADJUST_R, y - ADJUST_R, ADJUST_R * 2.0, ADJUST_R * 2.0), s);
@@ -1358,19 +1358,19 @@ impl App {
         }
 
         // Undo and Reset, and the big add button.
-        for (x, label) in [(FOCUS_X[0], "Undo"), (FOCUS_X[2], "Reset")] {
-            let r = (x - 26.0, FOCUS_CTRL_Y - 11.0, 52.0, 22.0);
+        for (x, label) in [(WATER_X[0], "Undo"), (WATER_X[2], "Reset")] {
+            let r = (x - 26.0, WATER_CTRL_Y - 11.0, 52.0, 22.0);
             let hot = self.hot(r, s);
             if hot {
                 fill_rounded(pm, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 11.0 * s, [255, 255, 255, (alpha * 18.0) as u8]);
             }
-            draw_text_centered(pm, font, label, x * s, (FOCUS_CTRL_Y + 4.0) * s, 12.0 * s, if hot { white } else { grey }, 60.0 * s);
+            draw_text_centered(pm, font, label, x * s, (WATER_CTRL_Y + 4.0) * s, 12.0 * s, if hot { white } else { grey }, 60.0 * s);
         }
-        let big = self.hot((FOCUS_X[1] - 20.0, FOCUS_CTRL_Y - 20.0, 40.0, 40.0), s);
-        draw_big_button(pm, cx, FOCUS_CTRL_Y * s, 18.0 * s, big, rgb, alpha);
+        let big = self.hot((WATER_X[1] - 20.0, WATER_CTRL_Y - 20.0, 40.0, 40.0), s);
+        draw_big_button(pm, cx, WATER_CTRL_Y * s, 18.0 * s, big, rgb, alpha);
         let black = [0, 0, 0, a];
-        fill_rect(pm, cx - 7.0 * s, (FOCUS_CTRL_Y - 1.25) * s, 14.0 * s, 2.5 * s, black);
-        fill_rect(pm, cx - 1.25 * s, (FOCUS_CTRL_Y - 7.0) * s, 2.5 * s, 14.0 * s, black);
+        fill_rect(pm, cx - 7.0 * s, (WATER_CTRL_Y - 1.25) * s, 14.0 * s, 2.5 * s, black);
+        fill_rect(pm, cx - 1.25 * s, (WATER_CTRL_Y - 7.0) * s, 2.5 * s, 14.0 * s, black);
     }
 
     fn draw_shelf(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
@@ -2523,7 +2523,7 @@ fn preset_label(secs: u64) -> String {
 fn water_chip_rect(i: usize) -> (f32, f32, f32, f32) {
     let n = water::INTERVALS.len() as f32;
     let total = n * WATER_CHIP_W + (n - 1.0) * CHIP_GAP;
-    (FOCUS_X[1] - total / 2.0 + i as f32 * (WATER_CHIP_W + CHIP_GAP), 34.0, WATER_CHIP_W, 18.0)
+    (WATER_X[1] - total / 2.0 + i as f32 * (WATER_CHIP_W + CHIP_GAP), 34.0, WATER_CHIP_W, 18.0)
 }
 
 /// Today's local date as yyyymmdd.

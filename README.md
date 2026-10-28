@@ -33,7 +33,7 @@ It is written in Rust, runs natively on Windows 10 and 11, and keeps all of your
 
 | | Tab | What you get |
 |---|---|---|
-| 🎵 | **Music** | What is playing in Spotify, a browser or any player that reports to Windows. Play, pause, next, previous, album art and a progress bar. Click the album art for synced lyrics. |
+| 🎵 | **Music** | What is playing in Spotify, a browser or any player that reports to Windows. Play, pause, next, previous, album art and a progress bar you can drag to jump in the song. Click the album art for synced lyrics. |
 | ⏱️ | **Timer** | An optional countdown timer you set to the exact second, from 1 second to 24 hours, with quick choices and a progress ring. It is off until you turn it on in Settings. |
 | 💧 | **Water** | An optional daily glass counter with a goal and gentle reminders. It is off until you turn it on in Settings. |
 | 📂 | **Shelf** | A place to park files. Drag them onto the notch, and drag them out again later. |
@@ -65,7 +65,7 @@ It is written in Rust, runs natively on Windows 10 and 11, and keeps all of your
 
 Hover over the notch to open it. The tab bar at the top switches between the views.
 
-**🎵 Music.** Click the album art to open the lyrics, and click the small album art at the top left of the lyrics to go back. Click any lyric line to jump to that point in the song. Lyrics come from [LRCLIB](https://lrclib.net).
+**🎵 Music.** Press on the progress bar and drag to jump to any point in the song, or just click where you want to be. Click the album art to open the lyrics, and click the small album art at the top left of the lyrics to go back. Click any lyric line to jump to that point in the song. Lyrics come from [LRCLIB](https://lrclib.net).
 
 **⏱️ Timer.** Switch on **Timer** in Settings and a Timer tab appears. Set the length exactly as you like. Each plus or minus button above and below the hours, minutes and seconds changes that number by exactly one, so you can set the timer a second at a time (the mouse wheel over a number works too). Or click a number and type it: type 25, press Tab or a colon to move on, type 37, then press Enter, and the timer is 25:37. The Up and Down arrow keys change the number by one while you type, and Esc cancels. There are also quick choices: 5, 10, 15, 30 minutes or 1 hour. Press start to begin, press it again to pause and carry on later, and use **Reset** to stop and go back to the full length. The ring empties as the time runs down. The countdown also shows in the closed notch, and when time is up the notch opens and plays a short chime. The length you set is remembered. You can turn the chimes off with **Sounds** in Settings.
 
