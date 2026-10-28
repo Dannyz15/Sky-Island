@@ -7,6 +7,7 @@ use tiny_skia::{
 };
 
 fn color(c: [u8; 4]) -> Color {
+    let c = crate::theme::map(c);
     Color::from_rgba8(c[0], c[1], c[2], c[3])
 }
 
@@ -62,6 +63,7 @@ pub fn gradient_circle(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, from: [u8; 4],
 pub fn stroke_rounded(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, width: f32, c: [u8; 4]) {
     let Some(path) = rounded_path(x, y, w, h, r) else { return };
     let mut paint = Paint::default();
+    let c = crate::theme::map(c);
     paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
     paint.anti_alias = true;
     let stroke = Stroke { width, ..Default::default() };

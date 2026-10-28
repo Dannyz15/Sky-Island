@@ -2,7 +2,8 @@
 //! sound files. They replace the harsh system beep.
 
 use std::f32::consts::TAU;
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
 use windows::core::PCWSTR;
@@ -17,15 +18,26 @@ pub enum Chime {
     Reminder,
 }
 
-/// Play a chime without blocking. Does nothing if it can't be played.
-pub fn play(chime: Chime) {
-    static TIMER_DONE: OnceLock<Vec<u8>> = OnceLock::new();
-    static REMINDER: OnceLock<Vec<u8>> = OnceLock::new();
-
-    // E5 and B5 for the pair, G5 for the reminder. Each is (frequency Hz, start s, length s).
-    let wav = match chime {
-        Chime::TimerDone => TIMER_DONE.get_or_init(|| wav(&[(659.3, 0.0, 0.9), (987.8, 0.16, 1.0)], 1.3)),
-        Chime::Reminder => REMINDER.get_or_init(|| wav(&[(784.0, 0.0, 0.9)], 1.0)),
+/// Play a chime without blocking, at `volume` percent. Does nothing if it can't be played.
+pub fn play(chime: Chime, volume: u32) {
+    // Each chime is made once per volume and kept for good, because it must stay valid while it plays
+    // in the background. The volume moves in steps of 10, so there are at most twenty of them.
+    type Cache = HashMap<(u8, u32), &'static [u8]>;
+    static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+    let volume = volume.clamp(10, 100) / 10 * 10;
+    let key = (chime as u8, volume);
+    #[allow(clippy::explicit_auto_deref)]
+    let wav: &'static [u8] = {
+        let Ok(mut cache) = CACHE.lock() else { return };
+        let map = cache.get_or_insert_with(HashMap::new);
+        *map.entry(key).or_insert_with(|| {
+            // E5 and B5 for the pair, G5 for the reminder. Each is (frequency Hz, start s, length s).
+            let data = match chime {
+                Chime::TimerDone => wav(&[(659.3, 0.0, 0.9), (987.8, 0.16, 1.0)], 1.3, volume as f32 / 100.0),
+                Chime::Reminder => wav(&[(784.0, 0.0, 0.9)], 1.0, volume as f32 / 100.0),
+            };
+            Box::leak(data.into_boxed_slice())
+        })
     };
     // The buffer lives in a static, so it stays valid while the sound plays in the background.
     unsafe {
@@ -34,7 +46,8 @@ pub fn play(chime: Chime) {
 }
 
 /// A 16-bit mono WAV file of bell-like notes: a sine with two quieter overtones that fades out.
-fn wav(notes: &[(f32, f32, f32)], total: f32) -> Vec<u8> {
+/// `loudness` is 1.0 for the normal level.
+fn wav(notes: &[(f32, f32, f32)], total: f32, loudness: f32) -> Vec<u8> {
     let count = (total * RATE as f32) as usize;
     let mut samples = vec![0f32; count];
     for &(hz, start, len) in notes {
@@ -52,7 +65,7 @@ fn wav(notes: &[(f32, f32, f32)], total: f32) -> Vec<u8> {
 
     // Keep the loudest point comfortably below clipping.
     let peak = samples.iter().fold(0f32, |m, s| m.max(s.abs())).max(f32::EPSILON);
-    let gain = 0.45 / peak;
+    let gain = 0.45 * loudness / peak;
 
     let data_len = (count * 2) as u32;
     let mut out = Vec::with_capacity(44 + count * 2);
@@ -80,7 +93,7 @@ mod tests {
 
     #[test]
     fn wav_has_a_valid_header_and_the_right_length() {
-        let data = wav(&[(440.0, 0.0, 0.5)], 0.6);
+        let data = wav(&[(440.0, 0.0, 0.5)], 0.6, 1.0);
         let samples = (0.6 * RATE as f32) as usize;
         assert_eq!(&data[0..4], b"RIFF");
         assert_eq!(&data[8..16], b"WAVEfmt ");
@@ -91,8 +104,21 @@ mod tests {
     }
 
     #[test]
+    fn a_lower_volume_makes_a_quieter_wav() {
+        let peak = |loudness: f32| {
+            wav(&[(659.3, 0.0, 0.9)], 1.0, loudness)[44..]
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs())
+                .max()
+                .unwrap()
+        };
+        assert!((peak(0.5) as u32) < peak(1.0) as u32 * 6 / 10, "half the volume should be about half as loud");
+        assert!(peak(0.1) > 500, "the quietest setting can still be heard");
+    }
+
+    #[test]
     fn wav_is_audible_but_never_clips() {
-        let data = wav(&[(659.3, 0.0, 0.9), (987.8, 0.16, 1.0)], 1.3);
+        let data = wav(&[(659.3, 0.0, 0.9), (987.8, 0.16, 1.0)], 1.3, 1.0);
         let peak = data[44..]
             .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs())

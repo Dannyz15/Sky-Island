@@ -25,6 +25,7 @@ const ART_SIZE: u32 = 96;
 pub struct MediaState {
     pub title: String,
     pub artist: String,
+    pub album: String,
     pub playing: bool,
     pub position: Duration,
     pub duration: Duration,
@@ -170,6 +171,7 @@ fn read_state(session: &Session) -> Result<MediaState> {
     Ok(MediaState {
         title: props.Title()?.to_string(),
         artist: props.Artist()?.to_string(),
+        album: props.AlbumTitle().map(|a| a.to_string()).unwrap_or_default(),
         playing,
         position: ticks(timeline.Position()?.Duration),
         duration: ticks(timeline.EndTime()?.Duration - timeline.StartTime()?.Duration),

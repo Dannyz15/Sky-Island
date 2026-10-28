@@ -17,8 +17,11 @@ mod water;
 mod appicon;
 mod clipboard;
 mod dragdrop;
+mod theme;
 mod timer;
 mod icon;
+mod motion;
+mod panel;
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -38,34 +41,37 @@ use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{Key, NamedKey};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::platform::windows::WindowAttributesExtWindows;
-use winit::window::{Window, WindowId, WindowLevel};
+use winit::window::{Theme, Window, WindowId, WindowLevel};
 
 use lyrics::Line;
 use media::{Command, MediaHandle, MediaState};
 use clipboard::History;
 use timer::{Timer, Unit};
 use presence::Presence;
-use settings::Settings;
+use panel::Panel;
+use settings::{Settings, ThemeMode};
 use shelf::{COLS, ROWS, Shelf};
 use todo::Todo;
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use water::Water;
+use motion::{Glows, spring};
 
 const COLLAPSED: (f64, f64) = (180.0, 32.0);
 const EXPANDED: (f64, f64) = (420.0, 168.0);
-const ANIM: Duration = Duration::from_millis(220);
+/// Keys for the animated values that are not tied to a rectangle (see `motion::Glows`).
+const KEY_PLAYER_PLAY: u64 = 0x4000_0000_0000_0001;
+const KEY_TIMER_PLAY: u64 = 0x4000_0000_0000_0002;
+const KEY_BAR: u64 = 0x4000_0000_0000_0003;
+const KEY_WATER: u64 = 0x4000_0000_0000_0004;
+const KEY_LYRIC_SYNC: u64 = 0x4000_0000_0000_0005;
 const FRAME: Duration = Duration::from_millis(8);
 const PROGRESS_TICK: Duration = Duration::from_millis(500);
 /// How much of a hidden island stays on the top edge of the screen, in logical pixels.
 const TUCK_STRIP: f64 = 3.0;
 
 // Expanded layout, in logical pixels.
-const ART_RECT: (f32, f32, f32) = (24.0, 30.0, 64.0); // x, y, size
-const TEXT_X: f32 = 104.0;
-const BAR: (f32, f32, f32) = (24.0, 106.0, 372.0); // x, y, width
 const CTRL_Y: f32 = 142.0;
-const CTRL_X: [f32; 3] = [150.0, 210.0, 270.0]; // prev, play/pause, next
 const CTRL_R: f32 = 16.0;
 
 pub enum UserEvent {
@@ -90,11 +96,10 @@ enum View {
     Todo,
     Calendar,
     Clipboard,
-    Settings,
 }
 
 /// Tab bar entries, left to right.
-const TABS: [(&str, View); 8] = [
+const TABS: [(&str, View); 7] = [
     ("Music", View::Player),
     ("Timer", View::Timer),
     ("Water", View::Water),
@@ -102,7 +107,6 @@ const TABS: [(&str, View); 8] = [
     ("To-do", View::Todo),
     ("Calendar", View::Calendar),
     ("Clipboard", View::Clipboard),
-    ("Settings", View::Settings),
 ];
 const TAB_W: f32 = 44.0;
 const TAB_GAP: f32 = 4.0;
@@ -137,18 +141,16 @@ const OVERLAY: (f64, f64) = (300.0, 52.0);
 const NOTICE_TIME: Duration = Duration::from_millis(2200);
 const GREETING: Duration = Duration::from_millis(1600);
 const BLINK: Duration = Duration::from_millis(160);
-const SETTINGS_ITEMS: usize = 11;
 // To-do view, in logical pixels.
 const TODO_FIELD: (f32, f32, f32, f32) = (24.0, 34.0, 372.0, 24.0);
 const TODO_ROWS_Y: f32 = 64.0;
 const TODO_ROW_H: f32 = 24.0;
 const TODO_AMBER: [u8; 3] = [255, 190, 70];
 /// How long the cursor must rest on the closed notch before it opens, so fly-bys don't trigger it.
-const HOVER_OPEN: Duration = Duration::from_millis(90);
 /// How long the cursor can be off the open notch before it closes, so small slips don't close it.
-const HOVER_CLOSE: Duration = Duration::from_millis(250);
 /// Seconds the lyrics take to glide to a newly sung line.
-const LYRIC_GLIDE: f32 = 0.28;
+/// The Sync button that appears over the lyrics after they were scrolled away from the music.
+const SYNC_RECT: (f32, f32, f32, f32) = (LYRIC_X + LYRIC_W - 62.0, 148.0, 62.0, 20.0);
 // Clipboard view, in logical pixels.
 const CLIP_CLEAR: (f32, f32, f32, f32) = (324.0, 34.0, 72.0, 22.0);
 const CLIP_ROWS_Y: f32 = 64.0;
@@ -167,11 +169,14 @@ enum LyricsState {
     Found(Vec<Line>),
 }
 
-// Lyrics view layout, in logical pixels.
-const BACK_RECT: (f32, f32, f32) = (16.0, 10.0, 28.0); // x, y, size
-const LYRICS_H: f64 = 236.0; // notch height while the lyrics view is open
-const LYRIC_AREA: (f32, f32) = (48.0, 224.0); // top, bottom of the scrolling lyrics area
-const LYRIC_W: f32 = 372.0; // wrap width
+// Lyrics layout, in logical pixels. The notch grows wider and the lyrics sit to the right of the player.
+const LYRICS_W: f64 = 660.0; // notch width while the lyrics are open
+const LYRICS_H: f64 = 176.0; // notch height while the lyrics are open
+/// After the lyrics open or close, how long the notch waits for the mouse to come back if it now sits outside.
+const LYRIC_GRACE: Duration = Duration::from_millis(1500);
+const LYRIC_X: f32 = 292.0; // left edge of the lyrics
+const LYRIC_AREA: (f32, f32) = (34.0, 172.0); // top, bottom of the scrolling lyrics area
+const LYRIC_W: f32 = 344.0; // wrap width
 const LYRIC_GAP: f32 = 12.0;
 
 struct LyricItem {
@@ -179,8 +184,32 @@ struct LyricItem {
     top: f32,
     lh: f32,
     px: f32,
-    dist: u32,
+    /// How many lines this one is from the middle of the view (0 when it is the middle line).
+    near: f32,
+    /// This is the line being sung right now.
+    current: bool,
     rows: Vec<String>,
+}
+
+/// Text size of a lyric line by how far it is from the middle of the view.
+fn lyric_px(near: f32) -> f32 {
+    if near < 1.0 {
+        18.0 - 4.0 * near
+    } else if near < 2.0 {
+        14.0 - (near - 1.0)
+    } else {
+        13.0
+    }
+}
+
+/// Grey level and strength of a lyric line by how far it is from the middle of the view.
+fn lyric_tone(near: f32) -> (u8, f32) {
+    const KNOTS: [(f32, f32, f32); 4] = [(0.0, 255.0, 1.0), (1.0, 175.0, 0.85), (2.0, 135.0, 0.6), (3.0, 110.0, 0.45)];
+    let near = near.clamp(0.0, 3.0);
+    let i = (near.floor() as usize).min(2);
+    let t = near - KNOTS[i].0;
+    let (a, b) = (KNOTS[i], KNOTS[i + 1]);
+    ((a.1 + (b.1 - a.1) * t) as u8, a.2 + (b.2 - a.2) * t)
 }
 
 struct App {
@@ -195,8 +224,15 @@ struct App {
     view: View,
     /// 0.0 = player height, 1.0 = lyrics height
     view_t: f64,
+    view_v: f64,
     lyrics: LyricsState,
     lyrics_key: String,
+    /// The line (fractional) in the middle of the lyrics view. A spring follows the line being sung, or
+    /// wherever the wheel took it.
+    lyric_pos: f64,
+    lyric_v: f64,
+    /// Set while the lyrics were scrolled by hand: the line the wheel moved to. `None` follows the music.
+    lyric_manual: Option<f64>,
     timer: Timer,
     /// The timer number being typed (index into `Unit::ALL`), and the digits typed so far.
     timer_field: Option<usize>,
@@ -211,15 +247,19 @@ struct App {
     press: Option<(usize, (f64, f64))>,
     /// Where the progress bar is being dragged to; the song jumps there when the button is let go.
     scrub: Option<Duration>,
+    /// The lyrics just opened or closed: the notch changes width under the mouse, so the system's
+    /// "mouse left" is ignored until it has settled.
+    lyric_settle: bool,
     /// Latest system notice, kept after it expires so it can fade out.
     notice: Option<sys::Notice>,
     notice_until: Option<Instant>,
     /// 0.0 = no notice, 1.0 = compact notice size
     ov_t: f64,
+    ov_v: f64,
     clips: History,
     /// A short message for the clipboard header, with when to remove it.
     clip_flash: Option<(&'static str, Instant)>,
-    /// When the cursor entering/leaving takes effect (see HOVER_OPEN, HOVER_CLOSE).
+    /// When the cursor entering/leaving takes effect (see `hover_open`, `hover_close`).
     enter_at: Option<Instant>,
     leave_at: Option<Instant>,
     tray: Option<TrayIcon>,
@@ -260,10 +300,12 @@ struct App {
     proxy: EventLoopProxy<UserEvent>,
     cursor: (f64, f64),
     hovered: bool,
-    /// 0.0 = collapsed, 1.0 = expanded
+    /// 0.0 = collapsed, 1.0 = expanded. A spring, so it can swing a little past 1.0 when it opens.
     progress: f64,
+    progress_v: f64,
     /// 0.0 = in place, 1.0 = slid up out of view (the "Hide island" setting).
     tuck_t: f64,
+    tuck_v: f64,
     /// The `tuck_target` the animation is heading for, to restart its clock when that changes.
     tuck_goal: f64,
     /// Colour of the current song's cover art, used to tint the player.
@@ -272,9 +314,26 @@ struct App {
     art_key: String,
     /// The tab highlight's position, as a (fractional) tab index, so it can slide between tabs.
     tab_pos: f32,
-    /// 0 right after the view changed, 1 once the new view has faded in.
-    switch_t: f32,
+    /// How fast it is moving, in tabs per second; the highlight stretches while it moves.
+    tab_vel: f32,
+    /// 0 right after the view changed, 1 once the new view has taken over.
+    switch_t: f64,
+    switch_v: f64,
+    /// The view that is fading out while the new one comes in, and which way the new one slides from.
+    prev_view: Option<View>,
+    switch_dir: f32,
     shown_view: View,
+    /// Hover glows, switch knobs and other small values that glide towards their goal.
+    glows: Glows,
+    last_draw: Instant,
+    /// Windows is using its light theme (apps), as last reported by the system.
+    system_light: bool,
+    /// The settings window, while it is open.
+    panel: Option<Panel>,
+    /// Open the settings window the next time the event loop is free to (a click cannot create a window).
+    panel_wanted: bool,
+    /// When the timer's alarm sounds again while it is ringing.
+    next_chime: Option<Instant>,
     last_tick: Instant,
 }
 
@@ -291,8 +350,12 @@ impl App {
             media_handle: None,
             view: View::Player,
             view_t: 0.0,
+            view_v: 0.0,
             lyrics: LyricsState::None,
             lyrics_key: String::new(),
+            lyric_pos: -1.0,
+            lyric_v: 0.0,
+            lyric_manual: None,
             timer: Timer::load(),
             timer_field: None,
             timer_input: String::new(),
@@ -302,9 +365,11 @@ impl App {
             drag_hover: false,
             press: None,
             scrub: None,
+            lyric_settle: false,
             notice: None,
             notice_until: None,
             ov_t: 0.0,
+            ov_v: 0.0,
             clips: History::new(),
             clip_flash: None,
             enter_at: None,
@@ -341,12 +406,24 @@ impl App {
             cursor: (0.0, 0.0),
             hovered: false,
             progress: 0.0,
+            progress_v: 0.0,
             tuck_t: if settings.hide_island { 1.0 } else { 0.0 },
+            tuck_v: 0.0,
             tuck_goal: if settings.hide_island { 1.0 } else { 0.0 },
             art_tint: [255, 110, 140],
             art_key: String::new(),
             tab_pos: 0.0,
+            tab_vel: 0.0,
             switch_t: 1.0,
+            switch_v: 0.0,
+            prev_view: None,
+            switch_dir: 1.0,
+            glows: Glows::default(),
+            last_draw: Instant::now(),
+            system_light: false,
+            panel: None,
+            panel_wanted: false,
+            next_chime: None,
             shown_view: View::Player,
             last_tick: Instant::now(),
         }
@@ -371,7 +448,20 @@ impl App {
 
     /// The tab index the highlight is heading for, if the current view has a tab.
     fn tab_target(&self) -> Option<f32> {
-        self.visible_tabs().iter().position(|(_, v)| *v == self.view).map(|i| i as f32)
+        // The lyrics are part of the Music tab.
+        let view = if self.view == View::Lyrics { View::Player } else { self.view };
+        self.visible_tabs().iter().position(|(_, v)| *v == view).map(|i| i as f32)
+    }
+
+    /// How far the tab bar (and the views other than Music) shift right to stay centred while the
+    /// notch is wider than usual because the lyrics are open.
+    fn tab_dx(&self) -> f32 {
+        ((LYRICS_W - EXPANDED.0) * self.view_t.clamp(0.0, 1.0) / 2.0) as f32
+    }
+
+    /// Where the parts of the player sit right now.
+    fn geo(&self) -> PlayerGeo {
+        player_geo(self.view_t.clamp(0.0, 1.0) as f32)
     }
 
     /// The tabs in the bar: all of them, except Water and Timer while they are switched off.
@@ -396,7 +486,6 @@ impl App {
             View::Todo => TODO_AMBER,
             View::Calendar => [200, 120, 255],
             View::Clipboard => CLIP_TEAL,
-            View::Settings => [170, 178, 196],
         }
     }
 
@@ -414,6 +503,16 @@ impl App {
         x >= r.0 && x <= r.0 + r.2 && y >= r.1 && y <= r.1 + r.3
     }
 
+    /// How strongly the mouse is over a rectangle, 0 to 1, fading in and out instead of switching.
+    fn hot_t(&self, r: (f32, f32, f32, f32), s: f32) -> f32 {
+        self.glows.fade(motion::rect_key(r), self.hot(r, s))
+    }
+
+    /// A toggle's position, 0 (off) to 1 (on), springing across and settling with a small bounce.
+    fn toggle_t(&self, id: u64, on: bool) -> f32 {
+        self.glows.follow(0x8000_0000_0000_0000 | id, if on { 1.0 } else { 0.0 }, 34.0, 0.62) as f32
+    }
+
     fn animating(&self) -> bool {
         (self.progress - self.target()).abs() > f64::EPSILON
             || self.switch_t < 1.0
@@ -421,6 +520,10 @@ impl App {
             || (self.tuck_t - self.tuck_target()).abs() > f64::EPSILON
             || (self.view_t - self.view_target()).abs() > f64::EPSILON
             || (self.ov_t - self.ov_target()).abs() > f64::EPSILON
+            || self.glows.busy()
+            || (self.view == View::Lyrics
+                && matches!(self.lyrics, LyricsState::Found(_))
+                && (self.lyric_pos - self.lyric_target()).abs() > f64::EPSILON)
     }
 
     fn ov_target(&self) -> f64 {
@@ -449,54 +552,59 @@ impl App {
     /// Advance animation, then resize/reposition the window to match.
     fn step(&mut self) {
         let now = Instant::now();
-        let dt = now.duration_since(self.last_tick).as_secs_f64();
+        let dt = now.duration_since(self.last_tick).as_secs_f64().min(1.0 / 20.0);
         self.last_tick = now;
 
-        let delta = dt / ANIM.as_secs_f64();
+        // The Animation setting makes the springs slower or quicker, and can take the bounce out.
+        let (speed, bounce) = (self.settings.motion.speed(), self.settings.motion.bounce());
+        let tune = |omega: f64, zeta: f64| (omega * speed, if bounce { zeta } else { 1.0 });
+
+        // Everything is pulled towards its goal by a spring. Opening swings out a little past the goal and
+        // settles; closing and hiding glide in without bouncing.
         let target = self.target();
-        self.progress = if self.progress < target {
-            (self.progress + delta).min(target)
-        } else {
-            (self.progress - delta).max(target)
-        };
+        let (omega, zeta) = if target > 0.5 { tune(24.0, 0.74) } else { tune(28.0, 1.0) };
+        spring(&mut self.progress, &mut self.progress_v, target, dt, omega, zeta);
 
-        let tt = self.tuck_target();
-        self.tuck_t = if self.tuck_t < tt {
-            (self.tuck_t + delta).min(tt)
-        } else {
-            (self.tuck_t - delta).max(tt)
-        };
+        let tuck_goal = self.tuck_target();
+        spring(&mut self.tuck_t, &mut self.tuck_v, tuck_goal, dt, 22.0 * speed, 1.0);
 
-        self.switch_t = (self.switch_t + delta as f32 * 1.5).min(1.0);
+        spring(&mut self.switch_t, &mut self.switch_v, 1.0, dt, 24.0 * speed, 1.0);
+        if self.switch_t >= 1.0 {
+            self.prev_view = None;
+        }
+
         if let Some(target) = self.tab_target() {
-            let k = 1.0 - (-(dt as f32) * 24.0).exp();
-            self.tab_pos += (target - self.tab_pos) * k;
-            if (target - self.tab_pos).abs() < 0.003 {
-                self.tab_pos = target;
-            }
+            let (mut x, mut v) = (self.tab_pos as f64, self.tab_vel as f64);
+            let (omega, zeta) = tune(30.0, 0.72);
+            spring(&mut x, &mut v, target as f64, dt, omega, zeta);
+            self.tab_pos = x as f32;
+            self.tab_vel = v as f32;
         }
 
         let ot = self.ov_target();
-        self.ov_t = if self.ov_t < ot {
-            (self.ov_t + delta).min(ot)
-        } else {
-            (self.ov_t - delta).max(ot)
-        };
+        let (omega, zeta) = if ot > 0.5 { tune(26.0, 0.8) } else { tune(28.0, 1.0) };
+        spring(&mut self.ov_t, &mut self.ov_v, ot, dt, omega, zeta);
 
         let vt = self.view_target();
-        self.view_t = if self.view_t < vt {
-            (self.view_t + delta).min(vt)
-        } else {
-            (self.view_t - delta).max(vt)
-        };
+        let (omega, zeta) = if vt > 0.5 { tune(24.0, 0.85) } else { tune(28.0, 1.0) };
+        spring(&mut self.view_t, &mut self.view_v, vt, dt, omega, zeta);
+
+        // The lyrics glide to the line being sung, or to wherever they were scrolled.
+        if self.view == View::Lyrics && matches!(self.lyrics, LyricsState::Found(_)) {
+            let goal = self.lyric_target();
+            spring(&mut self.lyric_pos, &mut self.lyric_v, goal, dt, 14.0 * speed, 1.0);
+        }
 
         let Some(window) = self.window.clone() else { return };
-        let t = ease(self.progress);
-        let full_h = lerp(EXPANDED.1, LYRICS_H, ease(self.view_t));
+        // The size may swing a little past its goal while the notch opens.
+        let t = self.progress.max(0.0);
+        let wide = self.view_t.clamp(0.0, 1.0);
+        let full_h = lerp(EXPANDED.1, LYRICS_H, wide);
         // The closed notch grows to the compact notice size while a notice is showing.
-        let ov = ease(self.ov_t);
+        let ov = self.ov_t.clamp(0.0, 1.0);
         let base = (lerp(COLLAPSED.0, OVERLAY.0, ov), lerp(COLLAPSED.1, OVERLAY.1, ov));
-        let w = lerp(base.0, EXPANDED.0, t);
+        // Opening the lyrics widens the notch evenly on both sides, so it stays centred on the screen.
+        let w = lerp(base.0, lerp(EXPANDED.0, LYRICS_W, wide), t);
         let h = lerp(base.1, full_h, t);
         let _ = window.request_inner_size(LogicalSize::new(w, h));
 
@@ -507,10 +615,28 @@ impl App {
             let pw = w * scale;
             let x = mpos.x as f64 + (msize.width as f64 - pw) / 2.0;
             // Tucked away, only a thin strip stays on screen, so the cursor can still find the island.
-            let y = mpos.y as f64 - ease(self.tuck_t) * (h - TUCK_STRIP) * scale;
+            let y = mpos.y as f64 - self.tuck_t.clamp(0.0, 1.0) * (h - TUCK_STRIP) * scale;
             window.set_outer_position(PhysicalPosition::new(x, y));
         }
         window.request_redraw();
+    }
+
+    /// The line the lyrics view is heading for: where the wheel took it, otherwise the line being sung
+    /// (-1 before the first one starts).
+    fn lyric_target(&self) -> f64 {
+        self.lyric_manual.unwrap_or_else(|| self.current_line().map_or(-1.0, |c| c as f64))
+    }
+
+    /// Put the middle of the view on its target at once, without gliding there.
+    fn snap_lyrics(&mut self) {
+        self.lyric_pos = self.lyric_target();
+        self.lyric_v = 0.0;
+    }
+
+    /// Whether the lyrics were scrolled to somewhere other than the line being sung, so Sync is offered.
+    fn lyric_off_sync(&self) -> bool {
+        let sung = self.current_line().map_or(-1.0, |c| c as f64);
+        self.lyric_manual.is_some_and(|m| (m - sung).abs() >= 1.0)
     }
 
     /// Index of the lyric line being sung at the current position.
@@ -570,7 +696,8 @@ impl App {
 
     /// The song position under a cursor x (logical pixels), clamped to the ends of the bar.
     fn scrub_at(&self, cx: f32) -> Duration {
-        let frac = ((cx - BAR.0) / BAR.2).clamp(0.0, 1.0);
+        let (bx, _, bw) = self.geo().bar;
+        let frac = ((cx - bx) / bw).clamp(0.0, 1.0);
         self.media.duration.mul_f32(frac)
     }
 
@@ -581,17 +708,26 @@ impl App {
         let Some(window) = self.window.clone() else { return };
         let s = window.scale_factor() as f32;
         let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s);
-        let in_rect = |r: (f32, f32, f32)| cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.2;
+
+        // While the timer's alarm rings, a click anywhere just stops it.
+        if self.alert_until.is_some() && self.alert_msg == TIMES_UP {
+            self.alert_until = None;
+            self.next_chime = None;
+            window.request_redraw();
+            return;
+        }
 
         // A click anywhere finishes the number being typed; it is then handled as usual.
         if self.timer_field.is_some() {
             self.end_timer_edit(true);
         }
 
-        if self.view != View::Lyrics {
+        {
+            let dx = self.tab_dx();
             let tabs = self.visible_tabs();
             for (i, (_, v)) in tabs.iter().enumerate() {
                 let r = tab_rect(i, tabs.len());
+                let r = (r.0 + dx, r.1, r.2, r.3);
                 if cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3 {
                     if self.view != *v {
                         self.stop_editing();
@@ -693,59 +829,6 @@ impl App {
                 }
                 window.request_redraw();
             }
-            View::Settings => {
-                let Some(i) = (0..SETTINGS_ITEMS).find(|&i| {
-                    let r = settings_cell(i);
-                    cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3
-                }) else {
-                    return;
-                };
-                match i {
-                    0 => {
-                        let on = !self.autostart;
-                        settings::set_autostart(on);
-                        self.autostart = settings::autostart_enabled();
-                    }
-                    1 => self.settings.hide_fullscreen = !self.settings.hide_fullscreen,
-                    2 => self.settings.show_clock = !self.settings.show_clock,
-                    3 => self.settings.clock_24h = !self.settings.clock_24h,
-                    4 => self.settings.idle_eyes = !self.settings.idle_eyes,
-                    5 => self.settings.sound = !self.settings.sound,
-                    6 => self.settings.clipboard = !self.settings.clipboard,
-                    7 => self.settings.hide_island = !self.settings.hide_island,
-                    8 => {
-                        self.settings.water = !self.settings.water;
-                        if self.settings.water {
-                            self.water.restart(Instant::now());
-                        } else if self.view == View::Water {
-                            self.view = View::Player;
-                        }
-                        // The tab bar has one tab more or fewer, so the highlight jumps instead of sliding.
-                        if let Some(target) = self.tab_target() {
-                            self.tab_pos = target;
-                        }
-                    }
-                    9 => {
-                        self.settings.timer = !self.settings.timer;
-                        if !self.settings.timer {
-                            // Switching it off stops a running timer and puts the tab away.
-                            self.end_timer_edit(false);
-                            self.timer.reset();
-                            if self.view == View::Timer {
-                                self.view = View::Player;
-                            }
-                        }
-                        if let Some(target) = self.tab_target() {
-                            self.tab_pos = target;
-                        }
-                    }
-                    _ => self.quit = true,
-                }
-                self.settings.save();
-                self.sync_tray_toggle();
-                window.request_redraw();
-                self.apply_visibility();
-            }
             View::Shelf => {
                 let hit = (0..COLS * ROWS).find_map(|slot| {
                     let r = tile_rect(slot);
@@ -828,47 +911,62 @@ impl App {
                 self.alert_until = None;
                 window.request_redraw();
             }
-            View::Player => {
+            View::Player | View::Lyrics => {
+                let geo = self.geo();
                 // Press on the bar (a taller target than the thin line) and drag to jump in the song.
+                let (bx, by, bw) = geo.bar;
                 if !self.media.duration.is_zero()
                     && self.media_handle.is_some()
-                    && cx >= BAR.0 - 6.0
-                    && cx <= BAR.0 + BAR.2 + 6.0
-                    && (BAR.1 - 9.0..=BAR.1 + 12.0).contains(&cy)
+                    && cx >= bx - 6.0
+                    && cx <= bx + bw + 6.0
+                    && (by - 9.0..=by + 12.0).contains(&cy)
                 {
                     self.scrub = Some(self.scrub_at(cx));
                     window.request_redraw();
                     return;
                 }
-                if in_rect(ART_RECT) {
-                    self.view = View::Lyrics;
+                // The speech-bubble button opens and closes the lyrics.
+                if (cx - geo.ctrl_x[0]).hypot(cy - CTRL_Y) <= CTRL_R {
+                    self.view = if self.view == View::Lyrics { View::Player } else { View::Lyrics };
+                    if self.view == View::Lyrics {
+                        // Opening: start on the line being sung, not wherever it was left.
+                        self.lyric_manual = None;
+                        self.snap_lyrics();
+                    }
+                    self.lyric_settle = true;
                     self.last_tick = Instant::now();
                     window.request_redraw();
                     return;
                 }
-                let Some(handle) = &self.media_handle else { return };
-                for (i, x) in CTRL_X.iter().enumerate() {
-                    if (cx - x).hypot(cy - CTRL_Y) <= CTRL_R {
-                        handle.send(match i {
-                            0 => Command::Previous,
-                            1 => Command::TogglePlay,
-                            _ => Command::Next,
-                        });
-                        return;
+                if let Some(handle) = &self.media_handle {
+                    for (i, x) in geo.ctrl_x[1..].iter().enumerate() {
+                        if (cx - x).hypot(cy - CTRL_Y) <= CTRL_R {
+                            handle.send(match i {
+                                0 => Command::Previous,
+                                1 => Command::TogglePlay,
+                                _ => Command::Next,
+                            });
+                            return;
+                        }
                     }
                 }
-            }
-            View::Lyrics => {
-                if in_rect(BACK_RECT) {
-                    self.view = View::Player;
-                    self.last_tick = Instant::now();
+                // Sync takes the lyrics back to the line being sung.
+                if self.view == View::Lyrics
+                    && self.lyric_off_sync()
+                    && cx >= SYNC_RECT.0
+                    && cx <= SYNC_RECT.0 + SYNC_RECT.2
+                    && cy >= SYNC_RECT.1
+                    && cy <= SYNC_RECT.1 + SYNC_RECT.3
+                {
+                    self.lyric_manual = None;
                     window.request_redraw();
+                    return;
+                }
+                // Click a lyric line to jump to it.
+                if self.view != View::Lyrics || cx < LYRIC_X - 8.0 || cy < LYRIC_AREA.0 || cy > LYRIC_AREA.1 {
                     return;
                 }
                 let LyricsState::Found(lines) = &self.lyrics else { return };
-                if cy < LYRIC_AREA.0 || cy > LYRIC_AREA.1 {
-                    return;
-                }
                 let hit = self
                     .layout_lyrics()
                     .into_iter()
@@ -880,31 +978,34 @@ impl App {
                     // Show the jump immediately instead of waiting for the player to report it.
                     self.media.position = at;
                     self.media_at = Instant::now();
+                    // The lyrics follow the music again from the line that was picked.
+                    self.lyric_manual = None;
                     window.request_redraw();
                 }
             }
         }
     }
 
-    /// Lay out the visible lyric lines around the current one, wrapped, in logical pixels.
+    /// Lay out the visible lyric lines around the middle of the view, wrapped, in logical pixels.
     fn layout_lyrics(&self) -> Vec<LyricItem> {
         let (Some(font), LyricsState::Found(lines)) = (&self.font, &self.lyrics) else {
             return Vec::new();
         };
         let cur = self.current_line();
-        // Before the first line starts nothing is current; the upcoming lines start below the middle.
-        let focus = cur.map_or(-1, |c| c as isize);
+        // The middle of the view is a fractional line while it glides. Before the first line starts it
+        // is -1, so the upcoming lines start below the middle.
+        let pos = self.lyric_pos.clamp(-1.0, lines.len() as f64 - 1.0);
+        let base = pos.floor() as isize;
+        let frac = (pos - base as f64) as f32;
         let mid = (LYRIC_AREA.0 + LYRIC_AREA.1) / 2.0;
 
         let make = |d: isize| -> Option<LyricItem> {
-            let idx = usize::try_from(focus + d).ok().filter(|&i| i < lines.len())?;
-            let dist = d.unsigned_abs() as u32;
-            let px = match dist {
-                0 => 18.0,
-                1 => 14.0,
-                _ => 13.0,
-            };
-            Some(LyricItem { idx, top: 0.0, lh: px * 1.3, px, dist, rows: wrap(font, &lines[idx].text, px, LYRIC_W) })
+            let idx = usize::try_from(base + d).ok().filter(|&i| i < lines.len())?;
+            let near = (idx as f64 - pos).abs() as f32;
+            let px = lyric_px(near);
+            // The middle line is drawn bold, which is wider, so it is wrapped with the bold face too.
+            let face = if near < 0.5 { self.heading_font().unwrap_or(font) } else { font };
+            Some(LyricItem { idx, top: 0.0, lh: px * 1.3, px, near, current: cur == Some(idx), rows: wrap(face, &lines[idx].text, px, LYRIC_W) })
         };
 
         let mut items = Vec::new();
@@ -920,7 +1021,7 @@ impl App {
             None => (mid, (mid, 0.0)),
         };
         let mut above = h0.0;
-        for d in 1..=4 {
+        for d in 1..=5 {
             if let Some(mut it) = make(d) {
                 it.top = below + LYRIC_GAP;
                 below = it.top + it.rows.len() as f32 * it.lh;
@@ -934,34 +1035,50 @@ impl App {
             }
         }
 
-        // Glide to the new line instead of jumping: start where the previous line was centered.
-        if let Some(c) = cur.filter(|&c| c > 0) {
-            let t = self.position().saturating_sub(lines[c].at).as_secs_f32() / LYRIC_GLIDE;
-            if t < 1.0 {
-                let center = |it: &LyricItem| it.top + it.rows.len() as f32 * it.lh / 2.0;
-                let now_item = items.iter().find(|i| i.idx == c);
-                let prev_item = items.iter().find(|i| i.idx == c - 1);
-                if let (Some(now_item), Some(prev_item)) = (now_item, prev_item) {
-                    let shift = (center(now_item) - center(prev_item)) * (1.0 - ease(t as f64) as f32);
-                    for it in &mut items {
-                        it.top += shift;
-                    }
-                }
+        // Between two lines the whole stack is part of the way from one to the next.
+        let center = |it: &LyricItem| it.top + it.rows.len() as f32 * it.lh / 2.0;
+        let here = items.iter().find(|i| i.idx as isize == base).map_or(mid, center);
+        if let Some(next) = items.iter().find(|i| i.idx as isize == base + 1).map(center) {
+            let shift = -(next - here) * frac;
+            for it in &mut items {
+                it.top += shift;
             }
         }
         items
     }
 
-    /// True while the lyrics are still gliding to a newly sung line, so frames are needed.
-    fn lyric_gliding(&self) -> bool {
-        let LyricsState::Found(lines) = &self.lyrics else { return false };
-        self.view == View::Lyrics
-            && self
-                .current_line()
-                .is_some_and(|c| c > 0 && self.position().saturating_sub(lines[c].at).as_secs_f32() < LYRIC_GLIDE)
+    /// How long the mouse rests on the notch before it opens, and how long it is away before it closes.
+    fn hover_open(&self) -> Duration {
+        Duration::from_millis(self.settings.open_delay as u64)
+    }
+
+    fn hover_close(&self) -> Duration {
+        Duration::from_millis(self.settings.close_delay as u64)
+    }
+
+    /// How long the timer's alarm keeps ringing if nobody stops it, and how often it sounds again.
+    fn alarm_for(&self) -> Duration {
+        Duration::from_secs(self.settings.alarm_for as u64)
+    }
+
+    fn alarm_every(&self) -> Duration {
+        Duration::from_secs(self.settings.alarm_every as u64)
+    }
+
+    /// Whether the light look is on: the setting is on and Windows is using its light theme.
+    fn light(&self) -> bool {
+        match self.settings.theme {
+            ThemeMode::Dark => false,
+            ThemeMode::Light => true,
+            ThemeMode::System => self.system_light,
+        }
     }
 
     fn draw(&mut self) {
+        theme::set_light(self.light());
+        let frame_start = Instant::now();
+        self.glows.begin(frame_start.duration_since(self.last_draw).as_secs_f64().min(1.0 / 30.0));
+        self.last_draw = frame_start;
         if self.view == View::Shelf {
             self.load_icons();
         }
@@ -985,12 +1102,13 @@ impl App {
         pb.line_to(r, fh);
         pb.quad_to(0.0, fh, 0.0, fh - r);
         pb.close();
-        let open = ease(self.progress) as f32;
+        let open = self.progress.clamp(0.0, 1.0) as f32;
         if let Some(path) = pb.finish() {
+            let body = theme::body();
             let stops = vec![
-                tiny_skia::GradientStop::new(0.0, Color::from_rgba8(0, 0, 0, 255)),
-                tiny_skia::GradientStop::new(0.5, Color::from_rgba8(7, 7, 10, 255)),
-                tiny_skia::GradientStop::new(1.0, Color::from_rgba8(16, 16, 22, 255)),
+                tiny_skia::GradientStop::new(0.0, Color::from_rgba8(body[0][0], body[0][1], body[0][2], 255)),
+                tiny_skia::GradientStop::new(0.5, Color::from_rgba8(body[1][0], body[1][1], body[1][2], 255)),
+                tiny_skia::GradientStop::new(1.0, Color::from_rgba8(body[2][0], body[2][1], body[2][2], 255)),
             ];
             let shader = tiny_skia::LinearGradient::new(
                 tiny_skia::Point::from_xy(0.0, 0.0),
@@ -1002,7 +1120,7 @@ impl App {
             let mut paint = Paint::default();
             match shader {
                 Some(shader) => paint.shader = shader,
-                None => paint.set_color_rgba8(0, 0, 0, 255),
+                None => paint.set_color_rgba8(body[0][0], body[0][1], body[0][2], 255),
             }
             paint.anti_alias = true;
             pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
@@ -1025,33 +1143,33 @@ impl App {
         pb.line_to(fw - hw, 0.0);
         if let Some(path) = pb.finish() {
             let mut paint = Paint::default();
-            paint.set_color_rgba8(255, 255, 255, 26);
+            let edge = theme::border();
+            paint.set_color_rgba8(edge[0], edge[1], edge[2], edge[3]);
             paint.anti_alias = true;
             let stroke = Stroke { width: 1.0 * s, ..Default::default() };
             pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
         }
 
         // Fade content in over the second half of the expand animation.
-        let alpha = ((ease(self.progress) - 0.5) * 2.0).clamp(0.0, 1.0) as f32;
+        let alpha = ((self.progress.clamp(0.0, 1.0) - 0.5) * 2.0).clamp(0.0, 1.0) as f32;
         if alpha > 0.0 {
-            if self.view != View::Lyrics {
-                self.draw_tabs(&mut pixmap, s, alpha);
-            }
-            // A new view slides up a few pixels as it fades in.
-            let t = ease(self.switch_t as f64) as f32;
-            match Pixmap::new(w.get(), h.get()).filter(|_| t < 1.0) {
-                Some(mut layer) => {
-                    self.draw_view(&mut layer, s, alpha);
-                    let paint = PixmapPaint { opacity: t, quality: FilterQuality::Bilinear, ..Default::default() };
-                    let at = Transform::from_translate(0.0, (1.0 - t) * 8.0 * s);
+            if self.progress < 0.995 {
+                // While opening or closing the content also grows from slightly smaller, so it seems to
+                // unfold with the notch.
+                if let Some(mut layer) = Pixmap::new(w.get(), h.get()) {
+                    self.draw_content(&mut layer, s, alpha, (w.get(), h.get()));
+                    let k = (0.93 + 0.07 * self.progress.clamp(0.0, 1.0)) as f32;
+                    let at = Transform::from_scale(k, k).post_translate(fw * (1.0 - k) / 2.0, 0.0);
+                    let paint = PixmapPaint { quality: FilterQuality::Bilinear, ..Default::default() };
                     pixmap.draw_pixmap(0, 0, layer.as_ref(), &paint, at, None);
                 }
-                None => self.draw_view(&mut pixmap, s, alpha),
+            } else {
+                self.draw_content(&mut pixmap, s, alpha, (w.get(), h.get()));
             }
         }
 
         // Collapsed: show the countdown while the timer runs.
-        let collapsed_alpha = ((1.0 - ease(self.progress) * 2.0).clamp(0.0, 1.0) * (1.0 - ease(self.ov_t))) as f32;
+        let collapsed_alpha = ((1.0 - self.progress.clamp(0.0, 1.0) * 2.0).clamp(0.0, 1.0) * (1.0 - self.ov_t.clamp(0.0, 1.0))) as f32;
         if collapsed_alpha > 0.0 {
             if let (true, Some(font)) = (self.timer.running(), &self.font) {
                 let text = fmt_remaining(self.timer.remaining(Instant::now()));
@@ -1063,7 +1181,7 @@ impl App {
         }
 
         // System notice (volume, battery...) in the compact notch.
-        let notice_alpha = ease(self.ov_t) as f32 * (1.0 - ease(self.progress) as f32 * 2.0).clamp(0.0, 1.0);
+        let notice_alpha = self.ov_t.clamp(0.0, 1.0) as f32 * (1.0 - self.progress.clamp(0.0, 1.0) as f32 * 2.0).clamp(0.0, 1.0);
         if let (true, Some(notice)) = (notice_alpha > 0.02, &self.notice) {
             self.draw_notice(&mut pixmap, notice, s, notice_alpha, fw);
         }
@@ -1081,14 +1199,41 @@ impl App {
         buffer.present().ok();
     }
 
-    fn draw_view(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
-        match self.view {
-            View::Player => self.draw_player(pm, s, alpha),
-            View::Lyrics => self.draw_lyrics(pm, s, alpha),
+    /// The tab bar and the open view. While the view is changing, the old one fades out and drifts away
+    /// as the new one fades in and slides into place, from the side its tab is on.
+    fn draw_content(&self, pm: &mut Pixmap, s: f32, alpha: f32, size: (u32, u32)) {
+        self.draw_tabs(pm, s, alpha);
+        // The other views are drawn for the normal width, so keep them centred while it is still wide.
+        let dx = if matches!(self.view, View::Player | View::Lyrics) { 0.0 } else { self.tab_dx() };
+        let t = self.switch_t.clamp(0.0, 1.0) as f32;
+        let moving = t < 0.999;
+        if !moving && dx <= 0.5 {
+            self.draw_view(pm, s, alpha, self.view);
+            return;
+        }
+        if let (true, Some(old)) = (moving, self.prev_view)
+            && let Some(mut layer) = Pixmap::new(size.0, size.1) {
+                self.draw_view(&mut layer, s, alpha, old);
+                let paint = PixmapPaint { opacity: (1.0 - t * 1.7).clamp(0.0, 1.0), quality: FilterQuality::Bilinear, ..Default::default() };
+                let at = Transform::from_translate(-self.switch_dir * 26.0 * t * s, 0.0);
+                pm.draw_pixmap(0, 0, layer.as_ref(), &paint, at, None);
+            }
+        if let Some(mut layer) = Pixmap::new(size.0, size.1) {
+            self.draw_view(&mut layer, s, alpha, self.view);
+            let fade_in = if self.prev_view.is_some() { ((t - 0.2) / 0.8).clamp(0.0, 1.0) } else { t };
+            let paint = PixmapPaint { opacity: fade_in, quality: FilterQuality::Bilinear, ..Default::default() };
+            let slide = if self.prev_view.is_some() { self.switch_dir * 26.0 * (1.0 - t) * s } else { 0.0 };
+            let at = Transform::from_translate(dx * s + slide, if self.prev_view.is_some() { 0.0 } else { (1.0 - t) * 8.0 * s });
+            pm.draw_pixmap(0, 0, layer.as_ref(), &paint, at, None);
+        }
+    }
+
+    fn draw_view(&self, pm: &mut Pixmap, s: f32, alpha: f32, view: View) {
+        match view {
+            View::Player | View::Lyrics => self.draw_player(pm, s, alpha),
             View::Timer => self.draw_timer(pm, s, alpha),
             View::Water => self.draw_water(pm, s, alpha),
             View::Shelf => self.draw_shelf(pm, s, alpha),
-            View::Settings => self.draw_settings(pm, s, alpha),
             View::Todo => self.draw_todo(pm, s, alpha),
             View::Calendar => self.draw_calendar(pm, s, alpha),
             View::Clipboard => self.draw_clipboard(pm, s, alpha),
@@ -1129,30 +1274,16 @@ impl App {
         gfx::stroke_rounded(pm, ax * s, ay * s, asz * s, asz * s, radius * s, 1.0 * s, [255, 255, 255, (alpha * 26.0) as u8]);
     }
 
-    fn draw_lyrics(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+    /// The lyrics to the right of the player: the line being sung is large and bright, the rest fade away.
+    /// `dx` pushes the panel to the right, which is how it slides in while the notch widens.
+    fn draw_lyric_panel(&self, pm: &mut Pixmap, s: f32, alpha: f32, dx: f32) {
         let Some(font) = &self.font else { return };
         let a = (alpha * 255.0) as u8;
-        let width = EXPANDED.0 as f32 * s;
         let grey = [160, 160, 165, a];
-
-        self.draw_art(pm, BACK_RECT, s, alpha);
-
-        // Header: title and artist, centered.
-        let head = if self.media.has_session && !self.media.title.is_empty() {
-            format!("{} \u{2014} {}", self.media.title, self.media.artist)
-        } else {
-            "Nothing playing".to_string()
-        };
-        draw_text_centered(pm, self.heading_font().unwrap_or(font), &head, width / 2.0, 30.0 * s, 11.5 * s, grey, width - 120.0 * s);
 
         if matches!(self.lyrics, LyricsState::Found(_)) {
             for it in self.layout_lyrics() {
-                let (rgb, strength) = match it.dist {
-                    0 => (255u8, 1.0f32),
-                    1 => (175, 0.85),
-                    2 => (135, 0.6),
-                    _ => (110, 0.45),
-                };
+                let (rgb, strength) = lyric_tone(it.near);
                 for (i, row) in it.rows.iter().enumerate() {
                     let top = it.top + i as f32 * it.lh;
                     let bottom = top + it.lh;
@@ -1163,16 +1294,19 @@ impl App {
                     }
                     let fade = (edge / 28.0).clamp(0.0, 1.0);
                     let mut color = [rgb, rgb, rgb, (a as f32 * strength * fade) as u8];
-                    if it.dist == 0 {
-                        // The line being sung is bold and warmed with the cover's colour.
+                    if it.current {
+                        // The line being sung is warmed with the cover's colour, and still shows when the
+                        // lyrics were scrolled away from it.
                         let [ar, ag, ab] = self.accent(View::Lyrics);
-                        color = gfx::mix(color, [ar, ag, ab, color[3]], 0.22);
+                        let warmth = if it.near < 0.5 { 0.22 } else { 0.55 };
+                        color = gfx::mix(color, [ar, ag, ab, (a as f32 * strength.max(0.75) * fade) as u8], warmth);
                     }
-                    let face = if it.dist == 0 { self.heading_font().unwrap_or(font) } else { font };
+                    let face = if it.near < 0.5 { self.heading_font().unwrap_or(font) } else { font };
                     let baseline = (top + it.px * 1.05) * s;
-                    draw_text_centered(pm, face, row, width / 2.0, baseline, it.px * s, color, (LYRIC_W + 20.0) * s);
+                    draw_text(pm, face, row, (LYRIC_X + dx) * s, baseline, it.px * s, color, (LYRIC_W + 8.0) * s);
                 }
             }
+            self.draw_lyric_sync(pm, font, s, alpha, dx);
         } else {
             let msg = match &self.lyrics {
                 LyricsState::Loading => "Searching for lyrics\u{2026}",
@@ -1180,8 +1314,33 @@ impl App {
                 _ => "Play something to see lyrics",
             };
             let y = (LYRIC_AREA.0 + LYRIC_AREA.1) / 2.0 + 5.0;
-            draw_text_centered(pm, font, msg, width / 2.0, y * s, 13.0 * s, grey, width - 48.0 * s);
+            draw_text_centered(pm, font, msg, (LYRIC_X + dx + LYRIC_W / 2.0) * s, y * s, 13.0 * s, grey, LYRIC_W * s);
         }
+    }
+
+    /// The Sync button: it fades in once the lyrics were scrolled away from the music, with an arrow
+    /// that points to where the line being sung is.
+    fn draw_lyric_sync(&self, pm: &mut Pixmap, font: &Font, s: f32, alpha: f32, dx: f32) {
+        let show = self.glows.fade(KEY_LYRIC_SYNC, self.lyric_off_sync());
+        if show < 0.01 {
+            return;
+        }
+        let r = (SYNC_RECT.0 + dx, SYNC_RECT.1, SYNC_RECT.2, SYNC_RECT.3);
+        let hot = self.hot_t(r, s);
+        let k = alpha * show;
+        let a = (k * 255.0) as u8;
+        let [ar, ag, ab] = self.accent(View::Lyrics);
+        let (x, y, w, h) = (r.0 * s, r.1 * s, r.2 * s, r.3 * s);
+        // A soft backing so the button stays readable over the lines behind it.
+        fill_rounded(pm, x - 3.0 * s, y - 3.0 * s, w + 6.0 * s, h + 6.0 * s, (h + 6.0 * s) / 2.0, [0, 0, 0, (k * 120.0) as u8]);
+        gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [ar, ag, ab, (k * pick(120.0, 84.0, hot)) as u8], [ar, ag, ab, (k * pick(80.0, 46.0, hot)) as u8], false);
+        gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [ar, ag, ab, (k * 150.0) as u8]);
+        // The arrow points up when the line being sung is above the middle, down when it is below.
+        let sung = self.current_line().map_or(-1.0, |c| c as f64);
+        let dir = if sung < self.lyric_manual.unwrap_or(sung) { -1.0 } else { 1.0 };
+        let (ax, ay) = (x + 12.0 * s, y + h / 2.0);
+        fill_path(pm, &[(ax - 3.5 * s, ay - 1.5 * s * dir), (ax + 3.5 * s, ay - 1.5 * s * dir), (ax, ay + 2.8 * s * dir)], [255, 255, 255, a]);
+        draw_text(pm, font, "Sync", x + 22.0 * s, y + h / 2.0 + 4.0 * s, 11.0 * s, [255, 255, 255, a], 36.0 * s);
     }
 
     /// The tab bar: a tinted highlight that slides to the open tab, and a hover glow.
@@ -1190,17 +1349,23 @@ impl App {
         let a = (alpha * 255.0) as u8;
         let tabs = self.visible_tabs();
         let (x0, y, w, h) = tab_rect(0, tabs.len());
+        let dx = self.tab_dx();
         if self.tab_target().is_some() {
-            let x = (x0 + self.tab_pos * (TAB_W + TAB_GAP)) * s;
+            // The highlight stretches a little in the direction it is moving, like a drop of liquid.
+            let stretch = (self.tab_vel.abs() * 2.4).min(18.0);
+            let x = (x0 + dx + self.tab_pos * (TAB_W + TAB_GAP) - stretch / 2.0) * s;
+            let w = w + stretch;
             let (top, bottom) = ([ar, ag, ab, (alpha * 78.0) as u8], [ar, ag, ab, (alpha * 34.0) as u8]);
             gfx::gradient_rounded(pm, x, y * s, w * s, h * s, h * s / 2.0, top, bottom, false);
             gfx::stroke_rounded(pm, x + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, h * s / 2.0, 1.0 * s, [ar, ag, ab, (alpha * 90.0) as u8]);
         }
         for (i, (_, view)) in tabs.iter().enumerate() {
             let rect = tab_rect(i, tabs.len());
+            let rect = (rect.0 + dx, rect.1, rect.2, rect.3);
             let near = 1.0 - (self.tab_pos - i as f32).abs().min(1.0);
-            if near < 0.5 && self.hot(rect, s) {
-                fill_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, rect.3 * s / 2.0, [255, 255, 255, (alpha * 16.0) as u8]);
+            let glow = self.hot_t(rect, s) * (1.0 - near * 2.0).clamp(0.0, 1.0);
+            if glow > 0.01 {
+                fill_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, rect.3 * s / 2.0, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
             }
             let color = gfx::mix([150, 150, 158, a], [255, 255, 255, a], near);
             draw_tab_icon(pm, *view, (rect.0 + rect.2 / 2.0) * s, (rect.1 + rect.3 / 2.0) * s, s, color);
@@ -1226,7 +1391,7 @@ impl App {
             for (i, secs) in timer::PRESETS.iter().enumerate() {
                 let r = timer_chip_rect(i);
                 let on = idle && self.timer.total().as_secs() == *secs;
-                draw_chip(pm, font, r, &preset_label(*secs), on, idle && self.hot(r, s), rgb, s, alpha);
+                draw_chip(pm, font, r, &preset_label(*secs), on, if idle { self.hot_t(r, s) } else { 0.0 }, rgb, s, alpha);
             }
         }
 
@@ -1256,7 +1421,7 @@ impl App {
             for (i, unit) in Unit::ALL.iter().enumerate() {
                 let (x, value) = (TIMER_COLS[i], [h, m, sec][i]);
                 for (y, plus) in [(TIMER_PLUS_Y, true), (TIMER_MINUS_Y, false)] {
-                    let hot = idle && self.hot((x - TIMER_BTN_R, y - TIMER_BTN_R, TIMER_BTN_R * 2.0, TIMER_BTN_R * 2.0), s);
+                    let hot = if idle { self.hot_t((x - TIMER_BTN_R, y - TIMER_BTN_R, TIMER_BTN_R * 2.0, TIMER_BTN_R * 2.0), s) } else { 0.0 };
                     let ink = if idle { white } else { [90, 90, 100, a] };
                     draw_round_button(pm, x * s, y * s, TIMER_BTN_R * s, hot, idle, alpha);
                     fill_rect(pm, (x - 3.5) * s, (y - 0.75) * s, 7.0 * s, 1.5 * s, ink);
@@ -1270,8 +1435,11 @@ impl App {
                 if typing {
                     gfx::gradient_rounded(pm, area.0 * s, area.1 * s, area.2 * s, area.3 * s, 8.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 64.0) as u8], [rgb[0], rgb[1], rgb[2], (alpha * 28.0) as u8], false);
                     gfx::stroke_rounded(pm, area.0 * s + 0.5 * s, area.1 * s + 0.5 * s, area.2 * s - s, area.3 * s - s, 8.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 170.0) as u8]);
-                } else if idle && self.hot(area, s) {
-                    fill_rounded(pm, area.0 * s, area.1 * s, area.2 * s, area.3 * s, 8.0 * s, [255, 255, 255, (alpha * 16.0) as u8]);
+                } else if idle {
+                    let glow = self.hot_t(area, s);
+                    if glow > 0.01 {
+                        fill_rounded(pm, area.0 * s, area.1 * s, area.2 * s, area.3 * s, 8.0 * s, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
+                    }
                 }
                 // While typing, the digits so far replace the number (the old one stays until the first digit).
                 let shown = if typing && !self.timer_input.is_empty() { self.timer_input.clone() } else { format!("{value:02}") };
@@ -1287,14 +1455,15 @@ impl App {
 
         // Reset, and the big start / pause button.
         let reset = (TIMER_RESET_X - 26.0, TIMER_CTRL_Y - 11.0, 52.0, 22.0);
-        let reset_hot = self.hot(reset, s);
-        if reset_hot {
-            fill_rounded(pm, reset.0 * s, reset.1 * s, reset.2 * s, reset.3 * s, 11.0 * s, [255, 255, 255, (alpha * 18.0) as u8]);
+        let reset_hot = self.hot_t(reset, s);
+        if reset_hot > 0.01 {
+            fill_rounded(pm, reset.0 * s, reset.1 * s, reset.2 * s, reset.3 * s, 11.0 * s, [255, 255, 255, (alpha * 18.0 * reset_hot) as u8]);
         }
-        draw_text_centered(pm, font, "Reset", TIMER_RESET_X * s, (TIMER_CTRL_Y + 4.0) * s, 12.0 * s, if reset_hot { white } else { grey }, 60.0 * s);
-        let big = self.hot((TIMER_START_X - 20.0, TIMER_CTRL_Y - 20.0, 40.0, 40.0), s);
+        draw_text_centered(pm, font, "Reset", TIMER_RESET_X * s, (TIMER_CTRL_Y + 4.0) * s, 12.0 * s, pick(white, grey, reset_hot), 60.0 * s);
+        let big = self.hot_t((TIMER_START_X - 20.0, TIMER_CTRL_Y - 20.0, 40.0, 40.0), s);
         draw_big_button(pm, TIMER_START_X * s, TIMER_CTRL_Y * s, 18.0 * s, big, rgb, alpha);
-        draw_play_pause(pm, TIMER_START_X * s, TIMER_CTRL_Y * s, s * 0.8, [0, 0, 0, a], self.timer.running());
+        let pause = self.glows.follow(KEY_TIMER_PLAY, if self.timer.running() { 1.0 } else { 0.0 }, 30.0, 0.85) as f32;
+        draw_play_pause(pm, TIMER_START_X * s, TIMER_CTRL_Y * s, s * 0.8, [0, 0, 0, a], pause);
     }
 
     fn draw_water(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
@@ -1314,15 +1483,17 @@ impl App {
                 Some(m) => format!("{m}m"),
                 None => "Off".to_string(),
             };
-            draw_chip(pm, font, r, &label, i == self.water.interval, self.hot(r, s), rgb, s, alpha);
+            draw_chip(pm, font, r, &label, i == self.water.interval, self.hot_t(r, s), rgb, s, alpha);
         }
 
         // Left: a ring around a glass that fills with today's count.
         let (rx, ry, rr) = RING;
         gfx::glow(pm, rx * s, ry * s, (rr + 28.0) * s, [rgb[0], rgb[1], rgb[2], (alpha * 34.0) as u8], None);
         stroke_arc(pm, rx * s, ry * s, rr * s, RING_W * s, 1.0, [255, 255, 255, (alpha * 22.0) as u8]);
-        gfx::stroke_arc_gradient(pm, rx * s, ry * s, rr * s, RING_W * s, self.water.progress(), gfx::mix(accent, white, 0.35), accent);
-        draw_water_fill(pm, rx * s, ry * s, (rr - RING_W / 2.0 - 4.0) * s, self.water.progress(), rgb, s, alpha);
+        // The level springs to its new height, so it sloshes a little when a glass is added.
+        let level = (self.glows.follow(KEY_WATER, self.water.progress() as f64, 16.0, 0.55) as f32).clamp(0.0, 1.0);
+        gfx::stroke_arc_gradient(pm, rx * s, ry * s, rr * s, RING_W * s, level, gfx::mix(accent, white, 0.35), accent);
+        draw_water_fill(pm, rx * s, ry * s, (rr - RING_W / 2.0 - 4.0) * s, level, rgb, s, alpha);
         let count = format!("{}/{}", self.water.count, self.water.goal);
         draw_text_centered(pm, heading, &count, rx * s, (ry + 6.0) * s, 28.0 * s, white, (rr * 2.0 - 8.0) * s);
         draw_text_centered(pm, font, "glasses", rx * s, (ry + 24.0) * s, 10.0 * s, [215, 225, 240, a], (rr * 2.0 - 8.0) * s);
@@ -1331,7 +1502,7 @@ impl App {
         let cx = WATER_X[1] * s;
         draw_text_centered(pm, heading, "Water", cx, 76.0 * s, 18.0 * s, white, 190.0 * s);
         for (i, (x, y)) in ADJUST.iter().enumerate() {
-            let hot = self.hot((x - ADJUST_R, y - ADJUST_R, ADJUST_R * 2.0, ADJUST_R * 2.0), s);
+            let hot = self.hot_t((x - ADJUST_R, y - ADJUST_R, ADJUST_R * 2.0, ADJUST_R * 2.0), s);
             draw_round_button(pm, x * s, y * s, ADJUST_R * s, hot, true, alpha);
             fill_rect(pm, (x - 4.0) * s, (y - 0.75) * s, 8.0 * s, 1.5 * s, white);
             if i == 1 {
@@ -1360,13 +1531,13 @@ impl App {
         // Undo and Reset, and the big add button.
         for (x, label) in [(WATER_X[0], "Undo"), (WATER_X[2], "Reset")] {
             let r = (x - 26.0, WATER_CTRL_Y - 11.0, 52.0, 22.0);
-            let hot = self.hot(r, s);
-            if hot {
-                fill_rounded(pm, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 11.0 * s, [255, 255, 255, (alpha * 18.0) as u8]);
+            let hot = self.hot_t(r, s);
+            if hot > 0.01 {
+                fill_rounded(pm, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 11.0 * s, [255, 255, 255, (alpha * 18.0 * hot) as u8]);
             }
-            draw_text_centered(pm, font, label, x * s, (WATER_CTRL_Y + 4.0) * s, 12.0 * s, if hot { white } else { grey }, 60.0 * s);
+            draw_text_centered(pm, font, label, x * s, (WATER_CTRL_Y + 4.0) * s, 12.0 * s, pick(white, grey, hot), 60.0 * s);
         }
-        let big = self.hot((WATER_X[1] - 20.0, WATER_CTRL_Y - 20.0, 40.0, 40.0), s);
+        let big = self.hot_t((WATER_X[1] - 20.0, WATER_CTRL_Y - 20.0, 40.0, 40.0), s);
         draw_big_button(pm, cx, WATER_CTRL_Y * s, 18.0 * s, big, rgb, alpha);
         let black = [0, 0, 0, a];
         fill_rect(pm, cx - 7.0 * s, (WATER_CTRL_Y - 1.25) * s, 14.0 * s, 2.5 * s, black);
@@ -1388,7 +1559,7 @@ impl App {
             gfx::gradient_rounded(pm, zone.0 * s, zone.1 * s, zone.2 * s, zone.3 * s, 16.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 62.0) as u8], [rgb[0], rgb[1], rgb[2], (alpha * 26.0) as u8], false);
             gfx::stroke_rounded(pm, zone.0 * s, zone.1 * s, zone.2 * s, zone.3 * s, 16.0 * s, 1.5 * s, [rgb[0], rgb[1], rgb[2], (alpha * 170.0) as u8]);
         } else if empty {
-            draw_card(pm, zone, 16.0, s, alpha, false, rgb);
+            draw_card(pm, zone, 16.0, s, alpha, 0.0, rgb);
         }
 
         if empty {
@@ -1408,7 +1579,7 @@ impl App {
             let path = &self.shelf.items[i];
             let rect = tile_rect(slot);
             let (x, y, w, h) = rect;
-            let hot = self.hot(rect, s);
+            let hot = self.hot_t(rect, s);
             draw_card(pm, rect, 10.0, s, alpha, hot, rgb);
 
             if let Some(Some(icon)) = self.icons.get(path) {
@@ -1426,13 +1597,13 @@ impl App {
                 draw_text_centered(pm, font, &badge, (x + w / 2.0) * s, (y + 21.0) * s, 10.0 * s, [0, 0, 0, a], 32.0 * s);
             }
 
-            draw_text_centered(pm, font, &shelf::file_name(path), (x + w / 2.0) * s, (y + h - 10.0) * s, 10.0 * s, if hot { white } else { [225, 225, 232, a] }, (w - 8.0) * s);
+            draw_text_centered(pm, font, &shelf::file_name(path), (x + w / 2.0) * s, (y + h - 10.0) * s, 10.0 * s, pick(white, [225, 225, 232, a], hot), (w - 8.0) * s);
             // Remove button (takes the file off the shelf, never deletes it).
-            let over_x = self.hot((x + w - 16.0, y, 16.0, 16.0), s);
-            if over_x {
-                fill_circle(pm, (x + w - 8.0) * s, (y + 9.0) * s, 7.0 * s, [255, 90, 80, (alpha * 70.0) as u8]);
+            let over_x = self.hot_t((x + w - 16.0, y, 16.0, 16.0), s);
+            if over_x > 0.01 {
+                fill_circle(pm, (x + w - 8.0) * s, (y + 9.0) * s, 7.0 * s, [255, 90, 80, (alpha * 70.0 * over_x) as u8]);
             }
-            draw_text_centered(pm, font, "\u{00D7}", (x + w - 8.0) * s, (y + 13.0) * s, 13.0 * s, if over_x { white } else { grey }, 12.0 * s);
+            draw_text_centered(pm, font, "\u{00D7}", (x + w - 8.0) * s, (y + 13.0) * s, 13.0 * s, pick(white, grey, over_x), 12.0 * s);
         }
 
         // Scroll indicator when there are more rows than fit.
@@ -1522,7 +1693,7 @@ impl App {
     fn build_tray(&mut self) {
         let menu = Menu::new();
         let toggle = MenuItem::new(island_label(self.settings.hide_island), true, None);
-        let open = MenuItem::new("Open Settings", true, None);
+        let open = MenuItem::new("Settings\u{2026}", true, None);
         let quit = MenuItem::new("Quit Sky Island", true, None);
         if menu.append_items(&[&toggle, &open, &quit]).is_err() {
             return;
@@ -1696,7 +1867,7 @@ impl App {
 
     fn play_sound(&self, chime: sound::Chime) {
         if self.settings.sound {
-            sound::play(chime);
+            sound::play(chime, self.settings.volume);
         }
     }
 
@@ -1823,7 +1994,8 @@ impl App {
                     if let Some(rect) = Rect::from_xywh(x - 4.5 * s, cy - h / 2.0, 9.0 * s, h)
                         && let Some(path) = PathBuilder::from_oval(rect) {
                             let mut paint = Paint::default();
-                            paint.set_color_rgba8(white[0], white[1], white[2], a);
+                            let ink = theme::map(white);
+                            paint.set_color_rgba8(ink[0], ink[1], ink[2], a);
                             paint.anti_alias = true;
                             pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
                         }
@@ -1851,42 +2023,6 @@ impl App {
         }
     }
 
-    fn draw_settings(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
-        let Some(font) = &self.font else { return };
-        let a = (alpha * 255.0) as u8;
-        let white = [255, 255, 255, a];
-        let rgb = self.accent(View::Settings);
-
-        let toggles = [
-            ("Start with Windows", self.autostart),
-            ("Hide in fullscreen", self.settings.hide_fullscreen),
-            ("Show clock", self.settings.show_clock),
-            ("24-hour clock", self.settings.clock_24h),
-            ("Idle eyes", self.settings.idle_eyes),
-            ("Sounds", self.settings.sound),
-            ("Clipboard history", self.settings.clipboard),
-            ("Auto-hide island", self.settings.hide_island),
-            ("Water tracker", self.settings.water),
-            ("Timer", self.settings.timer),
-        ];
-        for (i, (label, on)) in toggles.iter().enumerate() {
-            let rect = settings_cell(i);
-            let (x, y, w, h) = rect;
-            let hot = self.hot(rect, s);
-            draw_card(pm, (x - 4.0, y, w + 4.0, h), 9.0, s, alpha * if hot { 1.0 } else { 0.45 }, hot, rgb);
-            draw_text(pm, font, label, (x + 6.0) * s, (y + h / 2.0 + 4.0) * s, 12.0 * s, if hot { white } else { [226, 226, 234, a] }, (w - 52.0) * s);
-            draw_switch(pm, (x + w - 38.0) * s, (y + h / 2.0 - 9.0) * s, s, *on, a);
-        }
-
-        let rect = settings_cell(10);
-        let (x, y, w, h) = rect;
-        let hot = self.hot(rect, s);
-        let red = [255, 96, 86];
-        gfx::gradient_rounded(pm, (x - 4.0) * s, y * s, (w + 4.0) * s, h * s, 9.0 * s, [red[0], red[1], red[2], (alpha * if hot { 76.0 } else { 46.0 }) as u8], [red[0], red[1], red[2], (alpha * if hot { 44.0 } else { 22.0 }) as u8], false);
-        gfx::stroke_rounded(pm, (x - 4.0) * s + 0.5 * s, y * s + 0.5 * s, (w + 4.0) * s - s, h * s - s, 9.0 * s, s, [red[0], red[1], red[2], (alpha * 90.0) as u8]);
-        draw_text_centered(pm, self.heading_font().unwrap_or(font), "Quit Sky Island", (x - 2.0 + w / 2.0) * s, (y + h / 2.0 + 4.0) * s, 12.0 * s, [255, 130, 120, a], w * s);
-    }
-
     fn draw_todo(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
         let Some(font) = &self.font else { return };
         let heading = self.heading_font().unwrap_or(font);
@@ -1905,7 +2041,7 @@ impl App {
         // "Add a task" field, which also shows a banner when a reminder fires.
         let field = TODO_FIELD;
         let (fx, fy, fw, fh) = field;
-        let hot = self.hot(field, s);
+        let hot = self.hot_t(field, s);
         if self.alert_until.is_some() {
             gfx::gradient_rounded(pm, fx * s, fy * s, fw * s, fh * s, 12.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 70.0) as u8], [rgb[0], rgb[1], rgb[2], (alpha * 36.0) as u8], false);
             gfx::stroke_rounded(pm, fx * s + 0.5 * s, fy * s + 0.5 * s, fw * s - s, fh * s - s, 12.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 120.0) as u8]);
@@ -1915,7 +2051,7 @@ impl App {
             gfx::gradient_circle(pm, (fx + 15.0) * s, (fy + fh / 2.0) * s, 8.0 * s, gfx::mix(amber, white, 0.3), amber);
             fill_rect(pm, (fx + 15.0 - 4.0) * s, (fy + fh / 2.0 - 0.75) * s, 8.0 * s, 1.5 * s, [0, 0, 0, a]);
             fill_rect(pm, (fx + 15.0 - 0.75) * s, (fy + fh / 2.0 - 4.0) * s, 1.5 * s, 8.0 * s, [0, 0, 0, a]);
-            draw_text(pm, font, "Add a task", (fx + 30.0) * s, (fy + 16.0) * s, 12.0 * s, if hot { white } else { grey }, (fw - 44.0) * s);
+            draw_text(pm, font, "Add a task", (fx + 30.0) * s, (fy + 16.0) * s, 12.0 * s, pick(white, grey, hot), (fw - 44.0) * s);
         }
 
         if self.todo.tasks.is_empty() {
@@ -1931,10 +2067,10 @@ impl App {
             let task = &self.todo.tasks[i];
             let y = TODO_ROWS_Y + row as f32 * TODO_ROW_H;
             let rect = (24.0, y + 1.0, 372.0, TODO_ROW_H - 2.0);
-            let hot = self.hot(rect, s);
-            if hot {
-                gfx::gradient_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 8.0 * s, [255, 255, 255, (alpha * 40.0) as u8], [255, 255, 255, (alpha * 20.0) as u8], false);
-                gfx::stroke_rounded(pm, rect.0 * s + 0.5 * s, rect.1 * s + 0.5 * s, rect.2 * s - s, rect.3 * s - s, 8.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 70.0) as u8]);
+            let hot = self.hot_t(rect, s);
+            if hot > 0.01 {
+                gfx::gradient_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 8.0 * s, [255, 255, 255, (alpha * 40.0 * hot) as u8], [255, 255, 255, (alpha * 20.0 * hot) as u8], false);
+                gfx::stroke_rounded(pm, rect.0 * s + 0.5 * s, rect.1 * s + 0.5 * s, rect.2 * s - s, rect.3 * s - s, 8.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 70.0 * hot) as u8]);
             }
 
             // Checkbox.
@@ -1968,10 +2104,10 @@ impl App {
             }
 
             // Edit and remove buttons.
-            let over_edit = hot && self.cursor.0 as f32 / s >= 346.0 && (self.cursor.0 as f32 / s) < 372.0;
-            let over_remove = self.hot((372.0, y, 24.0, TODO_ROW_H), s);
-            draw_pencil(pm, 358.0 * s, (y + 12.0) * s, s, if over_edit { white } else { [120, 120, 130, a] });
-            draw_text_centered(pm, font, "\u{00D7}", 384.0 * s, (y + 17.0) * s, 13.0 * s, if over_remove { [255, 120, 110, a] } else { grey }, 14.0 * s);
+            let over_edit = self.hot_t((346.0, y, 26.0, TODO_ROW_H), s);
+            let over_remove = self.hot_t((372.0, y, 24.0, TODO_ROW_H), s);
+            draw_pencil(pm, 358.0 * s, (y + 12.0) * s, s, pick(white, [120, 120, 130, a], over_edit));
+            draw_text_centered(pm, font, "\u{00D7}", 384.0 * s, (y + 17.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
         }
 
         // Scroll indicator when there are more tasks than rows.
@@ -2004,11 +2140,12 @@ impl App {
         // Month heading with previous / next arrows.
         for (rect, dir) in [(CAL_PREV, -1.0), (CAL_NEXT, 1.0)] {
             let (cx, cy) = ((rect.0 + rect.2 / 2.0) * s, (rect.1 + rect.3 / 2.0) * s);
-            if self.hot(rect, s) {
-                fill_circle(pm, cx, cy, 9.0 * s, [255, 255, 255, (alpha * 22.0) as u8]);
+            let glow = self.hot_t(rect, s);
+            if glow > 0.01 {
+                fill_circle(pm, cx, cy, 9.0 * s, [255, 255, 255, (alpha * 22.0 * glow) as u8]);
             }
             let tip = [(cx - 2.0 * dir * s, cy - 4.0 * s), (cx + 2.0 * dir * s, cy), (cx - 2.0 * dir * s, cy + 4.0 * s)];
-            stroke_poly(pm, &tip, 1.7 * s, if self.hot(rect, s) { white } else { grey }, false);
+            stroke_poly(pm, &tip, 1.7 * s, pick(white, grey, glow), false);
         }
         draw_text_centered(pm, heading, &self.cal.title(), (CAL_TITLE.0 + CAL_TITLE.2 / 2.0) * s, (CAL_TITLE.1 + 13.0) * s, 12.5 * s, white, CAL_TITLE.2 * s);
         for (i, head) in calendar::WEEK_HEADS.iter().enumerate() {
@@ -2026,8 +2163,11 @@ impl App {
             if day == selected {
                 gfx::gradient_rounded(pm, (x + 1.0) * s, y * s, (w - 2.0) * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 44.0) as u8], [255, 255, 255, (alpha * 22.0) as u8], false);
                 gfx::stroke_rounded(pm, (x + 1.0) * s + 0.5 * s, y * s + 0.5 * s, (w - 2.0) * s - s, h * s - s, 6.0 * s, s, [255, 255, 255, (alpha * 90.0) as u8]);
-            } else if self.hot(rect, s) {
-                fill_rounded(pm, (x + 1.0) * s, y * s, (w - 2.0) * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 16.0) as u8]);
+            } else {
+                let glow = self.hot_t(rect, s);
+                if glow > 0.01 {
+                    fill_rounded(pm, (x + 1.0) * s, y * s, (w - 2.0) * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
+                }
             }
             if is_today {
                 gfx::glow(pm, (x + w / 2.0) * s, (y + h / 2.0) * s, 16.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 70.0) as u8], None);
@@ -2045,7 +2185,7 @@ impl App {
         }
 
         // The selected day sits in a card: its heading and its tasks.
-        draw_card(pm, (CAL_PANEL_X - 8.0, 34.0, CAL_PANEL_W + 16.0, 126.0), 12.0, s, alpha, false, rgb);
+        draw_card(pm, (CAL_PANEL_X - 8.0, 34.0, CAL_PANEL_W + 16.0, 126.0), 12.0, s, alpha, 0.0, rgb);
         draw_text(pm, heading, &calendar::long_date(selected), CAL_PANEL_X * s, 48.0 * s, 13.0 * s, white, 120.0 * s);
         let ids = self.todo.on_day(selected);
         let note = if ids.len() > CAL_VISIBLE {
@@ -2069,9 +2209,9 @@ impl App {
             let task = &self.todo.tasks[i];
             let y = CAL_ROWS_Y + row as f32 * CAL_ROW_H;
             let rect = (CAL_PANEL_X - 4.0, y + 1.0, CAL_PANEL_W + 8.0, CAL_ROW_H - 2.0);
-            let hot = self.hot(rect, s);
-            if hot {
-                fill_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 6.0 * s, [255, 255, 255, (alpha * 30.0) as u8]);
+            let hot = self.hot_t(rect, s);
+            if hot > 0.01 {
+                fill_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 6.0 * s, [255, 255, 255, (alpha * 30.0 * hot) as u8]);
             }
             draw_check(pm, CAL_PANEL_X * s, (y + 4.0) * s, 12.0 * s, task.done, amber, a);
             let color = if task.done { [120, 120, 130, a] } else { white };
@@ -2088,17 +2228,17 @@ impl App {
                 let c = if *overdue { [255, 130, 120, a] } else { [255, 214, 140, a] };
                 draw_text(pm, font, label, (CAL_PANEL_X + CAL_PANEL_W - 32.0) * s - label_w, (y + 14.0) * s, 9.0 * s, c, 80.0 * s);
             }
-            let over_edit = hot && (self.cursor.0 as f32 / s) < CAL_PANEL_X + CAL_PANEL_W - 22.0;
-            let over_remove = hot && !over_edit;
-            draw_pencil(pm, (CAL_PANEL_X + CAL_PANEL_W - 24.0) * s, (y + 10.0) * s, s * 0.85, if over_edit { white } else { [120, 120, 130, a] });
-            draw_text_centered(pm, font, "\u{00D7}", (CAL_PANEL_X + CAL_PANEL_W - 6.0) * s, (y + 15.0) * s, 13.0 * s, if over_remove { [255, 120, 110, a] } else { grey }, 14.0 * s);
+            let over_remove = self.hot_t((CAL_PANEL_X + CAL_PANEL_W - 22.0, y, 30.0, CAL_ROW_H), s);
+            let over_edit = (hot - over_remove).max(0.0);
+            draw_pencil(pm, (CAL_PANEL_X + CAL_PANEL_W - 24.0) * s, (y + 10.0) * s, s * 0.85, pick(white, [120, 120, 130, a], over_edit));
+            draw_text_centered(pm, font, "\u{00D7}", (CAL_PANEL_X + CAL_PANEL_W - 6.0) * s, (y + 15.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
         }
 
         // Add a task for this day.
         let add = CAL_ADD;
-        let hot = self.hot(add, s);
+        let hot = self.hot_t(add, s);
         let (x, y, w, h) = add;
-        gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, h * s / 2.0, [rgb[0], rgb[1], rgb[2], (alpha * if hot { 90.0 } else { 56.0 }) as u8], [rgb[0], rgb[1], rgb[2], (alpha * if hot { 56.0 } else { 28.0 }) as u8], false);
+        gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, h * s / 2.0, [rgb[0], rgb[1], rgb[2], (alpha * pick(90.0, 56.0, hot)) as u8], [rgb[0], rgb[1], rgb[2], (alpha * pick(56.0, 28.0, hot)) as u8], false);
         gfx::stroke_rounded(pm, x * s + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, h * s / 2.0, s, [rgb[0], rgb[1], rgb[2], (alpha * 100.0) as u8]);
         draw_text_centered(pm, font, "+  Add task", (x + w / 2.0) * s, (y + 13.0) * s, 11.0 * s, white, (w - 16.0) * s);
     }
@@ -2119,7 +2259,7 @@ impl App {
                 gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [rgb[0], rgb[1], rgb[2], (alpha * 80.0) as u8], [rgb[0], rgb[1], rgb[2], (alpha * 38.0) as u8], false);
                 gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [rgb[0], rgb[1], rgb[2], (alpha * 110.0) as u8]);
             } else {
-                let boost = if self.hot(r, s) { 14.0 } else { 0.0 };
+                let boost = pick(14.0, 0.0, self.hot_t(r, s));
                 fill_rounded(pm, x, y, w, h, h / 2.0, [255, 255, 255, (alpha * (16.0 + boost)) as u8]);
             }
         };
@@ -2150,7 +2290,7 @@ impl App {
         for (action, dir) in [(editor::Action::DatePrev, -1.0), (editor::Action::DateNext, 1.0)] {
             let r = editor::rect(action);
             let (cx, cy) = ((r.0 + r.2 / 2.0) * s, (r.1 + r.3 / 2.0) * s);
-            fill_circle(pm, cx, cy, 9.0 * s, [255, 255, 255, (alpha * if self.hot(r, s) { 34.0 } else { 16.0 }) as u8]);
+            fill_circle(pm, cx, cy, 9.0 * s, [255, 255, 255, (alpha * pick(34.0, 16.0, self.hot_t(r, s))) as u8]);
             let tip = [(cx - 2.0 * dir * s, cy - 4.0 * s), (cx + 2.0 * dir * s, cy), (cx - 2.0 * dir * s, cy + 4.0 * s)];
             stroke_poly(pm, &tip, 1.6 * s, white, false);
         }
@@ -2171,7 +2311,7 @@ impl App {
 
         // The reminder: a switch, then hour and minute steppers.
         draw_text(pm, font, "Remind", 24.0 * s, (editor::REMIND_Y + 16.0) * s, 11.0 * s, grey, 54.0 * s);
-        draw_switch(pm, 82.0 * s, (editor::REMIND_Y + 3.0) * s, s, ed.remind, a);
+        draw_switch(pm, 82.0 * s, (editor::REMIND_Y + 3.0) * s, s, self.toggle_t(100, ed.remind), a);
         if ed.remind {
             for (action, plus) in [
                 (editor::Action::HourDown, false),
@@ -2180,7 +2320,7 @@ impl App {
                 (editor::Action::MinuteUp, true),
             ] {
                 let r = editor::rect(action);
-                draw_step(pm, r, plus, s, alpha, self.hot(r, s));
+                draw_step(pm, r, plus, s, alpha, self.hot_t(r, s));
             }
             let (hour, minute) = (ed.minutes / 60, ed.minutes % 60);
             let hour_text = if clock_24h { format!("{hour:02}") } else { format!("{}", if hour % 12 == 0 { 12 } else { hour % 12 }) };
@@ -2212,9 +2352,9 @@ impl App {
             label(pm, action, name, grey);
         }
         let r = editor::rect(editor::Action::Save);
-        let hot = self.hot(r, s);
-        gfx::glow(pm, (r.0 + r.2 / 2.0) * s, (r.1 + r.3 / 2.0) * s, 46.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * if hot { 80.0 } else { 46.0 }) as u8], None);
-        gfx::gradient_rounded(pm, r.0 * s, r.1 * s, r.2 * s, r.3 * s, r.3 * s / 2.0, gfx::mix(amber, white, if hot { 0.4 } else { 0.25 }), amber, false);
+        let hot = self.hot_t(r, s);
+        gfx::glow(pm, (r.0 + r.2 / 2.0) * s, (r.1 + r.3 / 2.0) * s, 46.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * pick(80.0, 46.0, hot)) as u8], None);
+        gfx::gradient_rounded(pm, r.0 * s, r.1 * s, r.2 * s, r.3 * s, r.3 * s / 2.0, gfx::mix(amber, white, pick(0.4, 0.25, hot)), amber, false);
         label(pm, editor::Action::Save, if ed.index.is_some() { "Save" } else { "Add" }, [20, 14, 0, a]);
     }
 
@@ -2239,9 +2379,9 @@ impl App {
         // Clear button: empties the history and the Windows clipboard.
         let clear = CLIP_CLEAR;
         let (x, y, w, h) = clear;
-        let hot = self.hot(clear, s);
+        let hot = self.hot_t(clear, s);
         let red = [255, 96, 86];
-        gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, h * s / 2.0, [red[0], red[1], red[2], (alpha * if hot { 80.0 } else { 48.0 }) as u8], [red[0], red[1], red[2], (alpha * if hot { 46.0 } else { 22.0 }) as u8], false);
+        gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, h * s / 2.0, [red[0], red[1], red[2], (alpha * pick(80.0, 48.0, hot)) as u8], [red[0], red[1], red[2], (alpha * pick(46.0, 22.0, hot)) as u8], false);
         gfx::stroke_rounded(pm, x * s + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, h * s / 2.0, s, [red[0], red[1], red[2], (alpha * 90.0) as u8]);
         draw_text_centered(pm, font, "Clear", (x + w / 2.0) * s, (y + 15.0) * s, 12.0 * s, [255, 130, 120, a], w * s);
 
@@ -2262,11 +2402,12 @@ impl App {
             let Some(i) = self.clips.index_at(row) else { continue };
             let y = CLIP_ROWS_Y + row as f32 * CLIP_ROW_H;
             let rect = (24.0, y + 1.0, 372.0, CLIP_ROW_H - 2.0);
-            let hot = self.hot(rect, s);
+            let hot = self.hot_t(rect, s);
             draw_card(pm, rect, 8.0, s, alpha, hot, rgb);
             // A teal tab on the left edge marks the row under the mouse.
-            if hot {
-                gfx::gradient_rounded(pm, 24.0 * s, (y + 8.0) * s, 3.0 * s, (CLIP_ROW_H - 16.0) * s, 1.5 * s, teal, [rgb[0], rgb[1], rgb[2], 0], false);
+            if hot > 0.01 {
+                let tab = [teal[0], teal[1], teal[2], (teal[3] as f32 * hot) as u8];
+                gfx::gradient_rounded(pm, 24.0 * s, (y + 8.0) * s, 3.0 * s, (CLIP_ROW_H - 16.0) * s, 1.5 * s, tab, [rgb[0], rgb[1], rgb[2], 0], false);
             }
             match &self.clips.items[i] {
                 clipboard::Content::Text(text) => {
@@ -2292,8 +2433,8 @@ impl App {
                     draw_text(pm, font, &size, 94.0 * s, (y + 27.0) * s, 10.0 * s, grey, 200.0 * s);
                 }
             }
-            let over_remove = self.hot((372.0, y, 24.0, CLIP_ROW_H), s);
-            draw_text_centered(pm, font, "\u{00D7}", 384.0 * s, (y + CLIP_ROW_H / 2.0 + 5.0) * s, 13.0 * s, if over_remove { [255, 120, 110, a] } else { grey }, 14.0 * s);
+            let over_remove = self.hot_t((372.0, y, 24.0, CLIP_ROW_H), s);
+            draw_text_centered(pm, font, "\u{00D7}", 384.0 * s, (y + CLIP_ROW_H / 2.0 + 5.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
         }
 
         // Scroll indicator when there are more entries than rows.
@@ -2312,32 +2453,51 @@ impl App {
         let accent = [rgb[0], rgb[1], rgb[2], a];
         let white = [255, 255, 255, a];
         let grey = [165, 165, 175, a];
+        let open = self.view_t.clamp(0.0, 1.0) as f32;
+        let geo = self.geo();
 
-        let (title, artist) = if self.media.has_session && !self.media.title.is_empty() {
-            (self.media.title.as_str(), self.media.artist.as_str())
+        let (title, sub) = if self.media.has_session && !self.media.title.is_empty() {
+            let sub = if self.media.album.is_empty() {
+                self.media.artist.clone()
+            } else {
+                format!("{} \u{b7} {}", self.media.artist, self.media.album)
+            };
+            (self.media.title.as_str(), sub)
         } else {
-            ("Nothing playing", "Play something to see it here")
+            ("Nothing playing", "Play something to see it here".to_string())
         };
 
-        self.draw_art(pm, ART_RECT, s, alpha);
+        // The lyrics fade in on the right as the notch widens and the player moves into its column.
+        // They wait until the player has moved out of the way, then fade in and slide into place.
+        let reveal = ((open - 0.45) / 0.55).clamp(0.0, 1.0);
+        if reveal > 0.0 {
+            self.draw_lyric_panel(pm, s, alpha * reveal, (1.0 - reveal) * 28.0);
+        }
 
+        self.draw_art(pm, geo.art, s, alpha);
+
+        let (bx, by, bw) = geo.bar;
         if let Some(font) = &self.font {
             let heading = self.heading_font().unwrap_or(font);
-            let max_w = (EXPANDED.0 as f32 - 24.0 - TEXT_X) * s;
-            draw_text(pm, heading, title, TEXT_X * s, 56.0 * s, 17.0 * s, white, max_w);
-            draw_text(pm, font, artist, TEXT_X * s, 78.0 * s, 13.0 * s, gfx::mix(grey, accent, 0.4), max_w);
+            let max_w = (geo.right - geo.text_x) * s;
+            draw_text(pm, heading, title, geo.text_x * s, 56.0 * s, 17.0 * s, white, max_w);
+            draw_text(pm, font, &sub, geo.text_x * s, 78.0 * s, 13.0 * s, gfx::mix(grey, accent, 0.4), max_w);
 
+            // Time played on the left of the bar, time left on the right.
             let pos = fmt_time(self.position());
-            let dur = fmt_time(self.media.duration);
-            draw_text(pm, font, &pos, BAR.0 * s, 126.0 * s, 10.0 * s, grey, 60.0 * s);
-            let dur_w = text_width(font, &dur, 10.0 * s);
-            draw_text(pm, font, &dur, (BAR.0 + BAR.2) * s - dur_w, 126.0 * s, 10.0 * s, grey, 60.0 * s);
+            let left = format!("-{}", fmt_time(self.media.duration.saturating_sub(self.position())));
+            let base = (by + 5.5) * s;
+            draw_text(pm, font, &pos, geo.left * s, base, 10.0 * s, grey, 42.0 * s);
+            let left_w = text_width(font, &left, 10.0 * s);
+            draw_text(pm, font, &left, geo.right * s - left_w, base, 10.0 * s, grey, 46.0 * s);
         }
 
         // Progress bar: a rounded track, a filled part shaded with the cover's colour, and a knob.
-        let (bx, by, bw) = BAR;
-        let bh = 5.0;
-        fill_rounded(pm, bx * s, (by - 0.5) * s, bw * s, bh * s, bh * s / 2.0, [255, 255, 255, (alpha * 30.0) as u8]);
+        let grab = self.hot((bx - 4.0, by - 9.0, bw + 8.0, 21.0), s) || self.scrub.is_some();
+        let grow = self.glows.follow(KEY_BAR, if grab { 1.0 } else { 0.0 }, 30.0, 0.8).clamp(0.0, 1.0) as f32;
+        let bh = 5.0 + 2.0 * grow;
+        let ty = by + 2.0 - bh / 2.0;
+        fill_rounded(pm, bx * s, ty * s, bw * s, bh * s, bh * s / 2.0, [255, 255, 255, (alpha * 30.0) as u8]);
         let frac = if self.media.duration.is_zero() {
             0.0
         } else {
@@ -2345,28 +2505,36 @@ impl App {
         };
         if frac > 0.0 {
             let fill_w = (bw * frac).max(bh);
-            gfx::gradient_rounded(pm, bx * s, (by - 0.5) * s, fill_w * s, bh * s, bh * s / 2.0, gfx::mix(accent, white, 0.15), gfx::mix(accent, white, 0.7), true);
+            gfx::gradient_rounded(pm, bx * s, ty * s, fill_w * s, bh * s, bh * s / 2.0, gfx::mix(accent, white, 0.15), gfx::mix(accent, white, 0.7), true);
             let knob_x = (bx + fill_w - bh / 2.0) * s;
-            gfx::glow(pm, knob_x, (by + 2.0) * s, 12.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 90.0) as u8], None);
-            fill_circle(pm, knob_x, (by + 2.0) * s, 4.0 * s, white);
+            gfx::glow(pm, knob_x, (by + 2.0) * s, (12.0 + 5.0 * grow) * s, [rgb[0], rgb[1], rgb[2], (alpha * (90.0 + 50.0 * grow)) as u8], None);
+            fill_circle(pm, knob_x, (by + 2.0) * s, (4.0 + 2.0 * grow) * s, white);
         }
 
-        // Transport controls: a glowing round play button between previous and next.
+        // Transport controls: the lyrics button, then previous, a glowing round play button, and next.
         let py = CTRL_Y * s;
-        for (i, x) in [CTRL_X[0], CTRL_X[2]].into_iter().enumerate() {
-            let enabled = i == 0 || self.media.next_enabled;
-            if enabled && self.hot((x - 18.0, CTRL_Y - 18.0, 36.0, 36.0), s) {
-                fill_circle(pm, x * s, py, 18.0 * s, [255, 255, 255, (alpha * 24.0) as u8]);
+        let [lyrics_x, prev_x, play_x, next_x] = geo.ctrl_x;
+        for (i, x) in [lyrics_x, prev_x, next_x].into_iter().enumerate() {
+            let enabled = i != 2 || self.media.next_enabled;
+            let glow = if enabled { self.hot_t((x - 18.0, CTRL_Y - 18.0, 36.0, 36.0), s) } else { 0.0 };
+            if glow > 0.01 {
+                fill_circle(pm, x * s, py, 18.0 * s, [255, 255, 255, (alpha * 24.0 * glow) as u8]);
             }
         }
+        // The lyrics button is lit while the lyrics are open.
+        if open > 0.01 {
+            fill_circle(pm, lyrics_x * s, py, 16.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * open * 70.0) as u8]);
+        }
+        draw_lyrics_icon(pm, lyrics_x * s, py, s, gfx::mix(grey, white, open));
         let dim = [90, 90, 98, a];
-        draw_prev(pm, CTRL_X[0] * s, py, s, white);
-        draw_next(pm, CTRL_X[2] * s, py, s, if self.media.next_enabled { white } else { dim });
-        let play = self.hot((CTRL_X[1] - 22.0, CTRL_Y - 22.0, 44.0, 44.0), s);
-        gfx::glow(pm, CTRL_X[1] * s, py, 34.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 56.0) as u8], None);
-        let radius = (if play { 21.0 } else { 19.5 }) * s;
-        gfx::gradient_circle(pm, CTRL_X[1] * s, py, radius, white, [214, 214, 226, a]);
-        draw_play_pause(pm, CTRL_X[1] * s, py, s * 0.82, [12, 12, 16, a], self.media.playing);
+        draw_prev(pm, prev_x * s, py, s, white);
+        draw_next(pm, next_x * s, py, s, if self.media.next_enabled { white } else { dim });
+        let play = self.hot_t((play_x - 22.0, CTRL_Y - 22.0, 44.0, 44.0), s);
+        gfx::glow(pm, play_x * s, py, 34.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 56.0) as u8], None);
+        let radius = (pick(21.0, 19.5, play)) * s;
+        gfx::gradient_circle(pm, play_x * s, py, radius, white, [214, 214, 226, a]);
+        let pause = self.glows.follow(KEY_PLAYER_PLAY, if self.media.playing { 1.0 } else { 0.0 }, 30.0, 0.85) as f32;
+        draw_play_pause(pm, play_x * s, py, s * 0.82, [12, 12, 16, a], pause);
     }
 }
 
@@ -2433,6 +2601,7 @@ fn text_width(font: &Font, text: &str, px: f32) -> f32 {
 
 /// Draw `text` with its baseline at `y`, truncating with an ellipsis past `max_w`.
 fn draw_text(pm: &mut Pixmap, font: &Font, text: &str, x: f32, y: f32, px: f32, rgba: [u8; 4], max_w: f32) {
+    let rgba = theme::map(rgba);
     let mut s = text.to_string();
     if text_width(font, &s, px) > max_w {
         while !s.is_empty() && text_width(font, &format!("{s}…"), px) > max_w {
@@ -2566,31 +2735,31 @@ fn cal_cell_rect(i: usize) -> (f32, f32, f32, f32) {
 
 /// A checkbox of `size` physical pixels, ticked when the task is done.
 /// A pill-shaped choice: tinted with `accent` when chosen, a soft highlight while the mouse is over it.
-fn draw_chip(pm: &mut Pixmap, font: &Font, r: (f32, f32, f32, f32), label: &str, on: bool, hot: bool, accent: [u8; 3], s: f32, alpha: f32) {
+fn draw_chip(pm: &mut Pixmap, font: &Font, r: (f32, f32, f32, f32), label: &str, on: bool, hot: f32, accent: [u8; 3], s: f32, alpha: f32) {
     let (x, y, w, h) = (r.0 * s, r.1 * s, r.2 * s, r.3 * s);
     let a = (alpha * 255.0) as u8;
     if on {
         gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], (alpha * 70.0) as u8], [accent[0], accent[1], accent[2], (alpha * 34.0) as u8], false);
         gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], (alpha * 90.0) as u8]);
-    } else if hot {
-        fill_rounded(pm, x, y, w, h, h / 2.0, [255, 255, 255, (alpha * 16.0) as u8]);
+    } else if hot > 0.01 {
+        fill_rounded(pm, x, y, w, h, h / 2.0, [255, 255, 255, (alpha * 16.0 * hot) as u8]);
     }
-    let color = if on { [255, 255, 255, a] } else if hot { [225, 225, 232, a] } else { [150, 150, 160, a] };
+    let color = if on { [255, 255, 255, a] } else { pick([225, 225, 232, a], [150, 150, 160, a], hot) };
     draw_text_centered(pm, font, label, (r.0 + r.2 / 2.0) * s, (r.1 + 13.0) * s, 10.0 * s, color, r.2 * s);
 }
 
 /// A small round button, brighter under the mouse and dimmed when it cannot be used.
-fn draw_round_button(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, hot: bool, enabled: bool, alpha: f32) {
-    let base = if !enabled { 12.0 } else if hot { 44.0 } else { 26.0 };
+fn draw_round_button(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, hot: f32, enabled: bool, alpha: f32) {
+    let base = if !enabled { 12.0 } else { pick(44.0, 26.0, hot) };
     fill_circle(pm, cx, cy, r, [255, 255, 255, (alpha * base) as u8]);
 }
 
 /// The big round start / add button: a gradient in the tab's colour with a soft glow.
-fn draw_big_button(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, hot: bool, rgb: [u8; 3], alpha: f32) {
+fn draw_big_button(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, hot: f32, rgb: [u8; 3], alpha: f32) {
     let a = (alpha * 255.0) as u8;
     let accent = [rgb[0], rgb[1], rgb[2], a];
-    gfx::glow(pm, cx, cy, r * 2.0, [rgb[0], rgb[1], rgb[2], (alpha * if hot { 90.0 } else { 56.0 }) as u8], None);
-    let r = if hot { r + 1.2 * (r / 18.0) } else { r };
+    gfx::glow(pm, cx, cy, r * 2.0, [rgb[0], rgb[1], rgb[2], (alpha * pick(90.0, 56.0, hot)) as u8], None);
+    let r = pick(r + 1.2 * (r / 18.0), r, hot);
     gfx::gradient_circle(pm, cx, cy, r, gfx::mix(accent, [255, 255, 255, a], 0.3), accent);
 }
 
@@ -2607,7 +2776,7 @@ fn draw_water_fill(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, frac: f32, rgb: [u
         let steps = 28;
         for i in 0..=steps {
             let x = cx - r + 2.0 * r * i as f32 / steps as f32;
-            let y = level + (x / s * 0.16 + phase).sin() * amp * s;
+            let y = level + (x / s * 0.16 + phase + frac * 40.0).sin() * amp * s;
             if i == 0 {
                 pb.move_to(x, y);
             } else {
@@ -2674,38 +2843,35 @@ fn fmt_clock(hour: u32, minute: u32, clock_24h: bool) -> String {
     }
 }
 
-/// Settings cell: 0-5 left column, 6-9 right column, 10 is the Quit button (right column, below them).
-fn settings_cell(i: usize) -> (f32, f32, f32, f32) {
-    let (col, row) = match i {
-        0..=5 => (0, i),
-        6..=9 => (1, i - 6),
-        _ => (1, 4), // the Quit button
-    };
-    (24.0 + col as f32 * 190.0, 33.0 + row as f32 * 22.0, 182.0, 20.0)
-}
-
 /// A toggle switch, 32 by 18 logical pixels with its top-left corner at `x`, `y`.
-fn draw_switch(pm: &mut Pixmap, x: f32, y: f32, s: f32, on: bool, a: u8) {
+/// `on` goes from 0 (off) to 1 (on) and may swing a little past 1: the knob slides, and the green
+/// fades in as it goes.
+fn draw_switch(pm: &mut Pixmap, x: f32, y: f32, s: f32, on: f32, a: u8) {
     let (w, h) = (32.0 * s, 18.0 * s);
     let alpha = a as f32 / 255.0;
-    if on {
-        gfx::glow(pm, x + w / 2.0, y + h / 2.0, 24.0 * s, [70, 210, 120, (alpha * 46.0) as u8], None);
-        gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [104, 228, 148, a], [50, 188, 102, a], false);
-    } else {
-        fill_rounded(pm, x, y, w, h, h / 2.0, [255, 255, 255, (alpha * 34.0) as u8]);
-        gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [255, 255, 255, (alpha * 30.0) as u8]);
+    let t = on.clamp(0.0, 1.0);
+    if t < 0.99 {
+        fill_rounded(pm, x, y, w, h, h / 2.0, [255, 255, 255, (alpha * 34.0 * (1.0 - t)) as u8]);
+        gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [255, 255, 255, (alpha * 30.0 * (1.0 - t)) as u8]);
     }
-    let knob_x = if on { x + w - h / 2.0 } else { x + h / 2.0 };
+    if t > 0.01 {
+        gfx::glow(pm, x + w / 2.0, y + h / 2.0, 24.0 * s, [70, 210, 120, (alpha * 46.0 * t) as u8], None);
+        let fade = |c: u8| (c as f32 * t) as u8;
+        gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [104, 228, 148, fade(a)], [50, 188, 102, fade(a)], false);
+    }
+    let knob_x = x + h / 2.0 + (w - h) * on;
     fill_circle(pm, knob_x, y + h / 2.0 + 0.8 * s, 7.0 * s, [0, 0, 0, (alpha * 60.0) as u8]);
-    fill_circle(pm, knob_x, y + h / 2.0, 7.0 * s, [255, 255, 255, a]);
+    // White in both looks (the light look turns white into dark, so ask for black there).
+    let knob = if theme::is_light() { [0, 0, 0, a] } else { [255, 255, 255, a] };
+    fill_circle(pm, knob_x, y + h / 2.0, 7.0 * s, knob);
 }
 
 /// A rounded card: a soft gradient with a hairline border, outlined in the accent colour when `hot`.
-fn draw_card(pm: &mut Pixmap, r: (f32, f32, f32, f32), radius: f32, s: f32, alpha: f32, hot: bool, accent: [u8; 3]) {
+fn draw_card(pm: &mut Pixmap, r: (f32, f32, f32, f32), radius: f32, s: f32, alpha: f32, hot: f32, accent: [u8; 3]) {
     let (x, y, w, h) = (r.0 * s, r.1 * s, r.2 * s, r.3 * s);
-    let (top, bottom) = if hot { (30.0, 16.0) } else { (20.0, 9.0) };
+    let (top, bottom) = (pick(30.0, 20.0, hot), pick(16.0, 9.0, hot));
     gfx::gradient_rounded(pm, x, y, w, h, radius * s, [255, 255, 255, (alpha * top) as u8], [255, 255, 255, (alpha * bottom) as u8], false);
-    let edge = if hot { [accent[0], accent[1], accent[2], (alpha * 110.0) as u8] } else { [255, 255, 255, (alpha * 16.0) as u8] };
+    let edge = pick([accent[0], accent[1], accent[2], (alpha * 110.0) as u8], [255, 255, 255, (alpha * 16.0) as u8], hot);
     gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, radius * s, s, edge);
 }
 
@@ -2754,9 +2920,9 @@ fn task_when(task: &todo::Task, today: i64, now: u64, offset: i64, clock_24h: bo
 }
 
 /// A round "minus" or "plus" button for the time steppers.
-fn draw_step(pm: &mut Pixmap, r: editor::Rect, plus: bool, s: f32, alpha: f32, hot: bool) {
+fn draw_step(pm: &mut Pixmap, r: editor::Rect, plus: bool, s: f32, alpha: f32, hot: f32) {
     let (cx, cy) = ((r.0 + r.2 / 2.0) * s, (r.1 + r.3 / 2.0) * s);
-    fill_circle(pm, cx, cy, 8.5 * s, [255, 255, 255, (alpha * if hot { 40.0 } else { 18.0 }) as u8]);
+    fill_circle(pm, cx, cy, 8.5 * s, [255, 255, 255, (alpha * pick(40.0, 18.0, hot)) as u8]);
     let ink = [210, 210, 215, (alpha * 255.0) as u8];
     stroke_line(pm, cx - 3.0 * s, cy, cx + 3.0 * s, cy, 1.5 * s, ink);
     if plus {
@@ -2778,6 +2944,38 @@ fn tail_fit(font: &Font, text: &str, px: f32, max_w: f32) -> String {
         start += 1;
     }
     chars[start..].iter().collect()
+}
+
+/// Where the parts of the player sit. `t` is how far the lyrics have opened (0 closed, 1 open): the
+/// player slides into a narrower column on the left to make room for them.
+struct PlayerGeo {
+    art: (f32, f32, f32), // x, y, size
+    text_x: f32,
+    left: f32,
+    right: f32,
+    bar: (f32, f32, f32), // x, y, width
+    ctrl_x: [f32; 4],     // lyrics, previous, play/pause, next
+}
+
+fn player_geo(t: f32) -> PlayerGeo {
+    let right = 396.0 + (264.0 - 396.0) * t;
+    let mid = (24.0 + right) / 2.0;
+    PlayerGeo {
+        art: (24.0, 30.0, 64.0),
+        text_x: 104.0,
+        left: 24.0,
+        right,
+        bar: (64.0, 106.0, right - 104.0),
+        ctrl_x: [mid - 100.0, mid - 50.0, mid, mid + 50.0],
+    }
+}
+
+/// A speech bubble with two lines of text: the lyrics button.
+fn draw_lyrics_icon(pm: &mut Pixmap, cx: f32, cy: f32, s: f32, c: [u8; 4]) {
+    let p = |dx: f32, dy: f32| (cx + dx * s, cy + dy * s);
+    stroke_poly(pm, &[p(-7.0, -6.0), p(7.0, -6.0), p(7.0, 3.5), p(1.5, 3.5), p(-2.5, 7.0), p(-2.5, 3.5), p(-7.0, 3.5)], 1.5 * s, c, true);
+    stroke_line(pm, cx - 3.5 * s, cy - 2.5 * s, cx + 3.5 * s, cy - 2.5 * s, 1.3 * s, c);
+    stroke_line(pm, cx - 3.5 * s, cy + 0.2 * s, cx + 1.5 * s, cy + 0.2 * s, 1.3 * s, c);
 }
 
 /// Tab `i` of `count`, centred in the notch.
@@ -2816,7 +3014,10 @@ fn stroke_arc(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, width: f32, frac: f32, 
     }
     if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        {
+            let c = theme::map(c);
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        }
         paint.anti_alias = true;
         let stroke = Stroke { width, line_cap: if frac >= 0.999 { LineCap::Butt } else { LineCap::Round }, ..Default::default() };
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -2838,7 +3039,10 @@ fn stroke_arc_from(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, width: f32, start:
     }
     if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        {
+            let c = theme::map(c);
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        }
         paint.anti_alias = true;
         let stroke = Stroke { width, line_cap: LineCap::Round, ..Default::default() };
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -2851,7 +3055,10 @@ fn stroke_line(pm: &mut Pixmap, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, 
     pb.line_to(x2, y2);
     if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        {
+            let c = theme::map(c);
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        }
         paint.anti_alias = true;
         let stroke = Stroke { width, line_cap: LineCap::Round, ..Default::default() };
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -2929,7 +3136,10 @@ fn stroke_poly(pm: &mut Pixmap, pts: &[(f32, f32)], width: f32, c: [u8; 4], clos
     }
     if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        {
+            let c = theme::map(c);
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        }
         paint.anti_alias = true;
         let stroke = Stroke { width, line_cap: LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -2963,7 +3173,10 @@ fn draw_tab_icon(pm: &mut Pixmap, view: View, cx: f32, cy: f32, s: f32, c: [u8; 
             pb.close();
             if let Some(path) = pb.finish() {
                 let mut paint = Paint::default();
-                paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+                {
+            let c = theme::map(c);
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        }
                 paint.anti_alias = true;
                 pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
             }
@@ -2997,20 +3210,16 @@ fn draw_tab_icon(pm: &mut Pixmap, view: View, cx: f32, cy: f32, s: f32, c: [u8; 
             }
         }
         View::Lyrics => {}
-        View::Settings => {
-            // Three sliders.
-            for (dy, knob) in [(-4.5, -2.5), (0.0, 2.5), (4.5, -1.0)] {
-                stroke_line(pm, cx - 6.0 * s, cy + dy * s, cx + 6.0 * s, cy + dy * s, 1.3 * s, c);
-                fill_circle(pm, cx + knob * s, cy + dy * s, 2.1 * s, c);
-            }
-        }
     }
 }
 
 fn fill_circle(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, c: [u8; 4]) {
     if let Some(path) = PathBuilder::from_circle(cx, cy, r) {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        {
+            let c = theme::map(c);
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        }
         paint.anti_alias = true;
         pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
     }
@@ -3031,7 +3240,10 @@ fn fill_rounded(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: [u8;
     pb.close();
     if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        {
+            let c = theme::map(c);
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        }
         paint.anti_alias = true;
         pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
     }
@@ -3040,7 +3252,10 @@ fn fill_rounded(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: [u8;
 fn fill_rect(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, c: [u8; 4]) {
     let Some(rect) = Rect::from_xywh(x, y, w.max(0.01), h) else { return };
     let mut paint = Paint::default();
-    paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+    {
+            let c = theme::map(c);
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        }
     pm.fill_rect(rect, &paint, Transform::identity(), None);
 }
 
@@ -3053,18 +3268,28 @@ fn fill_path(pm: &mut Pixmap, pts: &[(f32, f32)], c: [u8; 4]) {
     pb.close();
     if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
-        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        {
+            let c = theme::map(c);
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        }
         paint.anti_alias = true;
         pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
     }
 }
 
-fn draw_play_pause(pm: &mut Pixmap, cx: f32, cy: f32, s: f32, c: [u8; 4], playing: bool) {
-    if playing {
-        fill_rect(pm, cx - 7.0 * s, cy - 9.0 * s, 5.0 * s, 18.0 * s, c);
-        fill_rect(pm, cx + 2.0 * s, cy - 9.0 * s, 5.0 * s, 18.0 * s, c);
-    } else {
-        fill_path(pm, &[(cx - 6.0 * s, cy - 10.0 * s), (cx + 9.0 * s, cy), (cx - 6.0 * s, cy + 10.0 * s)], c);
+/// The play triangle and the pause bars. `pause` goes from 0 (play) to 1 (pause); in between, one icon
+/// shrinks away while the other grows in, so pressing the button looks like a change instead of a swap.
+fn draw_play_pause(pm: &mut Pixmap, cx: f32, cy: f32, s: f32, c: [u8; 4], pause: f32) {
+    let pause = pause.clamp(0.0, 1.0);
+    let tint = |t: f32| [c[0], c[1], c[2], (c[3] as f32 * t) as u8];
+    if pause > 0.01 {
+        let k = (0.55 + 0.45 * pause) * s;
+        fill_rect(pm, cx - 7.0 * k, cy - 9.0 * k, 5.0 * k, 18.0 * k, tint(pause));
+        fill_rect(pm, cx + 2.0 * k, cy - 9.0 * k, 5.0 * k, 18.0 * k, tint(pause));
+    }
+    if pause < 0.99 {
+        let k = (0.55 + 0.45 * (1.0 - pause)) * s;
+        fill_path(pm, &[(cx - 6.0 * k, cy - 10.0 * k), (cx + 9.0 * k, cy), (cx - 6.0 * k, cy + 10.0 * k)], tint(1.0 - pause));
     }
 }
 
@@ -3080,15 +3305,33 @@ fn draw_prev(pm: &mut Pixmap, cx: f32, cy: f32, s: f32, c: [u8; 4]) {
 
 fn fmt_time(d: Duration) -> String {
     let t = d.as_secs();
-    format!("{}:{:02}", t / 60, t % 60)
+    format!("{:02}:{:02}", t / 60, t % 60)
+}
+
+/// Things that can be blended between two states with a 0 to 1 amount.
+trait Blend: Copy {
+    fn blend(off: Self, on: Self, t: f32) -> Self;
+}
+
+impl Blend for f32 {
+    fn blend(off: f32, on: f32, t: f32) -> f32 {
+        off + (on - off) * t
+    }
+}
+
+impl Blend for [u8; 4] {
+    fn blend(off: [u8; 4], on: [u8; 4], t: f32) -> [u8; 4] {
+        gfx::mix(off, on, t.clamp(0.0, 1.0))
+    }
+}
+
+/// `on` when `t` is 1, `off` when it is 0, and a blend in between: how hover glows fade.
+fn pick<T: Blend>(on: T, off: T, t: f32) -> T {
+    T::blend(off, on, t)
 }
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
-}
-
-fn ease(t: f64) -> f64 {
-    1.0 - (1.0 - t).powi(3)
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -3107,6 +3350,7 @@ impl ApplicationHandler<UserEvent> for App {
         let window = Rc::new(event_loop.create_window(attrs).expect("create window"));
         let context = Context::new(window.clone()).expect("softbuffer context");
         self.surface = Some(Surface::new(&context, window.clone()).expect("softbuffer surface"));
+        self.system_light = window.theme() == Some(Theme::Light);
         self.window = Some(window);
         self.media_handle = Some(media::spawn(self.proxy.clone()));
         sys::spawn_all(self.proxy.clone());
@@ -3138,13 +3382,8 @@ impl ApplicationHandler<UserEvent> for App {
                     self.sync_tray_toggle();
                     self.last_tick = now;
                 } else if Some(&id) == self.tray_settings_id.as_ref() {
-                    // Open the notch on the settings tab for a few seconds.
-                    self.view = View::Settings;
-                    self.alert_until = Some(now + ALERT * 2);
+                    self.panel_wanted = true;
                     self.last_tick = now;
-                    if let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
                 }
             }
             UserEvent::Presence { presence, fullscreen } => {
@@ -3173,6 +3412,8 @@ impl ApplicationHandler<UserEvent> for App {
                         Some(l) => LyricsState::Found(l),
                         None => LyricsState::NotFound,
                     };
+                    self.lyric_manual = None;
+                    self.snap_lyrics();
                     if self.progress > 0.0
                         && let Some(w) = &self.window {
                             w.request_redraw();
@@ -3187,6 +3428,9 @@ impl ApplicationHandler<UserEvent> for App {
                 } else if key != self.lyrics_key {
                     self.lyrics_key = key.clone();
                     self.lyrics = LyricsState::Loading;
+                    self.lyric_manual = None;
+                    self.lyric_pos = -1.0;
+                    self.lyric_v = 0.0;
                     lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.proxy.clone());
                 }
                 if let Some(art) = &state.art {
@@ -3207,23 +3451,27 @@ impl ApplicationHandler<UserEvent> for App {
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if self.panel.as_ref().is_some_and(|p| p.id() == id) {
+            self.panel_event(event);
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::CursorEntered { .. } => {
                 let now = Instant::now();
                 self.leave_at = None;
                 if !self.hovered {
-                    self.enter_at = Some(now + HOVER_OPEN);
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(now + HOVER_OPEN));
+                    self.enter_at = Some(now + self.hover_open());
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.hover_open()));
                 }
             }
             WindowEvent::CursorLeft { .. } => {
                 let now = Instant::now();
                 self.enter_at = None; // a fly-by never opened it
-                if self.hovered && self.scrub.is_none() {
-                    self.leave_at = Some(now + HOVER_CLOSE);
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(now + HOVER_CLOSE));
+                if self.hovered && self.scrub.is_none() && !self.lyric_settle {
+                    self.leave_at = Some(now + self.hover_close());
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.hover_close()));
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -3277,6 +3525,29 @@ impl ApplicationHandler<UserEvent> for App {
                     && let Some(w) = &self.window {
                         w.request_redraw();
                     }
+            }
+            WindowEvent::MouseWheel { delta, .. } if self.view == View::Lyrics && !self.editing && self.progress >= 0.9 => {
+                let s = self.window.as_ref().map_or(1.0, |w| w.scale_factor()) as f32;
+                let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s);
+                let lines = match &self.lyrics {
+                    LyricsState::Found(l) => l.len(),
+                    _ => 0,
+                };
+                // Scroll the lyrics by hand: wheel up goes to earlier lines.
+                let step = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y as f64,
+                    MouseScrollDelta::PixelDelta(p) => p.y / 24.0,
+                };
+                if lines > 0 && step != 0.0 && cx >= LYRIC_X - 8.0 && (LYRIC_AREA.0..=LYRIC_AREA.1).contains(&cy) {
+                    let from = self.lyric_manual.unwrap_or(self.lyric_pos.max(0.0));
+                    let to = (from - step).clamp(0.0, lines as f64 - 1.0);
+                    let sung = self.current_line();
+                    // Back on the line being sung: carry on following the music.
+                    self.lyric_manual = if sung.is_some_and(|c| c == to.round() as usize) { None } else { Some(to) };
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
             }
             WindowEvent::MouseWheel { delta, .. } if self.editing && self.progress >= 0.9 => {
                 let dy = match delta {
@@ -3369,6 +3640,12 @@ impl ApplicationHandler<UserEvent> for App {
                     w.request_redraw();
                 }
             }
+            WindowEvent::ThemeChanged(theme) => {
+                self.system_light = theme == Theme::Light;
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
             WindowEvent::RedrawRequested => self.draw(),
             _ => {}
         }
@@ -3381,6 +3658,25 @@ impl ApplicationHandler<UserEvent> for App {
         }
         let now = Instant::now();
 
+        if self.panel_wanted {
+            self.panel_wanted = false;
+            self.open_panel(event_loop);
+        }
+        // The settings window asks for frames while its controls are moving.
+        let mut panel_wake = None;
+        if let Some(p) = &mut self.panel {
+            if p.reset_armed.is_some_and(|t| now >= t) {
+                p.reset_armed = None;
+                p.redraw();
+            }
+            if p.busy {
+                p.redraw();
+                panel_wake = Some(now + FRAME);
+            } else if let Some(t) = p.reset_armed {
+                panel_wake = Some(t);
+            }
+        }
+
         if self.enter_at.is_some_and(|t| now >= t) {
             self.enter_at = None;
             self.hovered = true;
@@ -3392,9 +3688,19 @@ impl ApplicationHandler<UserEvent> for App {
             self.last_tick = now;
         }
 
+        // The notch has finished changing width. If the mouse is now outside it (closing the lyrics pulls
+        // the sides in), give it a moment to come back before the notch closes.
+        if self.lyric_settle && !self.animating() {
+            self.lyric_settle = false;
+            if self.hovered && !self.cursor_over_window() {
+                self.leave_at = Some(now + LYRIC_GRACE);
+            }
+        }
+
         if self.timer.tick(now) {
             self.alert_msg = TIMES_UP.into();
-            self.alert_until = Some(now + ALERT);
+            self.alert_until = Some(now + self.alarm_for());
+            self.next_chime = Some(now + self.alarm_every());
             self.view = View::Timer;
             self.last_tick = now;
             self.play_sound(sound::Chime::TimerDone);
@@ -3415,6 +3721,14 @@ impl ApplicationHandler<UserEvent> for App {
             self.last_tick = now;
             self.play_sound(sound::Chime::Reminder);
         }
+        if self.next_chime.is_some_and(|t| now >= t) {
+            if self.alert_until.is_some() && self.alert_msg == TIMES_UP {
+                self.play_sound(sound::Chime::TimerDone);
+                self.next_chime = Some(now + self.alarm_every());
+            } else {
+                self.next_chime = None;
+            }
+        }
         if self.alert_until.is_some_and(|t| now >= t) {
             self.alert_until = None;
             self.last_tick = now;
@@ -3431,8 +3745,20 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         if self.view != self.shown_view {
+            // Moving between Music and its lyrics is the same page; any other change is a transition in
+            // which the old view fades out as the new one slides in from the side of its tab.
+            let tab = |v: View| self.visible_tabs().iter().position(|(_, t)| *t == if v == View::Lyrics { View::Player } else { v });
+            let (from, to) = (tab(self.shown_view), tab(self.view));
+            if from != to || from.is_none() {
+                self.prev_view = Some(self.shown_view);
+                self.switch_dir = match (from, to) {
+                    (Some(a), Some(b)) if b < a => -1.0,
+                    _ => 1.0,
+                };
+                self.switch_t = 0.0;
+                self.switch_v = 0.0;
+            }
             self.shown_view = self.view;
-            self.switch_t = 0.0;
             self.last_tick = now;
         }
         let goal = self.tuck_target();
@@ -3458,7 +3784,7 @@ impl ApplicationHandler<UserEvent> for App {
         if (expanded && (self.media.playing || self.editing || self.timer_field.is_some() || matches!(self.view, View::Water | View::Todo)))
             || self.timer.running()
         {
-            let tick = if expanded && self.media.playing && self.lyric_gliding() { FRAME * 2 } else { PROGRESS_TICK };
+            let tick = PROGRESS_TICK;
             let due = self.last_ui_tick + tick;
             if now >= due {
                 self.last_ui_tick = now;
@@ -3488,6 +3814,12 @@ impl ApplicationHandler<UserEvent> for App {
             at(now + Duration::from_secs(due.saturating_sub(todo::unix_now())));
         }
         if let Some(t) = self.alert_until {
+            at(t);
+        }
+        if let Some(t) = self.next_chime {
+            at(t);
+        }
+        if let Some(t) = panel_wake {
             at(t);
         }
         for t in [self.enter_at, self.leave_at].into_iter().flatten() {
@@ -3528,6 +3860,19 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lyric_lines_shrink_and_fade_with_distance_from_the_middle() {
+        assert_eq!(lyric_px(0.0), 18.0);
+        assert_eq!(lyric_px(1.0), 14.0);
+        assert_eq!(lyric_px(2.0), 13.0);
+        assert_eq!(lyric_px(5.0), 13.0);
+        assert!(lyric_px(0.5) > 14.0 && lyric_px(0.5) < 18.0, "smooth in between");
+        assert_eq!(lyric_tone(0.0), (255, 1.0));
+        assert_eq!(lyric_tone(9.0), (110, 0.45));
+        let (grey, strength) = lyric_tone(0.5);
+        assert!(grey > 175 && grey < 255 && strength > 0.85 && strength < 1.0);
+    }
 
     /// The whole tab bar has to fit in the notch.
     #[test]
