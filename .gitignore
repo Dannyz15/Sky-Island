@@ -1,0 +1,6 @@
+/target
+
+# Local tooling and private notes, not part of the project
+.claude/
+Sky Memory/
+/dist
