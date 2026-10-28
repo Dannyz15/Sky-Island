@@ -17,11 +17,13 @@ pub struct Settings {
     pub clock_24h: bool,
     pub idle_eyes: bool,
     pub sound: bool,
+    /// Keep a history of copied text.
+    pub clipboard: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { hide_fullscreen: true, show_clock: true, clock_24h: false, idle_eyes: true, sound: true }
+        Self { hide_fullscreen: true, show_clock: true, clock_24h: false, idle_eyes: true, sound: true, clipboard: true }
     }
 }
 
@@ -40,6 +42,7 @@ impl Settings {
         out.clock_24h = get("clock_24h", out.clock_24h);
         out.idle_eyes = get("idle_eyes", out.idle_eyes);
         out.sound = get("sound", out.sound);
+        out.clipboard = get("clipboard", out.clipboard);
         out
     }
 
@@ -60,6 +63,7 @@ impl Settings {
                 "clock_24h": self.clock_24h,
                 "idle_eyes": self.idle_eyes,
                 "sound": self.sound,
+                "clipboard": self.clipboard,
             });
             let _ = fs::write(p, body.to_string());
         }

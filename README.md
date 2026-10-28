@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A notch for the top of your Windows screen.</b><br>
-  Music, lyrics, a focus timer, water reminders, a file shelf and a to-do list, all tucked into one small pill.
+  Music, lyrics, a focus timer, water reminders, a file shelf, a to-do list and a clipboard history, all tucked into one small pill.
 </p>
 
 <p align="center">
@@ -38,7 +38,8 @@ It is written in Rust, runs natively on Windows 10 and 11, and keeps all of your
 | 💧 | **Water** | A daily glass counter with a goal and gentle reminders. |
 | 📂 | **Shelf** | A place to park files. Drag them onto the notch, and drag them out again later. |
 | ✅ | **To-do** | A short task list with optional reminders. |
-| ⚙️ | **Settings** | Start with Windows, hide in fullscreen apps, clock style, idle eyes, sounds, and Quit. |
+| 📋 | **Clipboard** | A history of what you copy, both text and pictures such as screenshots. Click an item to copy it again, or clear everything with one button. |
+| ⚙️ | **Settings** | Start with Windows, hide in fullscreen apps, clock style, idle eyes, sounds, clipboard history, and Quit. |
 
 ### It is alive even when closed
 
@@ -73,6 +74,8 @@ Hover over the notch to open it. The tab bar at the top switches between the vie
 
 **✅ To-do.** Click the box at the top and type a task. Press Enter to add it, or Esc to cancel. If you like, choose a reminder of 15 minutes, 1 hour, 3 hours or 1 day. Tick a task to finish it, and use `×` to delete it.
 
+**📋 Clipboard.** Everything you copy is added to the top of the list, newest first. Text shows as one line, and a picture, such as a screenshot, shows as a small preview with its size. Click an item to put it back on the clipboard, and use the `×` to remove one item. The **Clear** button empties the list and the Windows clipboard itself. The list keeps the last 30 items and the mouse wheel scrolls through them.
+
 ## Your data and privacy
 
 Everything stays on your computer, in `%APPDATA%\Sky-Island`:
@@ -88,6 +91,8 @@ Everything stays on your computer, in `%APPDATA%\Sky-Island`:
 | `lyrics\` | Lyrics you have already looked up |
 | `crash.log` | Only written if the app crashes, with the error message |
 
+The clipboard history is kept in memory only. It is never written to disk and it is gone when you close the app. It holds text and pictures, and it skips anything that an app, such as a password manager, marks as private. Pictures are stored compressed, and the oldest ones are dropped once they add up to about 48 MB. You can turn it off with **Clipboard history** in Settings. Windows has its own clipboard history (Windows key + V), which Sky Island does not touch.
+
 The only network request the app makes is the lyrics lookup. It sends the song title, artist and length to LRCLIB. There are no accounts and no tracking.
 
 To show Caps Lock and Num Lock notices, the app installs a Windows keyboard hook. It only checks whether the key pressed is Caps Lock or Num Lock. It never records, stores or sends anything you type. Some antivirus programs are cautious about any keyboard hook, so it is worth knowing about.
@@ -100,6 +105,7 @@ If you turn on **Start with Windows**, the app adds one value named `Sky Island`
 - Chrome and YouTube do not offer next or previous for a single video. Next is greyed out and Previous restarts the video. Playlists work normally.
 - Brightness notices only work on laptop screens, and only if the graphics driver lets the app read the brightness.
 - Lyrics depend on what LRCLIB has, so some songs have none.
+- The clipboard history holds text and pictures, not copied files.
 
 ## License
 

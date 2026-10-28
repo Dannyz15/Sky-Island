@@ -12,6 +12,7 @@ mod sys;
 mod todo;
 mod water;
 mod appicon;
+mod clipboard;
 mod dragdrop;
 mod focus;
 mod icon;
@@ -38,6 +39,7 @@ use winit::window::{Window, WindowId, WindowLevel};
 
 use lyrics::Line;
 use media::{Command, MediaHandle, MediaState};
+use clipboard::History;
 use focus::{CYCLE, FocusTimer};
 use presence::Presence;
 use settings::Settings;
@@ -69,6 +71,8 @@ pub enum UserEvent {
     LockKey { name: &'static str, vk: i32 },
     Presence { presence: Presence, fullscreen: bool },
     Menu(MenuId),
+    /// Text or a picture was copied to the clipboard.
+    Clip(clipboard::Content),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -79,20 +83,22 @@ enum View {
     Water,
     Shelf,
     Todo,
+    Clipboard,
     Settings,
 }
 
 /// Tab bar entries, left to right.
-const TABS: [(&str, View); 6] = [
+const TABS: [(&str, View); 7] = [
     ("Music", View::Player),
     ("Focus", View::Focus),
     ("Water", View::Water),
     ("Shelf", View::Shelf),
     ("To-do", View::Todo),
+    ("Clipboard", View::Clipboard),
     ("Settings", View::Settings),
 ];
-const TAB_W: f32 = 56.0;
-const TAB_GAP: f32 = 6.0;
+const TAB_W: f32 = 44.0;
+const TAB_GAP: f32 = 4.0;
 // Focus view layout, in logical pixels.
 const RING: (f32, f32, f32) = (104.0, 100.0, 48.0); // center x, center y, radius
 const RING_W: f32 = 7.0;
@@ -117,7 +123,7 @@ const OVERLAY: (f64, f64) = (300.0, 52.0);
 const NOTICE_TIME: Duration = Duration::from_millis(2200);
 const GREETING: Duration = Duration::from_millis(1600);
 const BLINK: Duration = Duration::from_millis(160);
-const SETTINGS_ITEMS: usize = 7;
+const SETTINGS_ITEMS: usize = 8;
 // To-do view, in logical pixels.
 const TODO_FIELD: (f32, f32, f32, f32) = (24.0, 34.0, 372.0, 24.0);
 const TODO_ROWS_Y: f32 = 64.0;
@@ -129,6 +135,13 @@ const HOVER_OPEN: Duration = Duration::from_millis(90);
 const HOVER_CLOSE: Duration = Duration::from_millis(250);
 /// Seconds the lyrics take to glide to a newly sung line.
 const LYRIC_GLIDE: f32 = 0.28;
+// Clipboard view, in logical pixels.
+const CLIP_CLEAR: (f32, f32, f32, f32) = (324.0, 34.0, 72.0, 22.0);
+const CLIP_ROWS_Y: f32 = 64.0;
+const CLIP_ROW_H: f32 = 32.0;
+const CLIP_TEAL: [u8; 3] = [70, 200, 210];
+/// How long the "Copied" / "Cleared" message stays in the clipboard header.
+const FLASH: Duration = Duration::from_millis(1400);
 const ALERT: Duration = Duration::from_secs(6);
 
 enum LyricsState {
@@ -180,6 +193,9 @@ struct App {
     notice_until: Option<Instant>,
     /// 0.0 = no notice, 1.0 = compact notice size
     ov_t: f64,
+    clips: History,
+    /// A short message for the clipboard header, with when to remove it.
+    clip_flash: Option<(&'static str, Instant)>,
     /// When the cursor entering/leaving takes effect (see HOVER_OPEN, HOVER_CLOSE).
     enter_at: Option<Instant>,
     leave_at: Option<Instant>,
@@ -244,6 +260,8 @@ impl App {
             notice: None,
             notice_until: None,
             ov_t: 0.0,
+            clips: History::new(),
+            clip_flash: None,
             enter_at: None,
             leave_at: None,
             tray: None,
@@ -467,6 +485,29 @@ impl App {
                 }
                 window.request_redraw();
             }
+            View::Clipboard => {
+                let inside = |r: (f32, f32, f32, f32)| cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3;
+                if inside(CLIP_CLEAR) {
+                    // Clears the history here and the Windows clipboard itself.
+                    self.clips.clear();
+                    clipboard::empty();
+                    self.clip_flash = Some(("Cleared", Instant::now() + FLASH));
+                } else {
+                    let row = ((cy - CLIP_ROWS_Y) / CLIP_ROW_H).floor();
+                    let Some(idx) = (row >= 0.0).then(|| self.clips.index_at(row as usize)).flatten() else { return };
+                    if cx >= 372.0 {
+                        self.clips.remove(idx);
+                    } else if let Some(content) = self.clips.items.get(idx).cloned() {
+                        // The watcher will see this change and move the entry to the top.
+                        if clipboard::set_content(&content) {
+                            self.clip_flash = Some(("Copied", Instant::now() + FLASH));
+                        }
+                    } else {
+                        return;
+                    }
+                }
+                window.request_redraw();
+            }
             View::Settings => {
                 let Some(i) = (0..SETTINGS_ITEMS).find(|&i| {
                     let r = settings_cell(i);
@@ -485,6 +526,7 @@ impl App {
                     3 => self.settings.clock_24h = !self.settings.clock_24h,
                     4 => self.settings.idle_eyes = !self.settings.idle_eyes,
                     5 => self.settings.sound = !self.settings.sound,
+                    6 => self.settings.clipboard = !self.settings.clipboard,
                     _ => self.quit = true,
                 }
                 self.settings.save();
@@ -719,6 +761,7 @@ impl App {
                 View::Shelf => self.draw_shelf(&mut pixmap, s, alpha),
                 View::Settings => self.draw_settings(&mut pixmap, s, alpha),
                 View::Todo => self.draw_todo(&mut pixmap, s, alpha),
+                View::Clipboard => self.draw_clipboard(&mut pixmap, s, alpha),
             }
         }
 
@@ -832,16 +875,15 @@ impl App {
     }
 
     fn draw_tabs(&self, pm: &mut Pixmap, s: f32, alpha: f32, active: View) {
-        let Some(font) = &self.font else { return };
         let a = (alpha * 255.0) as u8;
-        for (i, (label, view)) in TABS.iter().enumerate() {
+        for (i, (_, view)) in TABS.iter().enumerate() {
             let (x, y, w, h) = tab_rect(i);
             let on = *view == active;
             if on {
                 fill_rounded(pm, x * s, y * s, w * s, h * s, h * s / 2.0, [255, 255, 255, (alpha * 40.0) as u8]);
             }
             let color = if on { [255, 255, 255, a] } else { [150, 150, 155, a] };
-            draw_text_centered(pm, font, label, (x + w / 2.0) * s, (y + 14.0) * s, 11.0 * s, color, w * s);
+            draw_tab_icon(pm, *view, (x + w / 2.0) * s, (y + h / 2.0) * s, s, color);
         }
     }
 
@@ -1350,6 +1392,7 @@ impl App {
             ("24-hour clock", self.settings.clock_24h),
             ("Idle eyes", self.settings.idle_eyes),
             ("Sounds", self.settings.sound),
+            ("Clipboard history", self.settings.clipboard),
         ];
         for (i, (label, on)) in toggles.iter().enumerate() {
             let (x, y, w, h) = settings_cell(i);
@@ -1357,7 +1400,7 @@ impl App {
             draw_switch(pm, (x + w - 34.0) * s, (y + h / 2.0 - 8.0) * s, s, *on, a);
         }
 
-        let (x, y, w, h) = settings_cell(6);
+        let (x, y, w, h) = settings_cell(7);
         fill_rounded(pm, x * s, (y + 2.0) * s, w * s, (h - 4.0) * s, 8.0 * s, [255, 90, 80, (alpha * 36.0) as u8]);
         draw_text_centered(pm, font, "Quit Sky Island", (x + w / 2.0) * s, (y + h / 2.0 + 4.0) * s, 12.0 * s, [255, 120, 110, a], w * s);
     }
@@ -1461,6 +1504,79 @@ impl App {
             fill_rounded(pm, 410.0 * s, top * s, 3.0 * s, height * s, 1.5 * s, [50, 50, 56, a]);
             let thumb = height * todo::VISIBLE as f32 / total as f32;
             let at = top + (height - thumb) * self.todo.scroll as f32 / (total - todo::VISIBLE) as f32;
+            fill_rounded(pm, 410.0 * s, at * s, 3.0 * s, thumb * s, 1.5 * s, grey);
+        }
+    }
+
+    fn draw_clipboard(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let a = (alpha * 255.0) as u8;
+        let (white, grey) = ([255, 255, 255, a], [160, 160, 165, a]);
+        let teal = [CLIP_TEAL[0], CLIP_TEAL[1], CLIP_TEAL[2], a];
+        let width = EXPANDED.0 as f32 * s;
+
+        self.draw_tabs(pm, s, alpha, View::Clipboard);
+
+        // Header: what the list holds, or a short message after copying or clearing.
+        let count = self.clips.items.len();
+        let (title, color) = match self.clip_flash {
+            Some((msg, _)) => (msg.to_string(), teal),
+            None if !self.settings.clipboard => ("Clipboard history is off".to_string(), grey),
+            None => (format!("Clipboard \u{00B7} {count} {}", if count == 1 { "item" } else { "items" }), grey),
+        };
+        draw_text(pm, font, &title, 24.0 * s, 51.0 * s, 12.0 * s, color, 280.0 * s);
+
+        // Clear button: empties the history and the Windows clipboard.
+        let (x, y, w, h) = CLIP_CLEAR;
+        fill_rounded(pm, x * s, y * s, w * s, h * s, h * s / 2.0, [255, 90, 80, (alpha * 36.0) as u8]);
+        draw_text_centered(pm, font, "Clear", (x + w / 2.0) * s, (y + 15.0) * s, 12.0 * s, [255, 120, 110, a], w * s);
+
+        if !self.settings.clipboard || count == 0 {
+            let (title, hint) = if self.settings.clipboard {
+                ("Nothing copied yet", "Text and pictures you copy will show up here")
+            } else {
+                ("Clipboard history is off", "Turn it on in Settings")
+            };
+            draw_text_centered(pm, font, title, width / 2.0, 106.0 * s, 15.0 * s, white, width - 80.0 * s);
+            draw_text_centered(pm, font, hint, width / 2.0, 126.0 * s, 11.0 * s, grey, width - 80.0 * s);
+            return;
+        }
+
+        for row in 0..clipboard::VISIBLE {
+            let Some(i) = self.clips.index_at(row) else { continue };
+            let y = CLIP_ROWS_Y + row as f32 * CLIP_ROW_H;
+            fill_rounded(pm, 24.0 * s, (y + 1.0) * s, 372.0 * s, (CLIP_ROW_H - 2.0) * s, 6.0 * s, [255, 255, 255, (alpha * 14.0) as u8]);
+            match &self.clips.items[i] {
+                clipboard::Content::Text(text) => {
+                    let baseline = (y + CLIP_ROW_H / 2.0 + 4.0) * s;
+                    draw_text(pm, font, &clipboard::preview(text), 32.0 * s, baseline, 12.0 * s, white, 328.0 * s);
+                }
+                clipboard::Content::Image(img) => {
+                    // The preview is stored at twice its drawn size, so it stays sharp on high-DPI screens.
+                    if let Some(mut thumb) = Pixmap::new(img.thumb_w, img.thumb_h) {
+                        for (dst, px) in thumb.pixels_mut().iter_mut().zip(img.thumb.chunks_exact(4)) {
+                            *dst = tiny_skia::ColorU8::from_rgba(px[0], px[1], px[2], px[3]).premultiply();
+                        }
+                        let (dw, dh) = (img.thumb_w as f32 / 2.0, img.thumb_h as f32 / 2.0);
+                        let paint = PixmapPaint { opacity: alpha, quality: FilterQuality::Bilinear, ..Default::default() };
+                        let at = Transform::from_scale(s / 2.0, s / 2.0)
+                            .post_translate((32.0 + (48.0 - dw) / 2.0) * s, (y + (CLIP_ROW_H - dh) / 2.0) * s);
+                        pm.draw_pixmap(0, 0, thumb.as_ref(), &paint, at, None);
+                    }
+                    draw_text(pm, font, "Image", 92.0 * s, (y + 14.0) * s, 12.0 * s, white, 200.0 * s);
+                    let size = format!("{} \u{00D7} {}", img.width, img.height);
+                    draw_text(pm, font, &size, 92.0 * s, (y + 27.0) * s, 10.0 * s, grey, 200.0 * s);
+                }
+            }
+            draw_text_centered(pm, font, "\u{00D7}", 384.0 * s, (y + CLIP_ROW_H / 2.0 + 5.0) * s, 13.0 * s, grey, 14.0 * s);
+        }
+
+        // Scroll indicator when there are more entries than rows.
+        if count > clipboard::VISIBLE {
+            let (top, height) = (CLIP_ROWS_Y, CLIP_ROW_H * clipboard::VISIBLE as f32);
+            fill_rounded(pm, 410.0 * s, top * s, 3.0 * s, height * s, 1.5 * s, [50, 50, 56, a]);
+            let thumb = height * clipboard::VISIBLE as f32 / count as f32;
+            let at = top + (height - thumb) * self.clips.scroll as f32 / (count - clipboard::VISIBLE) as f32;
             fill_rounded(pm, 410.0 * s, at * s, 3.0 * s, thumb * s, 1.5 * s, grey);
         }
     }
@@ -1647,11 +1763,11 @@ fn fmt_clock(hour: u32, minute: u32, clock_24h: bool) -> String {
     }
 }
 
-/// Settings cell: 0-3 left column, 4-5 right column, 6 is the Quit button (right column, last row).
+/// Settings cell: 0-3 left column, 4-6 right column, 7 is the Quit button (right column, last row).
 fn settings_cell(i: usize) -> (f32, f32, f32, f32) {
     let (col, row) = match i {
         0..=3 => (0, i),
-        4 | 5 => (1, i - 4),
+        4..=6 => (1, i - 4),
         _ => (1, 3), // the Quit button
     };
     (24.0 + col as f32 * 190.0, 36.0 + row as f32 * 32.0, 182.0, 28.0)
@@ -1810,6 +1926,86 @@ fn draw_headphones(pm: &mut Pixmap, cx: f32, cy: f32, s: f32, c: [u8; 4]) {
     fill_rounded(pm, cx + 6.0 * s, cy + 1.0 * s, 5.0 * s, 9.0 * s, 2.0 * s, c);
 }
 
+/// Stroke a polyline with rounded ends and corners; `closed` joins the last point to the first.
+fn stroke_poly(pm: &mut Pixmap, pts: &[(f32, f32)], width: f32, c: [u8; 4], closed: bool) {
+    let mut pb = PathBuilder::new();
+    pb.move_to(pts[0].0, pts[0].1);
+    for p in &pts[1..] {
+        pb.line_to(p.0, p.1);
+    }
+    if closed {
+        pb.close();
+    }
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        paint.anti_alias = true;
+        let stroke = Stroke { width, line_cap: LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+        pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+}
+
+/// The small icon that stands in for a tab's name, about 13 px across.
+fn draw_tab_icon(pm: &mut Pixmap, view: View, cx: f32, cy: f32, s: f32, c: [u8; 4]) {
+    let p = |dx: f32, dy: f32| (cx + dx * s, cy + dy * s);
+    let w = 1.5 * s;
+    match view {
+        View::Player => {
+            // Music note: head, stem and flag.
+            fill_circle(pm, cx - 2.5 * s, cy + 4.0 * s, 2.5 * s, c);
+            stroke_poly(pm, &[p(-0.2, 3.5), p(-0.2, -5.5), p(4.0, -3.0)], w, c, false);
+        }
+        View::Focus => {
+            // Timer: ring with two hands.
+            stroke_arc(pm, cx, cy + 0.5 * s, 5.5 * s, w, 1.0, c);
+            stroke_poly(pm, &[p(0.0, 3.0), p(0.0, -0.5), p(2.5, 1.5)], 1.3 * s, c, false);
+            stroke_line(pm, cx - 1.8 * s, cy - 7.0 * s, cx + 1.8 * s, cy - 7.0 * s, w, c);
+        }
+        View::Water => {
+            // Drop.
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx, cy - 6.5 * s);
+            pb.cubic_to(cx + 1.0 * s, cy - 3.0 * s, cx + 5.0 * s, cy - 0.5 * s, cx + 5.0 * s, cy + 2.0 * s);
+            pb.cubic_to(cx + 5.0 * s, cy + 5.0 * s, cx + 2.8 * s, cy + 6.5 * s, cx, cy + 6.5 * s);
+            pb.cubic_to(cx - 2.8 * s, cy + 6.5 * s, cx - 5.0 * s, cy + 5.0 * s, cx - 5.0 * s, cy + 2.0 * s);
+            pb.cubic_to(cx - 5.0 * s, cy - 0.5 * s, cx - 1.0 * s, cy - 3.0 * s, cx, cy - 6.5 * s);
+            pb.close();
+            if let Some(path) = pb.finish() {
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+                paint.anti_alias = true;
+                pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+        View::Shelf => {
+            // Tray with an arrow dropping into it.
+            stroke_poly(pm, &[p(-6.0, 0.5), p(-6.0, 5.5), p(6.0, 5.5), p(6.0, 0.5)], w, c, false);
+            stroke_line(pm, cx, cy - 6.0 * s, cx, cy + 2.0 * s, w, c);
+            stroke_poly(pm, &[p(-3.0, -1.0), p(0.0, 2.0), p(3.0, -1.0)], w, c, false);
+        }
+        View::Todo => {
+            // Check mark in a circle.
+            stroke_arc(pm, cx, cy, 6.0 * s, w, 1.0, c);
+            stroke_poly(pm, &[p(-2.6, 0.2), p(-0.7, 2.3), p(2.8, -2.0)], w, c, false);
+        }
+        View::Clipboard => {
+            // Board, clip and two lines of text.
+            stroke_poly(pm, &[p(-5.0, -5.0), p(5.0, -5.0), p(5.0, 6.5), p(-5.0, 6.5)], w, c, true);
+            fill_rounded(pm, cx - 2.6 * s, cy - 7.2 * s, 5.2 * s, 3.4 * s, 1.2 * s, c);
+            stroke_line(pm, cx - 2.4 * s, cy, cx + 2.4 * s, cy, 1.2 * s, c);
+            stroke_line(pm, cx - 2.4 * s, cy + 3.0 * s, cx + 1.0 * s, cy + 3.0 * s, 1.2 * s, c);
+        }
+        View::Lyrics => {}
+        View::Settings => {
+            // Three sliders.
+            for (dy, knob) in [(-4.5, -2.5), (0.0, 2.5), (4.5, -1.0)] {
+                stroke_line(pm, cx - 6.0 * s, cy + dy * s, cx + 6.0 * s, cy + dy * s, 1.3 * s, c);
+                fill_circle(pm, cx + knob * s, cy + dy * s, 2.1 * s, c);
+            }
+        }
+    }
+}
+
 fn fill_circle(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, c: [u8; 4]) {
     if let Some(path) = PathBuilder::from_circle(cx, cy, r) {
         let mut paint = Paint::default();
@@ -1917,12 +2113,20 @@ impl ApplicationHandler<UserEvent> for App {
         self.build_tray();
         sys::install_lock_hook(self.proxy.clone());
         presence::spawn(self.proxy.clone());
+        clipboard::spawn_watcher(self.proxy.clone());
         self.step();
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Notice(notice) => self.show_notice(notice),
+            UserEvent::Clip(content) => {
+                if self.settings.clipboard && self.clips.add(content) && self.view == View::Clipboard && self.progress > 0.0 {
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+            }
             UserEvent::Menu(id) => {
                 let now = Instant::now();
                 if Some(&id) == self.tray_quit_id.as_ref() {
@@ -2028,7 +2232,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
             }
             WindowEvent::MouseWheel { delta, .. }
-                if matches!(self.view, View::Shelf | View::Todo) && self.progress >= 0.9 =>
+                if matches!(self.view, View::Shelf | View::Todo | View::Clipboard) && self.progress >= 0.9 =>
             {
                 let dy = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y as f64,
@@ -2039,6 +2243,7 @@ impl ApplicationHandler<UserEvent> for App {
                     let rows = if dy > 0.0 { -1 } else { 1 };
                     match self.view {
                         View::Todo => self.todo.scroll_by(rows),
+                        View::Clipboard => self.clips.scroll_by(rows),
                         _ => self.shelf.scroll_by(rows),
                     }
                     if let Some(w) = &self.window {
@@ -2154,6 +2359,12 @@ impl ApplicationHandler<UserEvent> for App {
             self.notice_until = None;
             self.last_tick = now;
         }
+        if self.clip_flash.as_ref().is_some_and(|(_, t)| now >= *t) {
+            self.clip_flash = None;
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
 
         // Only tick while something is changing; otherwise sleep until the next event (0% idle CPU).
         if self.animating() {
@@ -2210,6 +2421,9 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(t) = self.notice_until {
             at(t);
         }
+        if let Some((_, t)) = self.clip_flash {
+            at(t);
+        }
 
         event_loop.set_control_flow(match wake {
             Some(t) => ControlFlow::WaitUntil(t),
@@ -2239,6 +2453,13 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The whole tab bar has to fit in the notch.
+    #[test]
+    fn tab_bar_fits_the_notch() {
+        let total = TABS.len() as f32 * TAB_W + (TABS.len() as f32 - 1.0) * TAB_GAP;
+        assert!(total <= EXPANDED.0 as f32 - 8.0, "tab bar is {total}px wide");
+    }
 
     /// Every non-ASCII character the UI draws must exist in the loaded font, or it shows as a box.
     #[test]
