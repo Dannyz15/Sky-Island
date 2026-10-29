@@ -5,7 +5,10 @@ use std::f32::consts::TAU;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use std::path::Path;
+
 use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
+use windows::Win32::Media::Multimedia::mciSendStringW;
 use windows::core::PCWSTR;
 
 const RATE: u32 = 44_100;
@@ -43,6 +46,44 @@ pub fn play(chime: Chime, volume: u32) {
     unsafe {
         let _ = PlaySoundW(PCWSTR(wav.as_ptr() as *const u16), None, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
     }
+}
+
+/// Send one command to the system's media player (MCI), which plays WAV, MP3, WMA, AAC and more.
+/// Returns whether it worked, and the text it answered with.
+fn mci(command: &str) -> (bool, String) {
+    let wide: Vec<u16> = command.encode_utf16().chain(Some(0)).collect();
+    let mut answer = [0u16; 64];
+    let code = unsafe { mciSendStringW(PCWSTR(wide.as_ptr()), Some(&mut answer), None) };
+    let len = answer.iter().position(|&c| c == 0).unwrap_or(answer.len());
+    (code == 0, String::from_utf16_lossy(&answer[..len]))
+}
+
+/// Play a sound file the user picked, without blocking, at `volume` percent. A file that is still
+/// playing is left alone, so a long song is not restarted by every repeat of the alarm. Returns
+/// whether it is playing; false means the file could not be played.
+pub fn play_file(path: &Path, volume: u32) -> bool {
+    const ALIAS: &str = "skyalarm";
+    if mci(&format!("status {ALIAS} mode")).1 == "playing" {
+        return true;
+    }
+    mci(&format!("close {ALIAS}"));
+    // Quotes are not allowed in Windows file names, so the path can be quoted as it is.
+    if !mci(&format!("open \"{}\" type mpegvideo alias {ALIAS}", path.display())).0 {
+        return false;
+    }
+    // MCI's volume runs from 0 to 1000; not every kind of file supports it, which is fine.
+    mci(&format!("setaudio {ALIAS} volume to {}", volume.clamp(0, 100) * 10));
+    if mci(&format!("play {ALIAS} from 0")).0 {
+        true
+    } else {
+        mci(&format!("close {ALIAS}"));
+        false
+    }
+}
+
+/// Stop the user's sound file if it is playing.
+pub fn stop_file() {
+    mci("close skyalarm");
 }
 
 /// A 16-bit mono WAV file of bell-like notes: a sine with two quieter overtones that fades out.
@@ -114,6 +155,23 @@ mod tests {
         };
         assert!((peak(0.5) as u32) < peak(1.0) as u32 * 6 / 10, "half the volume should be about half as loud");
         assert!(peak(0.1) > 500, "the quietest setting can still be heard");
+    }
+
+    #[test]
+    fn a_missing_sound_file_is_refused_so_the_chime_is_used() {
+        assert!(!play_file(Path::new(r"C:\no\such\sound.mp3"), 50));
+    }
+
+    /// Plays a real file, so it needs a sound card: run it by hand with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_real_sound_file_plays_and_stops() {
+        let path = Path::new(r"C:\Windows\Media\tada.wav");
+        assert!(play_file(path, 10));
+        assert_eq!(mci("status skyalarm mode").1, "playing");
+        assert!(play_file(path, 10), "a file that is still playing is left alone");
+        stop_file();
+        assert!(!mci("status skyalarm mode").0, "stopping closes it");
     }
 
     #[test]

@@ -102,7 +102,7 @@ pub const ALARM_EVERY: Range = Range { min: 1, max: 10, step: 1 };
 /// How long the timer's alarm rings if nobody stops it, in seconds.
 pub const ALARM_FOR: Range = Range { min: 10, max: 120, step: 10 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Settings {
     pub hide_fullscreen: bool,
     pub show_clock: bool,
@@ -124,6 +124,8 @@ pub struct Settings {
     pub volume: u32,
     pub alarm_every: u32,
     pub alarm_for: u32,
+    /// A sound file to play instead of the built-in chime when the timer ends.
+    pub alarm_sound: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -137,6 +139,7 @@ impl Default for Settings {
             volume: 100,
             alarm_every: 3,
             alarm_for: 60,
+            alarm_sound: None,
         }
     }
 }
@@ -176,6 +179,7 @@ impl Settings {
         out.volume = num("volume", VOLUME, out.volume);
         out.alarm_every = num("alarm_every", ALARM_EVERY, out.alarm_every);
         out.alarm_for = num("alarm_for", ALARM_FOR, out.alarm_for);
+        out.alarm_sound = v.get("alarm_sound").and_then(Value::as_str).filter(|p| !p.is_empty()).map(PathBuf::from);
         out
     }
 
@@ -207,6 +211,7 @@ impl Settings {
                 "volume": self.volume,
                 "alarm_every": self.alarm_every,
                 "alarm_for": self.alarm_for,
+                "alarm_sound": self.alarm_sound.as_ref().map(|p| p.to_string_lossy().into_owned()),
             });
             let _ = fs::write(p, body.to_string());
         }

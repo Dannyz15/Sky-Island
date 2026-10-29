@@ -22,6 +22,7 @@ mod timer;
 mod icon;
 mod motion;
 mod panel;
+mod update;
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -58,6 +59,9 @@ use water::Water;
 use motion::{Glows, spring};
 
 const COLLAPSED: (f64, f64) = (180.0, 32.0);
+/// Width of the curved flare on each side of the notch's top edge, where it meets the top of the screen.
+/// The window is this much wider than the notch on both sides; the notch is drawn in the middle.
+const EAR: f64 = 12.0;
 const EXPANDED: (f64, f64) = (420.0, 168.0);
 /// Keys for the animated values that are not tied to a rectangle (see `motion::Glows`).
 const KEY_PLAYER_PLAY: u64 = 0x4000_0000_0000_0001;
@@ -67,6 +71,8 @@ const KEY_WATER: u64 = 0x4000_0000_0000_0004;
 const KEY_LYRIC_SYNC: u64 = 0x4000_0000_0000_0005;
 const FRAME: Duration = Duration::from_millis(8);
 const PROGRESS_TICK: Duration = Duration::from_millis(500);
+/// How often the timer's ring is redrawn while it is on screen and running, so it empties smoothly.
+const RING_TICK: Duration = Duration::from_millis(16);
 /// How much of a hidden island stays on the top edge of the screen, in logical pixels.
 const TUCK_STRIP: f64 = 3.0;
 
@@ -84,6 +90,8 @@ pub enum UserEvent {
     Menu(MenuId),
     /// Text or a picture was copied to the clipboard.
     Clip(clipboard::Content),
+    /// The answer to "Check for updates".
+    Update(update::Status),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -124,6 +132,8 @@ const TIMER_MINUS_Y: f32 = 108.0;
 const TIMER_BTN_R: f32 = 10.0;
 const TIMER_CTRL_Y: f32 = 140.0;
 const TIMER_START_X: f32 = 263.0;
+/// The red Stop button shown while the timer's alarm rings.
+const STOP_BUTTON: (f32, f32, f32, f32) = (TIMER_COLS[1] - 62.0, TIMER_CTRL_Y - 16.0, 124.0, 32.0);
 const TIMER_RESET_X: f32 = 323.0;
 const TIMER_CHIP_W: f32 = 34.0;
 const ADJUST: [(f32, f32); 2] = [(231.0, 70.0), (355.0, 70.0)]; // minus, plus button centers
@@ -152,6 +162,8 @@ const TODO_AMBER: [u8; 3] = [255, 190, 70];
 /// The Sync button that appears over the lyrics after they were scrolled away from the music.
 const SYNC_RECT: (f32, f32, f32, f32) = (LYRIC_X + LYRIC_W - 62.0, 148.0, 62.0, 20.0);
 // Clipboard view, in logical pixels.
+/// The shelf's Clear button, in the free corner of the tab row.
+const SHELF_CLEAR: (f32, f32, f32, f32) = (378.0, 8.0, 36.0, 16.0);
 const CLIP_CLEAR: (f32, f32, f32, f32) = (324.0, 34.0, 72.0, 22.0);
 const CLIP_ROWS_Y: f32 = 64.0;
 const CLIP_ROW_H: f32 = 32.0;
@@ -245,6 +257,10 @@ struct App {
     drag_hover: bool,
     /// Shelf item index and cursor position where the mouse went down.
     press: Option<(usize, (f64, f64))>,
+    /// Shelf files highlighted with Ctrl+click; dragging one of them takes all of them.
+    selected: Vec<PathBuf>,
+    /// The notch took the keyboard for the shelf's Ctrl+A and Esc, so it hands it back when the highlight ends.
+    selecting: bool,
     /// Where the progress bar is being dragged to; the song jumps there when the button is let go.
     scrub: Option<Duration>,
     /// The lyrics just opened or closed: the notch changes width under the mouse, so the system's
@@ -332,6 +348,8 @@ struct App {
     panel: Option<Panel>,
     /// Open the settings window the next time the event loop is free to (a click cannot create a window).
     panel_wanted: bool,
+    /// How the last "Check for updates" in the settings window went.
+    update: update::Status,
     /// When the timer's alarm sounds again while it is ringing.
     next_chime: Option<Instant>,
     last_tick: Instant,
@@ -364,6 +382,8 @@ impl App {
             icons: HashMap::new(),
             drag_hover: false,
             press: None,
+            selected: Vec::new(),
+            selecting: false,
             scrub: None,
             lyric_settle: false,
             notice: None,
@@ -386,7 +406,7 @@ impl App {
             edit_started: Instant::now(),
             editor: editor::Editor::new_task(None, clock_now()),
             prev_foreground: None,
-            settings,
+            settings: settings.clone(),
             autostart: settings::autostart_enabled(),
             presence: Presence::Active,
             fullscreen: false,
@@ -423,6 +443,7 @@ impl App {
             system_light: false,
             panel: None,
             panel_wanted: false,
+            update: update::Status::Idle,
             next_chime: None,
             shown_view: View::Player,
             last_tick: Instant::now(),
@@ -606,13 +627,13 @@ impl App {
         // Opening the lyrics widens the notch evenly on both sides, so it stays centred on the screen.
         let w = lerp(base.0, lerp(EXPANDED.0, LYRICS_W, wide), t);
         let h = lerp(base.1, full_h, t);
-        let _ = window.request_inner_size(LogicalSize::new(w, h));
+        let _ = window.request_inner_size(LogicalSize::new(w + 2.0 * EAR, h));
 
         if let Some(monitor) = window.current_monitor().or_else(|| window.primary_monitor()) {
             let scale = window.scale_factor();
             let mpos = monitor.position();
             let msize = monitor.size();
-            let pw = w * scale;
+            let pw = (w + 2.0 * EAR) * scale;
             let x = mpos.x as f64 + (msize.width as f64 - pw) / 2.0;
             // Tucked away, only a thin strip stays on screen, so the cursor can still find the island.
             let y = mpos.y as f64 - self.tuck_t.clamp(0.0, 1.0) * (h - TUCK_STRIP) * scale;
@@ -646,14 +667,54 @@ impl App {
         lines.iter().rposition(|l| l.at <= pos)
     }
 
+    /// Take the keyboard while files are highlighted (the notch never takes focus on its own), so that
+    /// Ctrl+A and Esc reach it, and give it back to the app the user was in once nothing is highlighted.
+    fn sync_selection_focus(&mut self) {
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
+        if !self.selected.is_empty() && !self.selecting && !self.editing && self.timer_field.is_none() {
+            let fg = unsafe { GetForegroundWindow() };
+            self.prev_foreground = (!fg.is_invalid()).then_some(fg);
+            self.selecting = true;
+            if let Some(w) = &self.window {
+                w.focus_window();
+            }
+        } else if self.selected.is_empty() && self.selecting {
+            self.selecting = false;
+            if let Some(h) = self.prev_foreground.take() {
+                let _ = unsafe { SetForegroundWindow(h) };
+            }
+        }
+    }
+
     /// Start dragging a shelf file out to another app. Blocks until the drag ends.
     fn drag_out(&mut self, idx: usize) {
         let Some(path) = self.shelf.items.get(idx).cloned() else { return };
-        let _ = dragdrop::drag_file(&path);
-        // The file may have been moved by the drop.
-        self.shelf.prune();
+        // Dragging a highlighted file takes every highlighted file; any other file goes alone.
+        let paths = if self.selected.contains(&path) {
+            self.shelf.items.iter().filter(|p| self.selected.contains(p)).cloned().collect()
+        } else {
+            self.selected.clear();
+            self.sync_selection_focus();
+            vec![path]
+        };
+        let dropped = dragdrop::drag_files(&paths).unwrap_or(false);
         // No cursor events arrive during the drag, so work out whether it ended over the notch.
-        self.hovered = self.cursor_over_window();
+        let back_on_notch = self.cursor_over_window();
+        // Files that were dropped somewhere have left the shelf, whether the drop moved or copied them
+        // (a copy to another drive or into a chat app leaves the original where it was). Letting go over
+        // nothing, cancelling, or dropping them back on the notch keeps them.
+        if dropped && !back_on_notch {
+            for path in &paths {
+                if let Some(i) = self.shelf.items.iter().position(|p| p == path) {
+                    self.shelf.remove(i);
+                }
+            }
+            self.selected.clear();
+            self.sync_selection_focus();
+        }
+        // The file may also have been moved by the drop.
+        self.shelf.prune();
+        self.hovered = back_on_notch;
         self.enter_at = None;
         self.leave_at = None;
         self.last_tick = Instant::now();
@@ -709,12 +770,19 @@ impl App {
         let s = window.scale_factor() as f32;
         let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s);
 
-        // While the timer's alarm rings, a click anywhere just stops it.
-        if self.alert_until.is_some() && self.alert_msg == TIMES_UP {
-            self.alert_until = None;
-            self.next_chime = None;
-            window.request_redraw();
-            return;
+        // While the timer's alarm rings, only its Stop button stops it.
+        if self.alert_until.is_some() && self.alert_msg == TIMES_UP && self.view == View::Timer {
+            if cx >= STOP_BUTTON.0 && cx <= STOP_BUTTON.0 + STOP_BUTTON.2 && cy >= STOP_BUTTON.1 && cy <= STOP_BUTTON.1 + STOP_BUTTON.3 {
+                self.alert_until = None;
+                self.next_chime = None;
+                sound::stop_file();
+                window.request_redraw();
+                return;
+            }
+            // The hidden controls under the Stop button stay dead; only the tab bar still works.
+            if cy > 30.0 {
+                return;
+            }
         }
 
         // A click anywhere finishes the number being typed; it is then handled as usual.
@@ -835,9 +903,29 @@ impl App {
                     let inside = cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3;
                     inside.then(|| self.shelf.index_at(slot).map(|i| (i, r))).flatten()
                 });
+                let clear = SHELF_CLEAR;
+                if !self.shelf.items.is_empty() && cx >= clear.0 && cx <= clear.0 + clear.2 && cy >= clear.1 && cy <= clear.1 + clear.3 {
+                    // Takes every file off the shelf; the files themselves are never touched.
+                    self.shelf.clear();
+                    self.selected.clear();
+                    self.sync_selection_focus();
+                    window.request_redraw();
+                    return;
+                }
                 let Some((idx, r)) = hit else { return };
                 if cx >= r.0 + r.2 - 16.0 && cy <= r.1 + 16.0 {
                     self.shelf.remove(idx);
+                    window.request_redraw();
+                } else if ctrl_down() {
+                    // Ctrl+click highlights or un-highlights one file without opening it.
+                    let path = self.shelf.items[idx].clone();
+                    match self.selected.iter().position(|p| *p == path) {
+                        Some(i) => {
+                            self.selected.remove(i);
+                        }
+                        None => self.selected.push(path),
+                    }
+                    self.sync_selection_focus();
                     window.request_redraw();
                 } else {
                     self.press = Some((idx, self.cursor));
@@ -1084,14 +1172,17 @@ impl App {
         }
         let Some(window) = self.window.clone() else { return };
         let size = window.inner_size();
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
+        let (Some(full_w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
             return;
         };
+        // The notch itself is drawn in the middle; the flares on its sides are added at the end.
+        let s = window.scale_factor() as f32;
+        let ear = (EAR as f32 * s).round();
+        let Some(w) = NonZeroU32::new(full_w.get().saturating_sub(2 * ear as u32)) else { return };
         let Some(mut pixmap) = Pixmap::new(w.get(), h.get()) else { return };
         pixmap.fill(Color::TRANSPARENT);
 
         // The notch: square top edge, rounded bottom corners, a dark gradient and a hairline border.
-        let s = window.scale_factor() as f32;
         let (fw, fh) = (w.get() as f32, h.get() as f32);
         let r = (fh / 2.0).min(28.0 * s);
         let mut pb = PathBuilder::new();
@@ -1145,6 +1236,17 @@ impl App {
             let mut paint = Paint::default();
             let edge = theme::border();
             paint.set_color_rgba8(edge[0], edge[1], edge[2], edge[3]);
+            // The line fades in below the flares, so it does not show beside them.
+            let (clear, solid) = (Color::from_rgba8(edge[0], edge[1], edge[2], 0), Color::from_rgba8(edge[0], edge[1], edge[2], edge[3]));
+            if let Some(shader) = tiny_skia::LinearGradient::new(
+                tiny_skia::Point::from_xy(0.0, ear),
+                tiny_skia::Point::from_xy(0.0, ear * 3.0),
+                vec![tiny_skia::GradientStop::new(0.0, clear), tiny_skia::GradientStop::new(1.0, solid)],
+                tiny_skia::SpreadMode::Pad,
+                Transform::identity(),
+            ) {
+                paint.shader = shader;
+            }
             paint.anti_alias = true;
             let stroke = Stroke { width: 1.0 * s, ..Default::default() };
             pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -1186,11 +1288,16 @@ impl App {
             self.draw_notice(&mut pixmap, notice, s, notice_alpha, fw);
         }
 
+        // Put the notch in the middle of the window and add the flares on both sides of its top edge.
+        let Some(mut out) = Pixmap::new(full_w.get(), h.get()) else { return };
+        out.draw_pixmap(ear as i32, 0, pixmap.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+        draw_ears(&mut out, ear);
+
         let Some(surface) = self.surface.as_mut() else { return };
-        surface.resize(w, h).ok();
+        surface.resize(full_w, h).ok();
         let Ok(mut buffer) = surface.buffer_mut() else { return };
         // tiny-skia is premultiplied RGBA; softbuffer wants 0RGB/ARGB u32.
-        for (dst, src) in buffer.iter_mut().zip(pixmap.pixels()) {
+        for (dst, src) in buffer.iter_mut().zip(out.pixels()) {
             *dst = (src.alpha() as u32) << 24
                 | (src.red() as u32) << 16
                 | (src.green() as u32) << 8
@@ -1415,7 +1522,7 @@ impl App {
         // Right: the length as hours, minutes and seconds, each with a plus above and a minus below.
         if finished {
             draw_text_centered(pm, heading, TIMES_UP, TIMER_COLS[1] * s, 92.0 * s, 22.0 * s, accent, 190.0 * s);
-            draw_text_centered(pm, font, "Press start to run it again", TIMER_COLS[1] * s, 112.0 * s, 11.0 * s, grey, 190.0 * s);
+            draw_text_centered(pm, font, "Press Stop to silence it", TIMER_COLS[1] * s, 112.0 * s, 11.0 * s, grey, 190.0 * s);
         } else {
             let (h, m, sec) = self.timer.parts();
             for (i, unit) in Unit::ALL.iter().enumerate() {
@@ -1451,6 +1558,20 @@ impl App {
                 }
                 draw_text(pm, font, unit.letter(), (x + 11.0) * s, (TIMER_VALUE_Y - 1.0) * s, 11.0 * s, grey, 12.0 * s);
             }
+        }
+
+        // While the alarm rings: one big red Stop button, like a phone's timer (only this button stops it).
+        if finished {
+            let r = STOP_BUTTON;
+            let hot = self.hot_t(r, s);
+            let red = [255, 82, 72];
+            gfx::glow(pm, (r.0 + r.2 / 2.0) * s, (r.1 + r.3 / 2.0) * s, 70.0 * s, [red[0], red[1], red[2], (alpha * pick(70.0, 44.0, hot)) as u8], None);
+            let top = gfx::mix([red[0], red[1], red[2], a], white, pick(0.28, 0.12, hot));
+            gfx::gradient_rounded(pm, r.0 * s, r.1 * s, r.2 * s, r.3 * s, r.3 * s / 2.0, top, [red[0], red[1], red[2], a], false);
+            let (cx, cy) = (r.0 + 34.0, r.1 + r.3 / 2.0);
+            fill_rounded(pm, (cx - 5.0) * s, (cy - 5.0) * s, 10.0 * s, 10.0 * s, 2.0 * s, white);
+            draw_text_centered(pm, heading, "Stop", (r.0 + r.2 / 2.0 + 10.0) * s, (cy + 5.0) * s, 15.0 * s, white, 70.0 * s);
+            return;
         }
 
         // Reset, and the big start / pause button.
@@ -1572,6 +1693,16 @@ impl App {
             return;
         }
 
+        // Clear button: takes every file off the shelf (the files themselves are never touched).
+        {
+            let (x, y, w, h) = SHELF_CLEAR;
+            let hot = self.hot_t(SHELF_CLEAR, s);
+            let red = [255, 96, 86];
+            gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, h * s / 2.0, [red[0], red[1], red[2], (alpha * pick(80.0, 48.0, hot)) as u8], [red[0], red[1], red[2], (alpha * pick(46.0, 22.0, hot)) as u8], false);
+            gfx::stroke_rounded(pm, x * s + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, h * s / 2.0, s, [red[0], red[1], red[2], (alpha * 90.0) as u8]);
+            draw_text_centered(pm, font, "Clear", (x + w / 2.0) * s, (y + 11.5) * s, 10.0 * s, [255, 130, 120, a], w * s);
+        }
+
         const PALETTE: [[u8; 3]; 6] =
             [[255, 99, 71], [80, 200, 120], [90, 150, 255], [255, 190, 70], [190, 120, 255], [70, 200, 210]];
         for slot in 0..COLS * ROWS {
@@ -1581,6 +1712,13 @@ impl App {
             let (x, y, w, h) = rect;
             let hot = self.hot_t(rect, s);
             draw_card(pm, rect, 10.0, s, alpha, hot, rgb);
+            // A highlighted file glows in the accent colour; it eases in and out.
+            let chosen = self.toggle_t(motion::rect_key(rect) >> 1, self.selected.contains(path)).clamp(0.0, 1.0);
+            if chosen > 0.01 {
+                let tint = |v: f32| [rgb[0], rgb[1], rgb[2], (alpha * v * chosen) as u8];
+                gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, 10.0 * s, tint(90.0), tint(40.0), false);
+                gfx::stroke_rounded(pm, x * s + s, y * s + s, w * s - 2.0 * s, h * s - 2.0 * s, 10.0 * s, 1.5 * s, tint(230.0));
+            }
 
             if let Some(Some(icon)) = self.icons.get(path) {
                 let size = 32.0 * s;
@@ -1863,6 +2001,19 @@ impl App {
         if let Some(item) = &self.tray_toggle {
             item.set_text(island_label(self.settings.hide_island));
         }
+    }
+
+    /// The timer's alarm: the sound file chosen in the settings window, or the built-in chime when there
+    /// is none (or it can't be played). A long file that is still playing is left to finish.
+    fn play_alarm(&self) {
+        if !self.settings.sound {
+            return;
+        }
+        if let Some(path) = &self.settings.alarm_sound
+            && sound::play_file(path, self.settings.volume) {
+                return;
+            }
+        sound::play(sound::Chime::TimerDone, self.settings.volume);
     }
 
     fn play_sound(&self, chime: sound::Chime) {
@@ -3330,6 +3481,39 @@ fn pick<T: Blend>(on: T, off: T, t: f32) -> T {
     T::blend(off, on, t)
 }
 
+/// Whether Ctrl is held right now. The notch never has the keyboard focus, so its own key events
+/// cannot be trusted to say.
+fn ctrl_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL};
+    unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) < 0 }
+}
+
+/// The curved flares on both sides of the notch's top edge, where it meets the top of the screen: the
+/// outer corners curve inwards, like a notch cut into the screen. `ear` is their width and height.
+fn draw_ears(pm: &mut Pixmap, ear: f32) {
+    if ear < 1.0 {
+        return;
+    }
+    let width = pm.width() as f32;
+    let body = theme::body()[0];
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(body[0], body[1], body[2], 255);
+    paint.anti_alias = true;
+    for left in [true, false] {
+        // Drawn for the left side, then mirrored for the right.
+        let x = |v: f32| if left { v } else { width - v };
+        let mut pb = PathBuilder::new();
+        pb.move_to(x(0.0), 0.0);
+        pb.line_to(x(ear), 0.0);
+        pb.line_to(x(ear), ear);
+        pb.quad_to(x(ear), 0.0, x(0.0), 0.0);
+        pb.close();
+        if let Some(path) = pb.finish() {
+            pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+}
+
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }
@@ -3339,6 +3523,8 @@ impl ApplicationHandler<UserEvent> for App {
         if self.window.is_some() {
             return;
         }
+        // A setup downloaded by "Check for updates" has done its job once this version is running.
+        update::clean_up_downloads();
         let attrs = Window::default_attributes()
             .with_title("Sky Island")
             .with_decorations(false)
@@ -3346,7 +3532,7 @@ impl ApplicationHandler<UserEvent> for App {
             .with_resizable(false)
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_skip_taskbar(true)
-            .with_inner_size(LogicalSize::new(COLLAPSED.0, COLLAPSED.1));
+            .with_inner_size(LogicalSize::new(COLLAPSED.0 + 2.0 * EAR, COLLAPSED.1));
         let window = Rc::new(event_loop.create_window(attrs).expect("create window"));
         let context = Context::new(window.clone()).expect("softbuffer context");
         self.surface = Some(Surface::new(&context, window.clone()).expect("softbuffer surface"));
@@ -3400,6 +3586,12 @@ impl ApplicationHandler<UserEvent> for App {
                 self.apply_visibility();
                 if let Some(w) = &self.window {
                     w.request_redraw();
+                }
+            }
+            UserEvent::Update(status) => {
+                self.update = status;
+                if let Some(p) = &self.panel {
+                    p.redraw();
                 }
             }
             UserEvent::LockKey { name, vk } => {
@@ -3475,6 +3667,9 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
+                // The window has a flare on each side of the notch; positions count from the notch itself.
+                let ear = EAR * self.window.as_ref().map_or(1.0, |w| w.scale_factor());
+                let position = PhysicalPosition::new(position.x - ear, position.y);
                 self.cursor = (position.x, position.y);
                 if self.scrub.is_some() {
                     let s = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
@@ -3508,9 +3703,30 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 // A press that never turned into a drag is a click: open the file.
                 if let Some((idx, _)) = self.press.take()
-                    && let Some(path) = self.shelf.items.get(idx) {
-                        let _ = std::process::Command::new("explorer").arg(path).spawn();
+                    && let Some(path) = self.shelf.items.get(idx).cloned() {
+                        let _ = std::process::Command::new("explorer").arg(&path).spawn();
+                        self.selected.clear();
+                        self.sync_selection_focus();
                     }
+            }
+            WindowEvent::Focused(false) if self.selecting => {
+                // The user went to another app: the highlight and the keyboard are no longer ours.
+                self.selecting = false;
+                self.prev_foreground = None;
+                self.selected.clear();
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+            WindowEvent::KeyboardInput { event, .. } if self.view == View::Shelf && event.state == ElementState::Pressed => {
+                match &event.logical_key {
+                    Key::Named(NamedKey::Escape) => self.selected.clear(),
+                    _ => return,
+                }
+                self.sync_selection_focus();
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
             }
             WindowEvent::MouseWheel { delta, .. } if self.view == View::Timer && !self.editing && self.progress >= 0.9 => {
                 let dy = match delta {
@@ -3703,7 +3919,10 @@ impl ApplicationHandler<UserEvent> for App {
             self.next_chime = Some(now + self.alarm_every());
             self.view = View::Timer;
             self.last_tick = now;
-            self.play_sound(sound::Chime::TimerDone);
+            self.play_alarm();
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
         }
         if let Some(text) = self.todo.take_due(todo::unix_now()) {
             let short: String = text.chars().take(40).collect();
@@ -3723,13 +3942,16 @@ impl ApplicationHandler<UserEvent> for App {
         }
         if self.next_chime.is_some_and(|t| now >= t) {
             if self.alert_until.is_some() && self.alert_msg == TIMES_UP {
-                self.play_sound(sound::Chime::TimerDone);
+                self.play_alarm();
                 self.next_chime = Some(now + self.alarm_every());
             } else {
                 self.next_chime = None;
             }
         }
         if self.alert_until.is_some_and(|t| now >= t) {
+            if self.alert_msg == TIMES_UP {
+                sound::stop_file();
+            }
             self.alert_until = None;
             self.last_tick = now;
         }
@@ -3784,7 +4006,7 @@ impl ApplicationHandler<UserEvent> for App {
         if (expanded && (self.media.playing || self.editing || self.timer_field.is_some() || matches!(self.view, View::Water | View::Todo)))
             || self.timer.running()
         {
-            let tick = PROGRESS_TICK;
+            let tick = if expanded && self.view == View::Timer && self.timer.running() { RING_TICK } else { PROGRESS_TICK };
             let due = self.last_ui_tick + tick;
             if now >= due {
                 self.last_ui_tick = now;

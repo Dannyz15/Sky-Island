@@ -21,13 +21,15 @@ use crate::settings::{self, Motion, Range, Settings, ThemeMode};
 use crate::{App, View, appicon, gfx, theme};
 
 const WIDTH: f64 = 660.0;
-const HEIGHT: f64 = 500.0;
+const HEIGHT: f64 = 548.0;
 const ROW_H: f32 = 34.0;
 const HEAD_H: f32 = 34.0;
 const SLIDER_W: f32 = 112.0;
 /// How long "Reset to defaults" waits for a second click.
 const RESET_WINDOW: Duration = Duration::from_secs(3);
 const ACCENT: [u8; 3] = [124, 142, 255];
+/// How long the window takes to fade and slide in when it opens.
+const ENTER: Duration = Duration::from_millis(420);
 
 type Rect = (f32, f32, f32, f32);
 
@@ -64,6 +66,7 @@ enum Slide {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Act {
     OpenFolder,
+    CheckUpdate,
     Reset,
     Quit,
 }
@@ -74,6 +77,8 @@ enum Kind {
     Seg(Seg),
     Slider(Slide),
     Button(Act),
+    /// A button that shows the current choice, for the timer's alarm sound.
+    Pick,
 }
 
 struct Item {
@@ -87,6 +92,17 @@ struct Item {
 struct Section {
     title: &'static str,
     rect: Rect,
+    /// The colour of the section's dot and glow.
+    tint: [u8; 3],
+}
+
+fn tint_of(title: &str) -> [u8; 3] {
+    match title {
+        "General" => [124, 142, 255],
+        "Tabs you can add" => [255, 190, 70],
+        "Look and motion" => [190, 120, 255],
+        _ => [70, 200, 210],
+    }
 }
 
 /// Everything in the window, laid out in logical pixels. The layout never changes, so it is cheap to
@@ -136,6 +152,7 @@ fn layout() -> (Vec<Section>, Vec<Item>) {
                 ("Volume", Kind::Slider(Slide::Volume)),
                 ("Repeat every", Kind::Slider(Slide::AlarmEvery)),
                 ("Ring for", Kind::Slider(Slide::AlarmFor)),
+                ("Alarm sound", Kind::Pick),
             ],
         ),
     ];
@@ -144,7 +161,7 @@ fn layout() -> (Vec<Section>, Vec<Item>) {
     for (col, top, title, rows) in plan {
         let (x, w) = columns[col];
         let height = HEAD_H + rows.len() as f32 * ROW_H + 8.0;
-        sections.push(Section { title, rect: (x, top, w, height) });
+        sections.push(Section { title, rect: (x, top, w, height), tint: tint_of(title) });
         for (i, (label, kind)) in rows.into_iter().enumerate() {
             let row = (x + 8.0, top + HEAD_H + i as f32 * ROW_H, w - 16.0, ROW_H);
             let right = row.0 + row.2 - 8.0;
@@ -152,6 +169,7 @@ fn layout() -> (Vec<Section>, Vec<Item>) {
                 Kind::Toggle(_) => (right - 32.0, row.1 + 8.0, 32.0, 18.0),
                 Kind::Seg(seg) => (right - seg_width(seg), row.1 + 5.0, seg_width(seg), 24.0),
                 Kind::Slider(_) => (right - 170.0, row.1 + 15.0, SLIDER_W, 4.0),
+                Kind::Pick => (right - 168.0, row.1 + 5.0, 168.0, 24.0),
                 Kind::Button(_) => row,
             };
             items.push(Item { label, kind, row, ctrl });
@@ -159,12 +177,39 @@ fn layout() -> (Vec<Section>, Vec<Item>) {
     }
     // The two buttons under the right-hand column, and Quit under the left-hand one.
     for (i, (label, act)) in [("Open data folder", Act::OpenFolder), ("Reset to defaults", Act::Reset)].into_iter().enumerate() {
-        let rect = (338.0 + i as f32 * 154.0, 440.0, 148.0, 26.0);
+        let rect = (338.0 + i as f32 * 154.0, 488.0, 148.0, 26.0);
         items.push(Item { label, kind: Kind::Button(act), row: rect, ctrl: rect });
     }
-    let quit = (190.0, 470.0, 132.0, 24.0);
+    let check = (20.0, 488.0, 148.0, 26.0);
+    items.push(Item { label: "Check for updates", kind: Kind::Button(Act::CheckUpdate), row: check, ctrl: check });
+    let quit = (492.0, 518.0, 148.0, 24.0);
     items.push(Item { label: "Quit Sky Island", kind: Kind::Button(Act::Quit), row: quit, ctrl: quit });
     (sections, items)
+}
+
+/// Ask for a sound file with the standard Windows Open dialog.
+fn pick_sound(owner: &Window) -> Option<std::path::PathBuf> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree};
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, SIGDN_FILESYSPATH};
+    use windows::core::w;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let RawWindowHandle::Win32(h) = owner.window_handle().ok()?.as_raw() else { return None };
+    let hwnd = HWND(h.hwnd.get() as *mut _);
+    unsafe {
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        dialog.SetTitle(w!("Choose the timer alarm sound")).ok()?;
+        let filters = [COMDLG_FILTERSPEC { pszName: w!("Sound files"), pszSpec: w!("*.wav;*.mp3;*.m4a;*.wma;*.aac") }];
+        dialog.SetFileTypes(&filters).ok()?;
+        // Cancelling the dialog is an error result, which is simply "nothing chosen".
+        dialog.Show(Some(hwnd)).ok()?;
+        let name = dialog.GetResult().ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+        let path = name.to_string().ok().map(std::path::PathBuf::from);
+        CoTaskMemFree(Some(name.0 as *const _));
+        path
+    }
 }
 
 fn inside(r: Rect, x: f32, y: f32) -> bool {
@@ -249,6 +294,8 @@ pub(crate) struct Panel {
     /// "Reset to defaults" was clicked once and waits for a second click until this time.
     pub(crate) reset_armed: Option<Instant>,
     last_draw: Instant,
+    /// When the window opened, for its entrance.
+    opened: Instant,
     /// Something is still moving, so more frames are needed.
     pub(crate) busy: bool,
 }
@@ -431,6 +478,7 @@ impl App {
             drag: None,
             reset_armed: None,
             last_draw: Instant::now(),
+            opened: Instant::now(),
             busy: false,
         });
     }
@@ -495,7 +543,7 @@ impl App {
                 let (_, items) = layout();
                 let Some(item) = items.iter().find(|i| match i.kind {
                     Kind::Slider(_) => inside((i.ctrl.0 - 8.0, i.row.1, SLIDER_W + 16.0, i.row.3), cx, cy),
-                    Kind::Seg(_) => inside(i.ctrl, cx, cy),
+                    Kind::Seg(_) | Kind::Pick => inside(i.ctrl, cx, cy),
                     _ => inside(i.row, cx, cy),
                 }) else {
                     return;
@@ -515,10 +563,53 @@ impl App {
                             p.redraw();
                         }
                     }
+                    Kind::Pick => {
+                        if self.settings.alarm_sound.is_some() && cx >= item.ctrl.0 + item.ctrl.2 - 26.0 {
+                            // The cross on the right goes back to the built-in chime.
+                            crate::sound::stop_file();
+                            self.settings.alarm_sound = None;
+                            self.settings_changed();
+                        } else if let Some(path) = self.panel.as_ref().and_then(|p| pick_sound(&p.window)) {
+                            self.settings.alarm_sound = Some(path);
+                            self.settings_changed();
+                            // Let the new sound be heard (a file still playing is stopped first).
+                            crate::sound::stop_file();
+                            self.play_alarm();
+                        }
+                        if let Some(p) = &self.panel {
+                            p.redraw();
+                        }
+                    }
                     Kind::Button(Act::OpenFolder) => {
                         if let Some(dir) = std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join("Sky-Island")) {
                             let _ = std::fs::create_dir_all(&dir);
                             let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                        }
+                    }
+                    Kind::Button(Act::CheckUpdate) => {
+                        match self.update.clone() {
+                            crate::update::Status::Available { version, asset: Some(asset), .. } => {
+                                self.update = crate::update::Status::Downloading { version: version.clone(), percent: 0 };
+                                crate::update::spawn_download(version, asset, self.proxy.clone());
+                            }
+                            crate::update::Status::Available { page, .. } => {
+                                // A release without an installer: show its page instead.
+                                let _ = std::process::Command::new("explorer").arg(page).spawn();
+                            }
+                            crate::update::Status::Ready { path, .. } => {
+                                // The installer closes this app, installs over it and starts it again.
+                                if std::process::Command::new(path).spawn().is_ok() {
+                                    self.quit = true;
+                                }
+                            }
+                            crate::update::Status::Checking | crate::update::Status::Downloading { .. } => {}
+                            _ => {
+                                self.update = crate::update::Status::Checking;
+                                crate::update::spawn_check(self.proxy.clone());
+                            }
+                        }
+                        if let Some(p) = &self.panel {
+                            p.redraw();
                         }
                     }
                     Kind::Button(Act::Quit) => self.quit = true,
@@ -565,25 +656,73 @@ impl App {
         gfx::gradient_rounded(&mut pm, 0.0, 0.0, fw, fh, 0.0, [11, 11, 15, 255], [24, 24, 31, 255], false);
         gfx::glow(&mut pm, fw * 0.5, fh * 1.1, fw * 0.7, [ACCENT[0], ACCENT[1], ACCENT[2], 26], None);
 
+        // Everything else is drawn on a layer, which glides up and fades in when the window opens.
+        let mut layer = Pixmap::new(w.get(), h.get()).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
         if let Some(font) = &self.font {
             let heading = self.heading_font().unwrap_or(font);
             let white = [255, 255, 255, 255];
             let grey = [165, 165, 175, 255];
-            crate::draw_text(&mut pm, heading, "Settings", 20.0 * s, 34.0 * s, 20.0 * s, white, 200.0 * s);
-            crate::draw_text(&mut pm, font, "Changes apply right away and are saved as you make them.", 118.0 * s, 33.0 * s, 11.5 * s, grey, 420.0 * s);
+
+            // Header: the app's icon, the title, and the version.
+            let logo = appicon::pixmap(64);
+            let scale = 30.0 * s / logo.width() as f32;
+            let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+            layer.draw_pixmap(0, 0, logo.as_ref(), &paint, tiny_skia::Transform::from_scale(scale, scale).post_translate(22.0 * s, 12.0 * s), None);
+            crate::draw_text(&mut layer, heading, "Settings", 60.0 * s, 28.0 * s, 17.0 * s, white, 200.0 * s);
+            crate::draw_text(&mut layer, font, "Changes apply right away and are saved as you make them.", 60.0 * s, 44.0 * s, 10.5 * s, grey, 420.0 * s);
+            let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
+            let chip = (548.0, 17.0, 92.0, 22.0);
+            gfx::gradient_rounded(&mut layer, chip.0 * s, chip.1 * s, chip.2 * s, chip.3 * s, chip.3 * s / 2.0, [ACCENT[0], ACCENT[1], ACCENT[2], 56], [ACCENT[0], ACCENT[1], ACCENT[2], 24], false);
+            gfx::stroke_rounded(&mut layer, chip.0 * s + 0.5 * s, chip.1 * s + 0.5 * s, chip.2 * s - s, chip.3 * s - s, chip.3 * s / 2.0, s, [ACCENT[0], ACCENT[1], ACCENT[2], 110]);
+            crate::draw_text_centered(&mut layer, font, &version, (chip.0 + chip.2 / 2.0) * s, (chip.1 + 15.0) * s, 10.5 * s, white, chip.2 * s);
 
             let (sections, items) = layout();
             for sec in &sections {
-                crate::draw_card(&mut pm, sec.rect, 12.0, s, 1.0, 0.0, ACCENT);
-                crate::draw_text(&mut pm, heading, sec.title, (sec.rect.0 + 16.0) * s, (sec.rect.1 + 22.0) * s, 11.5 * s, [ACCENT[0], ACCENT[1], ACCENT[2], 255], (sec.rect.2 - 32.0) * s);
+                let (x, y, cw, ch) = sec.rect;
+                let tint = [sec.tint[0], sec.tint[1], sec.tint[2]];
+                crate::draw_card(&mut layer, sec.rect, 14.0, s, 1.0, 0.0, tint);
+                // A soft glow of the section's colour in its top corner, kept inside the card.
+                if let Some(path) = gfx::rounded_path(x * s, y * s, cw * s, ch * s, 14.0 * s)
+                    && let Some(mask) = gfx::mask_of(layer.width(), layer.height(), &path) {
+                        gfx::glow(&mut layer, (x + 22.0) * s, (y + 20.0) * s, 120.0 * s, [tint[0], tint[1], tint[2], 34], Some(&mask));
+                    }
+                gfx::glow(&mut layer, (x + 20.0) * s, (y + 20.0) * s, 11.0 * s, [tint[0], tint[1], tint[2], 90], None);
+                gfx::gradient_circle(&mut layer, (x + 20.0) * s, (y + 20.0) * s, 4.0 * s, [tint[0], tint[1], tint[2], 255], gfx::mix([tint[0], tint[1], tint[2], 255], [255, 255, 255, 255], 0.5));
+                crate::draw_text(&mut layer, heading, sec.title, (x + 33.0) * s, (y + 24.0) * s, 12.0 * s, white, (cw - 48.0) * s);
+                crate::fill_rect(&mut layer, (x + 14.0) * s, (y + HEAD_H - 2.0) * s, (cw - 28.0) * s, s, [255, 255, 255, 18]);
             }
             for (idx, item) in items.iter().enumerate() {
-                self.paint_item(&mut pm, panel, font, heading, idx, item, s);
+                // A faint line between two rows of the same section.
+                if idx > 0 && !matches!(item.kind, Kind::Button(_)) {
+                    let prev = &items[idx - 1];
+                    if !matches!(prev.kind, Kind::Button(_)) && prev.row.0 == item.row.0 && (item.row.1 - prev.row.1 - ROW_H).abs() < 0.5 {
+                        crate::fill_rect(&mut layer, (item.row.0 + 10.0) * s, item.row.1 * s, (item.row.2 - 20.0) * s, s * 0.7, [255, 255, 255, 9]);
+                    }
+                }
+                self.paint_item(&mut layer, panel, font, heading, idx, item, s);
             }
 
-            let version = format!("Sky Island {}", env!("CARGO_PKG_VERSION"));
-            crate::draw_text(&mut pm, font, &version, 24.0 * s, 484.0 * s, 10.5 * s, [130, 130, 142, 255], 200.0 * s);
+            // The bottom bar: a divider, what the last update check found, and a reassurance.
+            crate::fill_rect(&mut layer, 20.0 * s, 479.0 * s, 620.0 * s, s, [255, 255, 255, 20]);
+            let (note, note_ink) = match &self.update {
+                crate::update::Status::Idle => (String::new(), grey),
+                crate::update::Status::Checking => ("Checking...".to_string(), grey),
+                crate::update::Status::Latest => ("You have the latest version".to_string(), [90, 210, 130, 255]),
+                crate::update::Status::Available { version, .. } => (format!("Version {version} is available"), [255, 190, 70, 255]),
+                crate::update::Status::Downloading { percent, .. } => (format!("Downloading... {percent}%"), grey),
+                crate::update::Status::Ready { .. } => ("Downloaded. Ready to install".to_string(), [90, 210, 130, 255]),
+                crate::update::Status::Failed => ("Could not check. Are you online?".to_string(), [255, 130, 120, 255]),
+                crate::update::Status::DownloadFailed => ("Download failed. Try again".to_string(), [255, 130, 120, 255]),
+            };
+            crate::draw_text(&mut layer, font, &note, 176.0 * s, 505.0 * s, 10.5 * s, note_ink, 156.0 * s);
+            crate::draw_text(&mut layer, font, "Your settings stay on this computer.", 24.0 * s, 535.0 * s, 10.0 * s, [120, 120, 134, 255], 280.0 * s);
         }
+
+        // The entrance: the layer rises into place and fades in.
+        let x = (panel.opened.elapsed().as_secs_f32() / ENTER.as_secs_f32()).clamp(0.0, 1.0);
+        let ease = 1.0 - (1.0 - x).powi(3);
+        let paint = tiny_skia::PixmapPaint { opacity: ease, ..Default::default() };
+        pm.draw_pixmap(0, 0, layer.as_ref(), &paint, tiny_skia::Transform::from_translate(0.0, (1.0 - ease) * 16.0 * s), None);
 
         let Ok(()) = panel.surface.resize(w, h) else { return };
         let Ok(mut buffer) = panel.surface.buffer_mut() else { return };
@@ -591,7 +730,7 @@ impl App {
             *dst = (src.alpha() as u32) << 24 | (src.red() as u32) << 16 | (src.green() as u32) << 8 | src.blue() as u32;
         }
         buffer.present().ok();
-        panel.busy = panel.glows.busy();
+        panel.busy = panel.glows.busy() || panel.opened.elapsed() < ENTER;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -610,7 +749,7 @@ impl App {
             }
             let label_w = match item.kind {
                 Kind::Toggle(_) => item.row.2 - 56.0,
-                Kind::Seg(_) | Kind::Slider(_) => item.ctrl.0 - item.row.0 - 18.0,
+                Kind::Seg(_) | Kind::Slider(_) | Kind::Pick => item.ctrl.0 - item.row.0 - 18.0,
                 Kind::Button(_) => item.row.2,
             };
             crate::draw_text(pm, font, item.label, (item.row.0 + 8.0) * s, (item.row.1 + 21.5) * s, 12.5 * s, crate::pick(white, [226, 226, 234, 255], hot), label_w * s);
@@ -660,6 +799,22 @@ impl App {
                 let tw = crate::text_width(font, &text, 11.5 * s);
                 crate::draw_text(pm, font, &text, (item.row.0 + item.row.2 - 8.0) * s - tw, (item.row.1 + 21.0) * s, 11.5 * s, grey, 60.0 * s);
             }
+            Kind::Pick => {
+                let (x, y, w, h) = (item.ctrl.0 * s, item.ctrl.1 * s, item.ctrl.2 * s, item.ctrl.3 * s);
+                let over = panel.glows.fade(key + 9, inside(item.ctrl, cx, cy));
+                gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], crate::pick(100.0, 56.0, over) as u8], [accent[0], accent[1], accent[2], crate::pick(60.0, 28.0, over) as u8], false);
+                gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], 120]);
+                let custom = self.settings.alarm_sound.as_ref();
+                let name = custom.and_then(|p| p.file_name()).map_or_else(|| "Built-in chime".to_string(), |n| n.to_string_lossy().into_owned());
+                let text_w = if custom.is_some() { item.ctrl.2 - 38.0 } else { item.ctrl.2 - 16.0 };
+                crate::draw_text_centered(pm, heading, &name, (item.ctrl.0 + 8.0 + text_w / 2.0) * s, (item.ctrl.1 + 16.5) * s, 11.5 * s, white, text_w * s);
+                if custom.is_some() {
+                    let (bx, by) = ((item.ctrl.0 + item.ctrl.2 - 14.0) * s, (item.ctrl.1 + item.ctrl.3 / 2.0) * s);
+                    let hot_x = panel.glows.fade(key + 10, cx >= item.ctrl.0 + item.ctrl.2 - 26.0 && inside(item.ctrl, cx, cy));
+                    crate::fill_circle(pm, bx, by, 8.0 * s, [255, 96, 86, (70.0 * hot_x) as u8]);
+                    crate::draw_text_centered(pm, font, "\u{00D7}", bx, by + 4.5 * s, 14.0 * s, crate::pick(white, grey, hot_x), 14.0 * s);
+                }
+            }
             Kind::Button(act) => {
                 let armed = act == Act::Reset && panel.reset_armed.is_some_and(|t| Instant::now() < t);
                 let over = panel.glows.fade(key + 9, inside(item.row, cx, cy));
@@ -667,7 +822,14 @@ impl App {
                 let tint = if armed || act == Act::Quit { [255, 96, 86] } else { accent };
                 gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [tint[0], tint[1], tint[2], crate::pick(100.0, 56.0, over) as u8], [tint[0], tint[1], tint[2], crate::pick(60.0, 28.0, over) as u8], false);
                 gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [tint[0], tint[1], tint[2], 120]);
-                let label = if armed { "Click again to reset" } else { item.label };
+                let download = match &self.update {
+                    _ if act != Act::CheckUpdate => None,
+                    crate::update::Status::Available { version, .. } => Some(format!("Download {version}")),
+                    crate::update::Status::Downloading { .. } => Some("Downloading...".to_string()),
+                    crate::update::Status::Ready { version, .. } => Some(format!("Install {version}")),
+                    _ => None,
+                };
+                let label = if armed { "Click again to reset" } else { download.as_deref().unwrap_or(item.label) };
                 crate::draw_text_centered(pm, heading, label, (item.row.0 + item.row.2 / 2.0) * s, (item.row.1 + 17.0) * s, 11.5 * s, white, (item.row.2 - 10.0) * s);
             }
         }

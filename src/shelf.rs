@@ -70,6 +70,13 @@ impl Shelf {
         }
     }
 
+    /// Take every file off the shelf (the files themselves are untouched).
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.scroll = 0;
+        self.save();
+    }
+
     /// Drop entries whose files no longer exist, e.g. after one was moved by a drag.
     pub fn prune(&mut self) {
         let before = self.items.len();
@@ -155,6 +162,15 @@ mod tests {
         s.scroll_by(1);
         assert_eq!(s.index_at(0), Some(COLS));
         assert_eq!(s.index_at(COLS * ROWS - 1), None, "slot past the end of the list is empty");
+    }
+
+    #[test]
+    fn clear_empties_the_shelf() {
+        let mut s = Shelf::empty();
+        s.add(p("a"));
+        s.add(p("b"));
+        s.clear();
+        assert!(s.items.is_empty() && s.scroll == 0);
     }
 
     #[test]
