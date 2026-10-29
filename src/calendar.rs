@@ -4,8 +4,39 @@
 const MONTHS: [&str; 12] =
     ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-/// Column heads of the grid; weeks start on Monday.
-pub const WEEK_HEADS: [&str; 7] = ["M", "T", "W", "T", "F", "S", "S"];
+/// Column heads of the grid when weeks start on Monday, and when they start on Sunday.
+const HEADS_MONDAY: [&str; 7] = ["M", "T", "W", "T", "F", "S", "S"];
+const HEADS_SUNDAY: [&str; 7] = ["S", "M", "T", "W", "T", "F", "S"];
+
+pub fn week_heads(monday: bool) -> [&'static str; 7] {
+    if monday { HEADS_MONDAY } else { HEADS_SUNDAY }
+}
+
+/// Whether column `col` of the grid is a Saturday or a Sunday.
+pub fn is_weekend(col: usize, monday: bool) -> bool {
+    if monday { col >= 5 } else { col == 0 || col == 6 }
+}
+
+/// The column of a day in a grid whose weeks start on Monday or on Sunday.
+pub fn column(days: i64, monday: bool) -> usize {
+    if monday { weekday(days) } else { (weekday(days) + 1) % 7 }
+}
+
+/// The first day of the week that holds `days`.
+pub fn week_start(days: i64, monday: bool) -> i64 {
+    days - column(days, monday) as i64
+}
+
+/// "26 Oct - 1 Nov", the days a week covers.
+pub fn week_title(start: i64) -> String {
+    let (_, m1, d1) = civil_from_days(start);
+    let (_, m2, d2) = civil_from_days(start + 6);
+    if m1 == m2 {
+        format!("{d1} - {d2} {}", &MONTHS[m2 as usize - 1][..3])
+    } else {
+        format!("{d1} {} - {d2} {}", &MONTHS[m1 as usize - 1][..3], &MONTHS[m2 as usize - 1][..3])
+    }
+}
 /// Six weeks always cover a month.
 pub const CELLS: usize = 42;
 
@@ -87,10 +118,18 @@ impl Calendar {
         self.selected = days_from_civil(self.year, self.month, day.min(days_in_month(self.year, self.month)));
     }
 
+    /// Show another week, moving the selected day by seven days; the month follows the day.
+    pub fn shift_week(&mut self, delta: i32) {
+        self.selected += 7 * i64::from(delta);
+        let (year, month, _) = civil_from_days(self.selected);
+        self.year = year;
+        self.month = month;
+    }
+
     /// The day number in grid cell `i` (row by row), or `None` for the blanks around the month.
-    pub fn cell(&self, i: usize) -> Option<i64> {
+    pub fn cell(&self, i: usize, monday: bool) -> Option<i64> {
         let first = days_from_civil(self.year, self.month, 1);
-        let day = i as i64 - weekday(first) as i64;
+        let day = i as i64 - column(first, monday) as i64;
         (0..i64::from(days_in_month(self.year, self.month))).contains(&day).then_some(first + day)
     }
 }
@@ -130,10 +169,35 @@ mod tests {
     fn grid_starts_on_the_right_weekday_and_has_every_day() {
         let cal = Calendar::new(days_from_civil(2026, 10, 28));
         // 1 Oct 2026 is a Thursday, so the first three cells are blank.
-        assert_eq!((0..3).filter_map(|i| cal.cell(i)).count(), 0);
-        assert_eq!(cal.cell(3), Some(days_from_civil(2026, 10, 1)));
-        assert_eq!((0..CELLS).filter_map(|i| cal.cell(i)).count(), 31);
+        assert_eq!((0..3).filter_map(|i| cal.cell(i, true)).count(), 0);
+        assert_eq!(cal.cell(3, true), Some(days_from_civil(2026, 10, 1)));
+        assert_eq!((0..CELLS).filter_map(|i| cal.cell(i, true)).count(), 31);
         assert_eq!(cal.title(), "October 2026");
+    }
+
+    #[test]
+    fn a_sunday_first_grid_shifts_everything_by_one_column() {
+        let cal = Calendar::new(days_from_civil(2026, 10, 28));
+        // 1 Oct 2026 is a Thursday: column 4 when weeks start on Sunday.
+        assert_eq!(cal.cell(4, false), Some(days_from_civil(2026, 10, 1)));
+        assert_eq!((0..CELLS).filter_map(|i| cal.cell(i, false)).count(), 31);
+        assert_eq!(week_heads(false)[0], "S");
+        assert_eq!(week_heads(true)[0], "M");
+        assert!(is_weekend(0, false) && is_weekend(6, false) && !is_weekend(1, false));
+        assert!(is_weekend(5, true) && is_weekend(6, true) && !is_weekend(0, true));
+    }
+
+    #[test]
+    fn weeks_start_where_they_should_and_can_be_stepped() {
+        let wed = days_from_civil(2026, 10, 28);
+        assert_eq!(week_start(wed, true), days_from_civil(2026, 10, 26), "Monday");
+        assert_eq!(week_start(wed, false), days_from_civil(2026, 10, 25), "Sunday");
+        assert_eq!(week_title(days_from_civil(2026, 10, 26)), "26 Oct - 1 Nov");
+        assert_eq!(week_title(days_from_civil(2026, 10, 5)), "5 - 11 Oct");
+        let mut cal = Calendar::new(wed);
+        cal.shift_week(1);
+        assert_eq!(civil_from_days(cal.selected), (2026, 11, 4));
+        assert_eq!((cal.year, cal.month), (2026, 11), "the month follows the day");
     }
 
     #[test]

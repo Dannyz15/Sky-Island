@@ -53,7 +53,7 @@ use panel::Panel;
 use settings::{EyeStyle, Settings, ThemeMode};
 use shelf::{COLS, ROWS, Shelf};
 use todo::Todo;
-use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem};
+use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use water::Water;
 use motion::{Glows, spring};
@@ -63,13 +63,14 @@ const COLLAPSED: (f64, f64) = (148.0, 28.0);
 /// Width of the curved flare on each side of the notch's top edge, where it meets the top of the screen.
 /// The window is this much wider than the notch on both sides; the notch is drawn in the middle.
 const EAR: f64 = 12.0;
-const EXPANDED: (f64, f64) = (420.0, 168.0);
+const EXPANDED: (f64, f64) = (420.0, 176.0);
 /// Keys for the animated values that are not tied to a rectangle (see `motion::Glows`).
 const KEY_PLAYER_PLAY: u64 = 0x4000_0000_0000_0001;
 const KEY_TIMER_PLAY: u64 = 0x4000_0000_0000_0002;
 const KEY_BAR: u64 = 0x4000_0000_0000_0003;
 const KEY_WATER: u64 = 0x4000_0000_0000_0004;
 const KEY_LYRIC_SYNC: u64 = 0x4000_0000_0000_0005;
+const KEY_CAL_SELECTED: u64 = 0x4000_0000_0000_0010;
 const FRAME: Duration = Duration::from_millis(8);
 const PROGRESS_TICK: Duration = Duration::from_millis(500);
 /// How often the timer's ring is redrawn while it is on screen and running, so it empties smoothly.
@@ -93,6 +94,8 @@ pub enum UserEvent {
     Clip(clipboard::Content),
     /// The answer to "Check for updates".
     Update(update::Status),
+    /// The releases and their notes, for the changelog in the settings window.
+    Changelog(Option<Vec<update::Release>>),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -117,8 +120,16 @@ const TABS: [(&str, View); 7] = [
     ("Calendar", View::Calendar),
     ("Clipboard", View::Clipboard),
 ];
-const TAB_W: f32 = 44.0;
-const TAB_GAP: f32 = 4.0;
+const TAB_W: f32 = 28.0;
+const TAB_GAP: f32 = 2.0;
+/// The tab bar sits at the bottom of the notch: the top of its pill is this far above the bottom edge.
+const TAB_BOTTOM: f32 = 34.0;
+/// The pill behind the tabs is this high, and each tab is a round button this big inside it.
+const TAB_PILL_H: f32 = 28.0;
+const TAB_BUTTON: f32 = 24.0;
+/// The open view is drawn this much higher than where it is laid out, which leaves room for the tab bar
+/// under it. Everything that reads the mouse position for the view adds this back.
+const TAB_SHIFT: f32 = 22.0;
 // Ring and controls shared by the timer and water views, in logical pixels.
 const RING: (f32, f32, f32) = (104.0, 100.0, 48.0); // center x, center y, radius
 const RING_W: f32 = 7.0;
@@ -162,10 +173,13 @@ const TODO_AMBER: [u8; 3] = [255, 190, 70];
 /// How long the cursor can be off the open notch before it closes, so small slips don't close it.
 /// Seconds the lyrics take to glide to a newly sung line.
 /// The Sync button that appears over the lyrics after they were scrolled away from the music.
-const SYNC_RECT: (f32, f32, f32, f32) = (LYRIC_X + LYRIC_W - 62.0, 148.0, 62.0, 20.0);
+const SYNC_RECT: (f32, f32, f32, f32) = (LYRIC_X + LYRIC_W - 62.0, 26.0, 62.0, 20.0);
 // Clipboard view, in logical pixels.
-/// The shelf's Clear button, in the free corner of the tab row.
-const SHELF_CLEAR: (f32, f32, f32, f32) = (378.0, 8.0, 36.0, 16.0);
+/// The shelf's Clear button: in the free corner of the tab row, level with the pill. Window coordinates,
+/// for a window `height` logical pixels high (it is not part of the view, which is drawn higher).
+fn shelf_clear_rect(height: f32) -> (f32, f32, f32, f32) {
+    (360.0, height - TAB_BOTTOM + (TAB_PILL_H - 16.0) / 2.0, 36.0, 16.0)
+}
 const CLIP_CLEAR: (f32, f32, f32, f32) = (324.0, 34.0, 72.0, 22.0);
 const CLIP_ROWS_Y: f32 = 64.0;
 const CLIP_ROW_H: f32 = 32.0;
@@ -265,6 +279,15 @@ struct App {
     selecting: bool,
     /// Where the progress bar is being dragged to; the song jumps there when the button is let go.
     scrub: Option<Duration>,
+    /// The scale the Size setting gives the whole island (1.0 is normal), and the width of the screen in
+    /// logical pixels, which Auto goes by.
+    ui_k: f64,
+    screen_w: f64,
+    /// How much of its normal size the closed notch has (smaller for the minimal notch), with its speed.
+    closed_k: f64,
+    closed_v: f64,
+    /// When the mouse wheel last changed the tab, so one flick moves one tab.
+    last_wheel_tab: Instant,
     /// The lyrics just opened or closed: the notch changes width under the mouse, so the system's
     /// "mouse left" is ignored until it has settled.
     lyric_settle: bool,
@@ -284,8 +307,7 @@ struct App {
     tray_settings_id: Option<MenuId>,
     tray_quit_id: Option<MenuId>,
     /// The tray's Show / Hide island entry, whose text follows the setting.
-    tray_toggle: Option<MenuItem>,
-    tray_toggle_id: Option<MenuId>,
+    tray_about_id: Option<MenuId>,
     todo: Todo,
     cal: calendar::Calendar,
     /// Typing a new task. While true the notch stays open and keys go to `input`.
@@ -334,6 +356,21 @@ struct App {
     tab_pos: f32,
     /// How fast it is moving, in tabs per second; the highlight stretches while it moves.
     tab_vel: f32,
+    /// Rows of a list ease in after the list changed (it scrolled, an entry came or went): 0 right after,
+    /// 1 once they have settled. `list_dir` is the way they come from, and `list_sig` what the list was.
+    list_t: f64,
+    list_v: f64,
+    list_dir: f32,
+    list_sig: (View, usize, usize, i64),
+    /// The calendar's month (or week) slides in the same way when the arrows are used.
+    cal_t: f64,
+    cal_v: f64,
+    cal_dir: f32,
+    /// A new track fades its cover and title in.
+    track_t: f64,
+    track_v: f64,
+    /// The accent taken from the cover glides to a new colour instead of jumping.
+    art_shown: [f32; 3],
     /// 0 right after the view changed, 1 once the new view has taken over.
     switch_t: f64,
     switch_v: f64,
@@ -350,8 +387,12 @@ struct App {
     panel: Option<Panel>,
     /// Open the settings window the next time the event loop is free to (a click cannot create a window).
     panel_wanted: bool,
+    /// Whether the settings window should show the About page when it opens.
+    panel_about: bool,
     /// How the last "Check for updates" in the settings window went.
     update: update::Status,
+    /// The changelog of the settings window, loaded from GitHub when it is first opened.
+    changelog: update::Changelog,
     /// When the timer's alarm sounds again while it is ringing.
     next_chime: Option<Instant>,
     last_tick: Instant,
@@ -380,13 +421,24 @@ impl App {
             timer_field: None,
             timer_input: String::new(),
             water: Water::new(today(), Instant::now()),
-            shelf: Shelf::new(),
+            shelf: {
+                let mut shelf = Shelf::new();
+                if settings.empty_shelf {
+                    shelf.clear();
+                }
+                shelf
+            },
             icons: HashMap::new(),
             drag_hover: false,
             press: None,
             selected: Vec::new(),
             selecting: false,
             scrub: None,
+            ui_k: 1.0,
+            screen_w: 1536.0,
+            closed_k: 1.0,
+            closed_v: 0.0,
+            last_wheel_tab: Instant::now(),
             lyric_settle: false,
             notice: None,
             notice_until: None,
@@ -399,8 +451,7 @@ impl App {
             tray: None,
             tray_settings_id: None,
             tray_quit_id: None,
-            tray_toggle: None,
-            tray_toggle_id: None,
+            tray_about_id: None,
             todo: Todo::new(),
             cal: calendar::Calendar::new(today_day()),
             editing: false,
@@ -436,6 +487,16 @@ impl App {
             art_key: String::new(),
             tab_pos: 0.0,
             tab_vel: 0.0,
+            list_t: 1.0,
+            list_v: 0.0,
+            list_dir: 1.0,
+            list_sig: (View::Player, 0, 0, 0),
+            cal_t: 1.0,
+            cal_v: 0.0,
+            cal_dir: 1.0,
+            track_t: 1.0,
+            track_v: 0.0,
+            art_shown: [255.0, 110.0, 140.0],
             switch_t: 1.0,
             switch_v: 0.0,
             prev_view: None,
@@ -445,7 +506,9 @@ impl App {
             system_light: false,
             panel: None,
             panel_wanted: false,
+            panel_about: false,
             update: update::Status::Idle,
+            changelog: update::Changelog::Idle,
             next_chime: None,
             shown_view: View::Player,
             last_tick: Instant::now(),
@@ -502,7 +565,7 @@ impl App {
     /// The colour the current view is tinted with.
     fn accent(&self, view: View) -> [u8; 3] {
         match view {
-            View::Player | View::Lyrics => self.art_tint,
+            View::Player | View::Lyrics => self.art_shown.map(|c| c.round().clamp(0.0, 255.0) as u8),
             View::Timer => [255, 99, 71],
             View::Water => [64, 170, 255],
             View::Shelf => [125, 140, 255],
@@ -522,7 +585,7 @@ impl App {
         if self.progress < 0.9 || !self.hovered {
             return false;
         }
-        let (x, y) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s);
+        let (x, y) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
         x >= r.0 && x <= r.0 + r.2 && y >= r.1 && y <= r.1 + r.3
     }
 
@@ -536,14 +599,80 @@ impl App {
         self.glows.follow(0x8000_0000_0000_0000 | id, if on { 1.0 } else { 0.0 }, 34.0, 0.62) as f32
     }
 
+    /// What the open list looks like, to notice when it changed: the view, how far it is scrolled, how
+    /// many entries it has, and (for the calendar) the chosen day.
+    fn list_signature(&self) -> (View, usize, usize, i64) {
+        match self.view {
+            View::Todo => (View::Todo, self.todo.scroll, self.todo.tasks.len(), 0),
+            View::Shelf => (View::Shelf, self.shelf.scroll, self.shelf.items.len(), 0),
+            View::Clipboard => (View::Clipboard, self.clips.scroll, self.clips.items.len(), 0),
+            View::Calendar => (View::Calendar, 0, self.todo.on_day(self.cal.selected).len(), self.cal.selected),
+            v => (v, 0, 0, 0),
+        }
+    }
+
+    /// How far row `row` of `rows` has come in, 0 to 1: each row a little after the one above it.
+    fn row_in(&self, row: usize, rows: usize) -> f32 {
+        const STAGGER: f32 = 0.07;
+        let span = 1.0 - STAGGER * (rows.max(1) - 1) as f32;
+        let t = ((self.list_t as f32 - row as f32 * STAGGER) / span).clamp(0.0, 1.0);
+        1.0 - (1.0 - t).powi(3)
+    }
+
+    /// The calendar's month (or week): after the arrows were used it slides in from the side of the arrow.
+    fn slide_in(&self, pm: &mut Pixmap, s: f32, draw: impl Fn(&mut Pixmap)) {
+        let t = self.cal_t as f32;
+        if t >= 0.999 {
+            draw(pm);
+            return;
+        }
+        let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return draw(pm) };
+        draw(&mut layer);
+        let paint = PixmapPaint { opacity: t.clamp(0.0, 1.0), quality: FilterQuality::Bilinear, ..Default::default() };
+        pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate((1.0 - t) * 30.0 * self.cal_dir * s, 0.0), None);
+    }
+
+    /// The cover and the name of the track: after a new track began they fade in and slide a little.
+    fn fade_in_track(&self, pm: &mut Pixmap, s: f32, draw: impl Fn(&mut Pixmap)) {
+        let t = self.track_t as f32;
+        if t >= 0.999 {
+            draw(pm);
+            return;
+        }
+        let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return draw(pm) };
+        draw(&mut layer);
+        let paint = PixmapPaint { opacity: t.clamp(0.0, 1.0), quality: FilterQuality::Bilinear, ..Default::default() };
+        pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate((1.0 - t) * 12.0 * s, 0.0), None);
+    }
+
+    /// Draw one row of a list. While the list is changing the row is drawn on a layer of its own, which
+    /// fades in and slides a little from the side the list moved from.
+    fn animated_row(&self, pm: &mut Pixmap, s: f32, row: usize, rows: usize, draw: impl Fn(&mut Pixmap)) {
+        let e = self.row_in(row, rows);
+        if e >= 0.999 {
+            draw(pm);
+            return;
+        }
+        let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return draw(pm) };
+        draw(&mut layer);
+        let paint = PixmapPaint { opacity: e, quality: FilterQuality::Bilinear, ..Default::default() };
+        pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate(0.0, (1.0 - e) * 14.0 * self.list_dir * s), None);
+    }
+
     fn animating(&self) -> bool {
         (self.progress - self.target()).abs() > f64::EPSILON
             || self.switch_t < 1.0
+            || self.list_t < 1.0
+            || self.cal_t < 1.0
+            || self.track_t < 1.0
+            || self.art_shown.iter().zip(self.art_tint).any(|(a, b)| (a - b as f32).abs() > 0.5)
             || self.tab_target().is_some_and(|t| (t - self.tab_pos).abs() > f32::EPSILON)
             || (self.tuck_t - self.tuck_target()).abs() > f64::EPSILON
             || (self.view_t - self.view_target()).abs() > f64::EPSILON
             || (self.ov_t - self.ov_target()).abs() > f64::EPSILON
             || self.glows.busy()
+            || (self.closed_k - self.closed_target()).abs() > 1e-4
+            || (self.target_k() - self.ui_k).abs() > 1e-3
             || (self.view == View::Lyrics
                 && matches!(self.lyrics, LyricsState::Found(_))
                 && (self.lyric_pos - self.lyric_target()).abs() > f64::EPSILON)
@@ -598,10 +727,39 @@ impl App {
 
         if let Some(target) = self.tab_target() {
             let (mut x, mut v) = (self.tab_pos as f64, self.tab_vel as f64);
-            let (omega, zeta) = tune(30.0, 0.72);
+            let (omega, zeta) = tune(28.0, 0.7);
             spring(&mut x, &mut v, target as f64, dt, omega, zeta);
             self.tab_pos = x as f32;
             self.tab_vel = v as f32;
+        }
+
+        // A list that changed (scrolled, or an entry came or went) lets its rows ease in.
+        let sig = self.list_signature();
+        if sig != self.list_sig {
+            if sig.0 == self.list_sig.0 && self.progress > 0.5 {
+                self.list_dir = if sig.1 != self.list_sig.1 {
+                    if sig.1 > self.list_sig.1 { 1.0 } else { -1.0 }
+                } else if sig.3 != self.list_sig.3 {
+                    if sig.3 > self.list_sig.3 { 1.0 } else { -1.0 }
+                } else if sig.2 > self.list_sig.2 {
+                    -1.0
+                } else {
+                    1.0
+                };
+                self.list_t = 0.0;
+                self.list_v = 0.0;
+            }
+            self.list_sig = sig;
+        }
+        spring(&mut self.list_t, &mut self.list_v, 1.0, dt, 17.0 * speed, if bounce { 0.9 } else { 1.0 });
+        spring(&mut self.cal_t, &mut self.cal_v, 1.0, dt, 15.0 * speed, if bounce { 0.82 } else { 1.0 });
+        spring(&mut self.track_t, &mut self.track_v, 1.0, dt, 14.0 * speed, 1.0);
+        let k = (1.0 - (-dt * 9.0 * speed).exp()) as f32;
+        for (shown, goal) in self.art_shown.iter_mut().zip(self.art_tint) {
+            *shown += (goal as f32 - *shown) * k;
+            if (*shown - goal as f32).abs() < 0.5 {
+                *shown = goal as f32;
+            }
         }
 
         let ot = self.ov_target();
@@ -618,6 +776,11 @@ impl App {
             spring(&mut self.lyric_pos, &mut self.lyric_v, goal, dt, 14.0 * speed, 1.0);
         }
 
+        let closed_goal = self.closed_target();
+        spring(&mut self.closed_k, &mut self.closed_v, closed_goal, dt, 24.0 * speed, 1.0);
+        self.ui_k = self.target_k();
+        let k = self.ui_k;
+
         let Some(window) = self.window.clone() else { return };
         // The size may swing a little past its goal while the notch opens.
         let t = self.progress.max(0.0);
@@ -625,16 +788,19 @@ impl App {
         let full_h = lerp(EXPANDED.1, LYRICS_H, wide);
         // The closed notch grows to the compact notice size while a notice is showing.
         let ov = self.ov_t.clamp(0.0, 1.0);
-        let base = (lerp(COLLAPSED.0, OVERLAY.0, ov), lerp(COLLAPSED.1, OVERLAY.1, ov));
+        let closed = self.closed_size();
+        let base = (lerp(closed.0, OVERLAY.0, ov), lerp(closed.1, OVERLAY.1, ov));
         // Opening the lyrics widens the notch evenly on both sides, so it stays centred on the screen.
         let w = lerp(base.0, lerp(EXPANDED.0, LYRICS_W, wide), t);
         let h = lerp(base.1, full_h, t);
-        let _ = window.request_inner_size(LogicalSize::new(w + 2.0 * EAR, h));
+        // The Size setting scales the window itself; everything in it is drawn at the same scale.
+        let _ = window.request_inner_size(LogicalSize::new((w + 2.0 * EAR) * k, h * k));
 
         if let Some(monitor) = window.current_monitor().or_else(|| window.primary_monitor()) {
-            let scale = window.scale_factor();
+            let scale = window.scale_factor() * k;
             let mpos = monitor.position();
             let msize = monitor.size();
+            self.screen_w = msize.width as f64 / window.scale_factor();
             let pw = (w + 2.0 * EAR) * scale;
             let x = mpos.x as f64 + (msize.width as f64 - pw) / 2.0;
             // Tucked away, only a thin strip stays on screen, so the cursor can still find the island.
@@ -736,6 +902,18 @@ impl App {
     }
 
     fn show_notice(&mut self, notice: sys::Notice) {
+        use sys::Notice;
+        let wanted = match &notice {
+            Notice::Volume { .. } => self.settings.hud_volume,
+            Notice::Brightness { .. } => self.settings.hud_brightness,
+            Notice::Lock { .. } => self.settings.hud_lock,
+            Notice::Battery { .. } => self.settings.hud_battery,
+            Notice::Network { .. } => self.settings.hud_network,
+            Notice::Audio { .. } => self.settings.hud_audio,
+        };
+        if !wanted {
+            return;
+        }
         let now = Instant::now();
         self.notice = Some(notice);
         self.notice_until = Some(now + NOTICE_TIME);
@@ -764,13 +942,70 @@ impl App {
         self.media.duration.mul_f32(frac)
     }
 
+    /// The scale of everything drawn on the notch: the screen's scale times the Size setting.
+    fn ui_scale(&self) -> f64 {
+        self.window.as_ref().map_or(1.0, |w| w.scale_factor()) * self.ui_k
+    }
+
+    /// The scale the Size setting asks for. Auto keeps the island the same share of the screen's width
+    /// (normal at 1536 logical pixels, which is a 1920 pixel screen at 125 percent).
+    fn target_k(&self) -> f64 {
+        match self.settings.size.factor() {
+            Some(k) => k,
+            None => ((self.screen_w / 1536.0).clamp(0.9, 1.3) * 20.0).round() / 20.0,
+        }
+    }
+
+    /// How much of its normal size the closed notch should have: smaller when the minimal notch is on
+    /// and nothing is playing.
+    fn closed_target(&self) -> f64 {
+        if self.settings.minimal && !self.media.playing { 0.8 } else { 1.0 }
+    }
+
+    /// The closed notch, in logical pixels.
+    fn closed_size(&self) -> (f64, f64) {
+        (COLLAPSED.0 * self.closed_k, COLLAPSED.1 * self.closed_k)
+    }
+
+    /// Switch to a tab, from a click on it or from the mouse wheel.
+    fn go_to_view(&mut self, view: View) {
+        if self.view == view {
+            return;
+        }
+        self.stop_editing();
+        self.view = view;
+        if view == View::Calendar {
+            self.cal = calendar::Calendar::new(today_day());
+        }
+        self.last_tick = Instant::now();
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// The height of the window in logical pixels, which the tab bar is measured from.
+    fn window_h(&self) -> f32 {
+        let s = self.ui_scale() as f32;
+        self.window.as_ref().map_or(EXPANDED.1 as f32, |w| w.inner_size().height as f32 / s)
+    }
+
+    /// Whether the mouse wheel changes the tab where the mouse is: always over the tab bar, and over
+    /// the tabs whose content has no scrolling of its own.
+    fn wheel_changes_tab(&self) -> bool {
+        let over_bar = self.cursor.1 as f32 / self.ui_scale() as f32 >= self.window_h() - TAB_BOTTOM - 4.0;
+        over_bar || matches!(self.view, View::Player | View::Water | View::Calendar)
+    }
+
     fn click(&mut self) {
         if self.progress < 0.9 {
             return;
         }
         let Some(window) = self.window.clone() else { return };
-        let s = window.scale_factor() as f32;
-        let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s);
+        let s = self.ui_scale() as f32;
+        // `ry` is the mouse in the window; `cy` is the same spot in the view's own coordinates.
+        let (cx, ry) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s);
+        let cy = ry + TAB_SHIFT;
+        let bar_y = self.window_h();
 
         // While the timer's alarm rings, only its Stop button stops it.
         if self.alert_until.is_some() && self.alert_msg == TIMES_UP && self.view == View::Timer {
@@ -782,7 +1017,7 @@ impl App {
                 return;
             }
             // The hidden controls under the Stop button stay dead; only the tab bar still works.
-            if cy > 30.0 {
+            if ry < bar_y - TAB_BOTTOM - 4.0 {
                 return;
             }
         }
@@ -796,20 +1031,25 @@ impl App {
             let dx = self.tab_dx();
             let tabs = self.visible_tabs();
             for (i, (_, v)) in tabs.iter().enumerate() {
-                let r = tab_rect(i, tabs.len());
+                let r = tab_rect(i, tabs.len(), bar_y);
                 let r = (r.0 + dx, r.1, r.2, r.3);
-                if cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3 {
-                    if self.view != *v {
-                        self.stop_editing();
-                        self.view = *v;
-                        if *v == View::Calendar {
-                            self.cal = calendar::Calendar::new(today_day());
-                        }
-                        self.last_tick = Instant::now();
-                        window.request_redraw();
-                    }
+                if cx >= r.0 && cx <= r.0 + r.2 && ry >= r.1 && ry <= r.1 + r.3 {
+                    self.go_to_view(*v);
                     return;
                 }
+            }
+        }
+
+        // The shelf's Clear button sits beside the tab bar.
+        if self.view == View::Shelf && !self.shelf.items.is_empty() {
+            let r = shelf_clear_rect(bar_y);
+            if cx >= r.0 && cx <= r.0 + r.2 && ry >= r.1 && ry <= r.1 + r.3 {
+                // Takes every file off the shelf; the files themselves are never touched.
+                self.shelf.clear();
+                self.selected.clear();
+                self.sync_selection_focus();
+                window.request_redraw();
+                return;
             }
         }
 
@@ -848,17 +1088,22 @@ impl App {
             }
             View::Calendar => {
                 let inside = |r: (f32, f32, f32, f32)| cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3;
+                let (monday, week) = (self.settings.week_monday, self.settings.calendar_week);
                 if inside(CAL_PREV) {
-                    self.cal.shift_month(-1);
+                    if week { self.cal.shift_week(-1) } else { self.cal.shift_month(-1) }
+                    (self.cal_t, self.cal_v, self.cal_dir) = (0.0, 0.0, -1.0);
                 } else if inside(CAL_NEXT) {
-                    self.cal.shift_month(1);
+                    if week { self.cal.shift_week(1) } else { self.cal.shift_month(1) }
+                    (self.cal_t, self.cal_v, self.cal_dir) = (0.0, 0.0, 1.0);
                 } else if inside(CAL_TITLE) {
                     self.cal = calendar::Calendar::new(today_day());
                 } else if inside(CAL_ADD) {
                     window.request_redraw();
                     self.start_editing(None);
                     return;
-                } else if let Some(day) = (0..calendar::CELLS).find(|&i| inside(cal_cell_rect(i))).and_then(|i| self.cal.cell(i)) {
+                } else if week && let Some(i) = (0..7).find(|&i| inside(cal_week_rect(i))) {
+                    self.cal.selected = calendar::week_start(self.cal.selected, monday) + i as i64;
+                } else if !week && let Some(day) = (0..calendar::CELLS).find(|&i| inside(cal_cell_rect(i))).and_then(|i| self.cal.cell(i, monday)) {
                     self.cal.selected = day;
                 } else {
                     let row = ((cy - CAL_ROWS_Y) / CAL_ROW_H).floor();
@@ -905,15 +1150,6 @@ impl App {
                     let inside = cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3;
                     inside.then(|| self.shelf.index_at(slot).map(|i| (i, r))).flatten()
                 });
-                let clear = SHELF_CLEAR;
-                if !self.shelf.items.is_empty() && cx >= clear.0 && cx <= clear.0 + clear.2 && cy >= clear.1 && cy <= clear.1 + clear.3 {
-                    // Takes every file off the shelf; the files themselves are never touched.
-                    self.shelf.clear();
-                    self.selected.clear();
-                    self.sync_selection_focus();
-                    window.request_redraw();
-                    return;
-                }
                 let Some((idx, r)) = hit else { return };
                 if cx >= r.0 + r.2 - 16.0 && cy <= r.1 + 16.0 {
                     self.shelf.remove(idx);
@@ -1167,6 +1403,7 @@ impl App {
     fn draw(&mut self) {
         theme::set_light(self.light());
         let frame_start = Instant::now();
+        self.glows.set_motion(self.settings.motion.speed(), self.settings.motion.bounce());
         self.glows.begin(frame_start.duration_since(self.last_draw).as_secs_f64().min(1.0 / 30.0));
         self.last_draw = frame_start;
         if self.view == View::Shelf {
@@ -1178,7 +1415,7 @@ impl App {
             return;
         };
         // The notch itself is drawn in the middle; the flares on its sides are added at the end.
-        let s = window.scale_factor() as f32;
+        let s = self.ui_scale() as f32;
         let ear = (EAR as f32 * s).round();
         let Some(w) = NonZeroU32::new(full_w.get().saturating_sub(2 * ear as u32)) else { return };
         let Some(mut pixmap) = Pixmap::new(w.get(), h.get()) else { return };
@@ -1278,7 +1515,7 @@ impl App {
             if let (true, Some(font)) = (self.timer.running(), &self.font) {
                 let text = fmt_remaining(self.timer.remaining(Instant::now()));
                 let color = [255, 255, 255, (collapsed_alpha * 255.0) as u8];
-                draw_text_centered(&mut pixmap, self.heading_font().unwrap_or(font), &text, fw / 2.0, (COLLAPSED.1 as f32 / 2.0 + 5.0) * s, 13.0 * s, color, fw);
+                draw_text_centered(&mut pixmap, self.heading_font().unwrap_or(font), &text, fw / 2.0, (self.closed_size().1 as f32 / 2.0 + 5.0) * s, 13.0 * s, color, fw);
             } else {
                 self.draw_companion(&mut pixmap, s, collapsed_alpha, fw);
             }
@@ -1308,10 +1545,11 @@ impl App {
         buffer.present().ok();
     }
 
-    /// The tab bar and the open view. While the view is changing, the old one fades out and drifts away
-    /// as the new one fades in and slides into place, from the side its tab is on.
+    /// The tab bar and the open view. While the view is changing, the old one slides out and the new one
+    /// slides in, towards the side of the tab it is on.
     fn draw_content(&self, pm: &mut Pixmap, s: f32, alpha: f32, size: (u32, u32)) {
         self.draw_tabs(pm, s, alpha);
+        self.draw_shelf_clear(pm, s, alpha);
         // The other views are drawn for the normal width, so keep them centred while it is still wide.
         let dx = if matches!(self.view, View::Player | View::Lyrics) { 0.0 } else { self.tab_dx() };
         let t = self.switch_t.clamp(0.0, 1.0) as f32;
@@ -1320,24 +1558,40 @@ impl App {
             self.draw_view(pm, s, alpha, self.view);
             return;
         }
+        // Between two tabs the views move as one strip: the old one slides out to the side its tab is on
+        // while the new one slides in behind it, across the notch. The notch's own outline clips them.
+        let width = size.0 as f32;
+        let clip = if self.prev_view.is_some() && moving {
+            let r = (size.1 as f32 / 2.0).min(28.0 * s);
+            gfx::rounded_path(0.0, -r, width, size.1 as f32 + r, r).and_then(|shape| gfx::mask_of(size.0, size.1, &shape))
+        } else {
+            None
+        };
         if let (true, Some(old)) = (moving, self.prev_view)
             && let Some(mut layer) = Pixmap::new(size.0, size.1) {
                 self.draw_view(&mut layer, s, alpha, old);
-                let paint = PixmapPaint { opacity: (1.0 - t * 1.7).clamp(0.0, 1.0), quality: FilterQuality::Bilinear, ..Default::default() };
-                let at = Transform::from_translate(-self.switch_dir * 26.0 * t * s, 0.0);
-                pm.draw_pixmap(0, 0, layer.as_ref(), &paint, at, None);
+                let paint = PixmapPaint { opacity: 1.0 - 0.6 * t, quality: FilterQuality::Bilinear, ..Default::default() };
+                let at = Transform::from_translate(-self.switch_dir * width * t, 0.0);
+                pm.draw_pixmap(0, 0, layer.as_ref(), &paint, at, clip.as_ref());
             }
         if let Some(mut layer) = Pixmap::new(size.0, size.1) {
             self.draw_view(&mut layer, s, alpha, self.view);
-            let fade_in = if self.prev_view.is_some() { ((t - 0.2) / 0.8).clamp(0.0, 1.0) } else { t };
+            let fade_in = if self.prev_view.is_some() { 0.4 + 0.6 * t } else { t };
             let paint = PixmapPaint { opacity: fade_in, quality: FilterQuality::Bilinear, ..Default::default() };
-            let slide = if self.prev_view.is_some() { self.switch_dir * 26.0 * (1.0 - t) * s } else { 0.0 };
+            let slide = if self.prev_view.is_some() { self.switch_dir * width * (1.0 - t) } else { 0.0 };
             let at = Transform::from_translate(dx * s + slide, if self.prev_view.is_some() { 0.0 } else { (1.0 - t) * 8.0 * s });
-            pm.draw_pixmap(0, 0, layer.as_ref(), &paint, at, None);
+            pm.draw_pixmap(0, 0, layer.as_ref(), &paint, at, clip.as_ref());
         }
     }
 
+    /// A view, drawn a little higher than it is laid out so the tab bar fits under it.
     fn draw_view(&self, pm: &mut Pixmap, s: f32, alpha: f32, view: View) {
+        let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return };
+        self.draw_view_in_place(&mut layer, s, alpha, view);
+        pm.draw_pixmap(0, -(TAB_SHIFT * s).round() as i32, layer.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+    }
+
+    fn draw_view_in_place(&self, pm: &mut Pixmap, s: f32, alpha: f32, view: View) {
         match view {
             View::Player | View::Lyrics => self.draw_player(pm, s, alpha),
             View::Timer => self.draw_timer(pm, s, alpha),
@@ -1452,32 +1706,63 @@ impl App {
         draw_text(pm, font, "Sync", x + 22.0 * s, y + h / 2.0 + 4.0 * s, 11.0 * s, [255, 255, 255, a], 36.0 * s);
     }
 
-    /// The tab bar: a tinted highlight that slides to the open tab, and a hover glow.
+    /// The shelf's Clear button, beside the tab bar: it fades in when the shelf is the open view and holds files.
+    fn draw_shelf_clear(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        if self.view != View::Shelf || self.shelf.items.is_empty() {
+            return;
+        }
+        let alpha = alpha * (self.switch_t as f32).clamp(0.0, 1.0);
+        let a = (alpha * 255.0) as u8;
+        let r = shelf_clear_rect(pm.height() as f32 / s);
+        let hot = self.hot_t((r.0, r.1 + TAB_SHIFT, r.2, r.3), s);
+        let (x, y, w, h) = (r.0 * s, r.1 * s, r.2 * s, r.3 * s);
+        let red = [255, 96, 86];
+        gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [red[0], red[1], red[2], (alpha * pick(80.0, 48.0, hot)) as u8], [red[0], red[1], red[2], (alpha * pick(46.0, 22.0, hot)) as u8], false);
+        gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [red[0], red[1], red[2], (alpha * 90.0) as u8]);
+        draw_text_centered(pm, font, "Clear", x + w / 2.0, y + 11.5 * s, 10.0 * s, [255, 130, 120, a], w);
+    }
+
+    /// The tab bar: a dark pill with a round button for each tab. A light circle slides to the open tab,
+    /// and the icons are grey, white on the open one.
     fn draw_tabs(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
-        let [ar, ag, ab] = self.accent(self.view);
         let a = (alpha * 255.0) as u8;
         let tabs = self.visible_tabs();
-        let (x0, y, w, h) = tab_rect(0, tabs.len());
+        let bar_y = pm.height() as f32 / s;
+        let (x0, y, _, _) = tab_rect(0, tabs.len(), bar_y);
         let dx = self.tab_dx();
+        let total = tabs.len() as f32 * TAB_W + (tabs.len() as f32 - 1.0) * TAB_GAP;
+        // The pill.
+        let (px, py, pw) = ((x0 + dx - 6.0) * s, (bar_y - TAB_BOTTOM) * s, (total + 12.0) * s);
+        let ph = TAB_PILL_H * s;
+        fill_rounded(pm, px, py, pw, ph, ph / 2.0, [255, 255, 255, (alpha * 13.0) as u8]);
+        gfx::stroke_rounded(pm, px + 0.5 * s, py + 0.5 * s, pw - s, ph - s, ph / 2.0, s, [255, 255, 255, (alpha * 12.0) as u8]);
         if self.tab_target().is_some() {
-            // The highlight stretches a little in the direction it is moving, like a drop of liquid.
+            // The circle stretches a little in the direction it is moving, like a drop of liquid.
             let stretch = (self.tab_vel.abs() * 2.4).min(18.0);
-            let x = (x0 + dx + self.tab_pos * (TAB_W + TAB_GAP) - stretch / 2.0) * s;
-            let w = w + stretch;
-            let (top, bottom) = ([ar, ag, ab, (alpha * 78.0) as u8], [ar, ag, ab, (alpha * 34.0) as u8]);
-            gfx::gradient_rounded(pm, x, y * s, w * s, h * s, h * s / 2.0, top, bottom, false);
-            gfx::stroke_rounded(pm, x + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, h * s / 2.0, 1.0 * s, [ar, ag, ab, (alpha * 90.0) as u8]);
+            let cx = x0 + dx + self.tab_pos * (TAB_W + TAB_GAP) + TAB_W / 2.0;
+            let squash = stretch * 0.22;
+            let (bw, bh) = (TAB_BUTTON + stretch, TAB_BUTTON - squash);
+            let by = y + squash / 2.0;
+            // A faint halo trails it, then the circle itself.
+            fill_rounded(pm, (cx - bw / 2.0 - 2.0) * s, (by - 2.0) * s, (bw + 4.0) * s, (bh + 4.0) * s, (bh + 4.0) * s / 2.0, [255, 255, 255, (alpha * 8.0) as u8]);
+            fill_rounded(pm, (cx - bw / 2.0) * s, by * s, bw * s, bh * s, bh * s / 2.0, [255, 255, 255, (alpha * 36.0) as u8]);
         }
         for (i, (_, view)) in tabs.iter().enumerate() {
-            let rect = tab_rect(i, tabs.len());
+            let rect = tab_rect(i, tabs.len(), bar_y);
             let rect = (rect.0 + dx, rect.1, rect.2, rect.3);
             let near = 1.0 - (self.tab_pos - i as f32).abs().min(1.0);
-            let glow = self.hot_t(rect, s) * (1.0 - near * 2.0).clamp(0.0, 1.0);
+            // The mouse is compared in the view's coordinates, which are this much higher.
+            let glow = self.hot_t((rect.0, rect.1 + TAB_SHIFT, rect.2, rect.3), s) * (1.0 - near * 2.0).clamp(0.0, 1.0);
+            let cx = rect.0 + rect.2 / 2.0;
             if glow > 0.01 {
-                fill_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, rect.3 * s / 2.0, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
+                fill_rounded(pm, (cx - TAB_BUTTON / 2.0) * s, rect.1 * s, TAB_BUTTON * s, rect.3 * s, rect.3 * s / 2.0, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
             }
+            // Grey icons, white on the open tab.
             let color = gfx::mix([150, 150, 158, a], [255, 255, 255, a], near);
-            draw_tab_icon(pm, *view, (rect.0 + rect.2 / 2.0) * s, (rect.1 + rect.3 / 2.0) * s, s, color);
+            let hover = self.hot_t((rect.0, rect.1 + TAB_SHIFT, rect.2, rect.3), s);
+            let grow = 1.0 + 0.14 * near.clamp(0.0, 1.0) + 0.06 * hover;
+            draw_tab_icon(pm, *view, cx * s, (rect.1 + rect.3 / 2.0) * s, s * 0.92 * grow, color);
         }
     }
 
@@ -1695,55 +1980,47 @@ impl App {
             return;
         }
 
-        // Clear button: takes every file off the shelf (the files themselves are never touched).
-        {
-            let (x, y, w, h) = SHELF_CLEAR;
-            let hot = self.hot_t(SHELF_CLEAR, s);
-            let red = [255, 96, 86];
-            gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, h * s / 2.0, [red[0], red[1], red[2], (alpha * pick(80.0, 48.0, hot)) as u8], [red[0], red[1], red[2], (alpha * pick(46.0, 22.0, hot)) as u8], false);
-            gfx::stroke_rounded(pm, x * s + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, h * s / 2.0, s, [red[0], red[1], red[2], (alpha * 90.0) as u8]);
-            draw_text_centered(pm, font, "Clear", (x + w / 2.0) * s, (y + 11.5) * s, 10.0 * s, [255, 130, 120, a], w * s);
-        }
-
         const PALETTE: [[u8; 3]; 6] =
             [[255, 99, 71], [80, 200, 120], [90, 150, 255], [255, 190, 70], [190, 120, 255], [70, 200, 210]];
         for slot in 0..COLS * ROWS {
-            let Some(i) = self.shelf.index_at(slot) else { continue };
-            let path = &self.shelf.items[i];
-            let rect = tile_rect(slot);
-            let (x, y, w, h) = rect;
-            let hot = self.hot_t(rect, s);
-            draw_card(pm, rect, 10.0, s, alpha, hot, rgb);
-            // A highlighted file glows in the accent colour; it eases in and out.
-            let chosen = self.toggle_t(motion::rect_key(rect) >> 1, self.selected.contains(path)).clamp(0.0, 1.0);
-            if chosen > 0.01 {
-                let tint = |v: f32| [rgb[0], rgb[1], rgb[2], (alpha * v * chosen) as u8];
-                gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, 10.0 * s, tint(90.0), tint(40.0), false);
-                gfx::stroke_rounded(pm, x * s + s, y * s + s, w * s - 2.0 * s, h * s - 2.0 * s, 10.0 * s, 1.5 * s, tint(230.0));
-            }
+            self.animated_row(pm, s, slot / COLS, ROWS, |pm| {
+                let Some(i) = self.shelf.index_at(slot) else { return };
+                let path = &self.shelf.items[i];
+                let rect = tile_rect(slot);
+                let (x, y, w, h) = rect;
+                let hot = self.hot_t(rect, s);
+                draw_card(pm, rect, 10.0, s, alpha, hot, rgb);
+                // A highlighted file glows in the accent colour; it eases in and out.
+                let chosen = self.toggle_t(motion::rect_key(rect) >> 1, self.selected.contains(path)).clamp(0.0, 1.0);
+                if chosen > 0.01 {
+                    let tint = |v: f32| [rgb[0], rgb[1], rgb[2], (alpha * v * chosen) as u8];
+                    gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, 10.0 * s, tint(90.0), tint(40.0), false);
+                    gfx::stroke_rounded(pm, x * s + s, y * s + s, w * s - 2.0 * s, h * s - 2.0 * s, 10.0 * s, 1.5 * s, tint(230.0));
+                }
 
-            if let Some(Some(icon)) = self.icons.get(path) {
-                let size = 32.0 * s;
-                let scale = size / icon.width() as f32;
-                let paint = PixmapPaint { opacity: alpha, quality: FilterQuality::Bilinear, ..Default::default() };
-                let at = Transform::from_scale(scale, scale).post_translate((x + (w - 32.0) / 2.0) * s, (y + 7.0) * s);
-                pm.draw_pixmap(0, 0, icon.as_ref(), &paint, at, None);
-            } else {
-                // No shell icon available: fall back to a colored extension badge.
-                let badge = shelf::badge(path);
-                let c = PALETTE[badge.bytes().map(usize::from).sum::<usize>() % PALETTE.len()];
-                let top = [c[0], c[1], c[2], a];
-                gfx::gradient_rounded(pm, (x + (w - 34.0) / 2.0) * s, (y + 8.0) * s, 34.0 * s, 18.0 * s, 5.0 * s, gfx::mix(top, white, 0.25), top, false);
-                draw_text_centered(pm, font, &badge, (x + w / 2.0) * s, (y + 21.0) * s, 10.0 * s, [0, 0, 0, a], 32.0 * s);
-            }
+                if let Some(Some(icon)) = self.icons.get(path) {
+                    let size = 32.0 * s;
+                    let scale = size / icon.width() as f32;
+                    let paint = PixmapPaint { opacity: alpha, quality: FilterQuality::Bilinear, ..Default::default() };
+                    let at = Transform::from_scale(scale, scale).post_translate((x + (w - 32.0) / 2.0) * s, (y + 7.0) * s);
+                    pm.draw_pixmap(0, 0, icon.as_ref(), &paint, at, None);
+                } else {
+                    // No shell icon available: fall back to a colored extension badge.
+                    let badge = shelf::badge(path);
+                    let c = PALETTE[badge.bytes().map(usize::from).sum::<usize>() % PALETTE.len()];
+                    let top = [c[0], c[1], c[2], a];
+                    gfx::gradient_rounded(pm, (x + (w - 34.0) / 2.0) * s, (y + 8.0) * s, 34.0 * s, 18.0 * s, 5.0 * s, gfx::mix(top, white, 0.25), top, false);
+                    draw_text_centered(pm, font, &badge, (x + w / 2.0) * s, (y + 21.0) * s, 10.0 * s, [0, 0, 0, a], 32.0 * s);
+                }
 
-            draw_text_centered(pm, font, &shelf::file_name(path), (x + w / 2.0) * s, (y + h - 10.0) * s, 10.0 * s, pick(white, [225, 225, 232, a], hot), (w - 8.0) * s);
-            // Remove button (takes the file off the shelf, never deletes it).
-            let over_x = self.hot_t((x + w - 16.0, y, 16.0, 16.0), s);
-            if over_x > 0.01 {
-                fill_circle(pm, (x + w - 8.0) * s, (y + 9.0) * s, 7.0 * s, [255, 90, 80, (alpha * 70.0 * over_x) as u8]);
-            }
-            draw_text_centered(pm, font, "\u{00D7}", (x + w - 8.0) * s, (y + 13.0) * s, 13.0 * s, pick(white, grey, over_x), 12.0 * s);
+                draw_text_centered(pm, font, &shelf::file_name(path), (x + w / 2.0) * s, (y + h - 10.0) * s, 10.0 * s, pick(white, [225, 225, 232, a], hot), (w - 8.0) * s);
+                // Remove button (takes the file off the shelf, never deletes it).
+                let over_x = self.hot_t((x + w - 16.0, y, 16.0, 16.0), s);
+                if over_x > 0.01 {
+                    fill_circle(pm, (x + w - 8.0) * s, (y + 9.0) * s, 7.0 * s, [255, 90, 80, (alpha * 70.0 * over_x) as u8]);
+                }
+                draw_text_centered(pm, font, "\u{00D7}", (x + w - 8.0) * s, (y + 13.0) * s, 13.0 * s, pick(white, grey, over_x), 12.0 * s);
+            });
         }
 
         // Scroll indicator when there are more rows than fit.
@@ -1834,10 +2111,10 @@ impl App {
     /// Tray icon with a small menu, so the app can be closed without opening the notch.
     fn build_tray(&mut self) {
         let menu = Menu::new();
-        let toggle = MenuItem::new(island_label(self.settings.hide_island), true, None);
         let open = MenuItem::new("Settings\u{2026}", true, None);
-        let quit = MenuItem::new("Quit Sky Island", true, None);
-        if menu.append_items(&[&toggle, &open, &quit]).is_err() {
+        let about = MenuItem::new("About Sky Island", true, None);
+        let quit = MenuItem::new("Exit", true, None);
+        if menu.append_items(&[&open, &PredefinedMenuItem::separator(), &about, &quit]).is_err() {
             return;
         }
         let Ok(icon) = Icon::from_rgba(appicon::rgba(32), 32, 32) else { return };
@@ -1853,8 +2130,7 @@ impl App {
                 let _ = p.send_event(UserEvent::Menu(event.id));
             }
         }));
-        self.tray_toggle_id = Some(toggle.id().clone());
-        self.tray_toggle = Some(toggle);
+        self.tray_about_id = Some(about.id().clone());
         self.tray_settings_id = Some(open.id().clone());
         self.tray_quit_id = Some(quit.id().clone());
         self.tray = tray.ok();
@@ -1997,13 +2273,6 @@ impl App {
                     }
                 }
             }
-        }
-    }
-
-    /// Keep the tray entry's text in line with the "Auto-hide island" setting.
-    fn sync_tray_toggle(&self) {
-        if let Some(item) = &self.tray_toggle {
-            item.set_text(island_label(self.settings.hide_island));
         }
     }
 
@@ -2180,7 +2449,7 @@ impl App {
     fn draw_companion(&self, pm: &mut Pixmap, s: f32, alpha: f32, fw: f32) {
         let Some(font) = &self.font else { return };
         let a = (alpha * 255.0) as u8;
-        let (cx, cy) = (fw / 2.0, COLLAPSED.1 as f32 / 2.0 * s);
+        let (cx, cy) = (fw / 2.0, self.closed_size().1 as f32 / 2.0 * s);
         let (left, right) = (cx - 13.0 * s, cx + 13.0 * s);
         let eyes = self.settings.idle_eyes;
         let white = {
@@ -2217,7 +2486,7 @@ impl App {
             _ if self.settings.show_clock => {
                 let (hour, minute, _, _) = local_time();
                 let text = fmt_clock(hour, minute, self.settings.clock_24h);
-                draw_text_centered(pm, self.heading_font().unwrap_or(font), &text, cx, (COLLAPSED.1 as f32 / 2.0 + 5.0) * s, 13.0 * s, [222, 222, 230, a], fw);
+                draw_text_centered(pm, self.heading_font().unwrap_or(font), &text, cx, (self.closed_size().1 as f32 / 2.0 + 5.0) * s, 13.0 * s, [222, 222, 230, a], fw);
             }
             _ => {}
         }
@@ -2263,51 +2532,53 @@ impl App {
         }
 
         for row in 0..todo::VISIBLE {
-            let Some(i) = self.todo.index_at(row) else { continue };
-            let task = &self.todo.tasks[i];
-            let y = TODO_ROWS_Y + row as f32 * TODO_ROW_H;
-            let rect = (24.0, y + 1.0, 372.0, TODO_ROW_H - 2.0);
-            let hot = self.hot_t(rect, s);
-            if hot > 0.01 {
-                gfx::gradient_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 8.0 * s, [255, 255, 255, (alpha * 40.0 * hot) as u8], [255, 255, 255, (alpha * 20.0 * hot) as u8], false);
-                gfx::stroke_rounded(pm, rect.0 * s + 0.5 * s, rect.1 * s + 0.5 * s, rect.2 * s - s, rect.3 * s - s, 8.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 70.0 * hot) as u8]);
-            }
+            self.animated_row(pm, s, row, todo::VISIBLE, |pm| {
+                let Some(i) = self.todo.index_at(row) else { return };
+                let task = &self.todo.tasks[i];
+                let y = TODO_ROWS_Y + row as f32 * TODO_ROW_H;
+                let rect = (24.0, y + 1.0, 372.0, TODO_ROW_H - 2.0);
+                let hot = self.hot_t(rect, s);
+                if hot > 0.01 {
+                    gfx::gradient_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 8.0 * s, [255, 255, 255, (alpha * 40.0 * hot) as u8], [255, 255, 255, (alpha * 20.0 * hot) as u8], false);
+                    gfx::stroke_rounded(pm, rect.0 * s + 0.5 * s, rect.1 * s + 0.5 * s, rect.2 * s - s, rect.3 * s - s, 8.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 70.0 * hot) as u8]);
+                }
 
-            // Checkbox.
-            draw_check(pm, 28.0 * s, (y + 5.0) * s, 14.0 * s, task.done, amber, a);
+                // Checkbox.
+                draw_check(pm, 28.0 * s, (y + 5.0) * s, 14.0 * s, task.done, amber, a);
 
-            // When it is due (or its day) as a small tag, so the text only gets the room that is left.
-            let when = task_when(task, today, now, offset, self.settings.clock_24h);
-            let tag_w = when.as_ref().map_or(0.0, |(label, _)| text_width(font, label, 10.0 * s) / s + 12.0);
-            let text_w = ((346.0 - 52.0 - 8.0) * s - tag_w * s).min(250.0 * s);
+                // When it is due (or its day) as a small tag, so the text only gets the room that is left.
+                let when = task_when(task, today, now, offset, self.settings.clock_24h);
+                let tag_w = when.as_ref().map_or(0.0, |(label, _)| text_width(font, label, 10.0 * s) / s + 12.0);
+                let text_w = ((346.0 - 52.0 - 8.0) * s - tag_w * s).min(250.0 * s);
 
-            // Text, struck through when done.
-            let color = if task.done { [120, 120, 130, a] } else { white };
-            draw_text(pm, font, &task.text, 52.0 * s, (y + 16.0) * s, 12.0 * s, color, text_w);
-            if task.done {
-                let w = text_width(font, &task.text, 12.0 * s).min(text_w);
-                fill_rect(pm, 52.0 * s, (y + 12.0) * s, w, 1.2 * s, color);
-            }
-            if let Some((label, overdue)) = &when {
-                let (tint, ink) = if task.done {
-                    ([255, 255, 255], [120, 120, 130, a])
-                } else if *overdue {
-                    ([255, 96, 86], [255, 130, 120, a])
-                } else if task.due.is_some() {
-                    (rgb, [255, 214, 140, a])
-                } else {
-                    ([255, 255, 255], [165, 165, 175, a])
-                };
-                let (tx, tw) = (346.0 - tag_w, tag_w);
-                fill_rounded(pm, tx * s, (y + 4.5) * s, tw * s, 15.0 * s, 7.5 * s, [tint[0], tint[1], tint[2], (alpha * if tint == [255, 255, 255] { 16.0 } else { 40.0 }) as u8]);
-                draw_text_centered(pm, font, label, (tx + tw / 2.0) * s, (y + 15.5) * s, 10.0 * s, ink, tw * s);
-            }
+                // Text, struck through when done.
+                let color = if task.done { [120, 120, 130, a] } else { white };
+                draw_text(pm, font, &task.text, 52.0 * s, (y + 16.0) * s, 12.0 * s, color, text_w);
+                if task.done {
+                    let w = text_width(font, &task.text, 12.0 * s).min(text_w);
+                    fill_rect(pm, 52.0 * s, (y + 12.0) * s, w, 1.2 * s, color);
+                }
+                if let Some((label, overdue)) = &when {
+                    let (tint, ink) = if task.done {
+                        ([255, 255, 255], [120, 120, 130, a])
+                    } else if *overdue {
+                        ([255, 96, 86], [255, 130, 120, a])
+                    } else if task.due.is_some() {
+                        (rgb, [255, 214, 140, a])
+                    } else {
+                        ([255, 255, 255], [165, 165, 175, a])
+                    };
+                    let (tx, tw) = (346.0 - tag_w, tag_w);
+                    fill_rounded(pm, tx * s, (y + 4.5) * s, tw * s, 15.0 * s, 7.5 * s, [tint[0], tint[1], tint[2], (alpha * if tint == [255, 255, 255] { 16.0 } else { 40.0 }) as u8]);
+                    draw_text_centered(pm, font, label, (tx + tw / 2.0) * s, (y + 15.5) * s, 10.0 * s, ink, tw * s);
+                }
 
-            // Edit and remove buttons.
-            let over_edit = self.hot_t((346.0, y, 26.0, TODO_ROW_H), s);
-            let over_remove = self.hot_t((372.0, y, 24.0, TODO_ROW_H), s);
-            draw_pencil(pm, 358.0 * s, (y + 12.0) * s, s, pick(white, [120, 120, 130, a], over_edit));
-            draw_text_centered(pm, font, "\u{00D7}", 384.0 * s, (y + 17.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
+                // Edit and remove buttons.
+                let over_edit = self.hot_t((346.0, y, 26.0, TODO_ROW_H), s);
+                let over_remove = self.hot_t((372.0, y, 24.0, TODO_ROW_H), s);
+                draw_pencil(pm, 358.0 * s, (y + 12.0) * s, s, pick(white, [120, 120, 130, a], over_edit));
+                draw_text_centered(pm, font, "\u{00D7}", 384.0 * s, (y + 17.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
+            });
         }
 
         // Scroll indicator when there are more tasks than rows.
@@ -2318,6 +2589,48 @@ impl App {
             let thumb = height * todo::VISIBLE as f32 / total as f32;
             let at = top + (height - thumb) * self.todo.scroll as f32 / (total - todo::VISIBLE) as f32;
             fill_rounded(pm, 410.0 * s, at * s, 3.0 * s, thumb * s, 1.5 * s, amber);
+        }
+    }
+
+    /// One week as seven rows, one per day: its name, its date, and a dot for each task.
+    fn draw_calendar_week(&self, pm: &mut Pixmap, s: f32, alpha: f32, monday: bool, today: i64) {
+        let Some(font) = &self.font else { return };
+        let heading = self.heading_font().unwrap_or(font);
+        let a = (alpha * 255.0) as u8;
+        let (white, grey) = ([255, 255, 255, a], [165, 165, 175, a]);
+        let amber = [TODO_AMBER[0], TODO_AMBER[1], TODO_AMBER[2], a];
+        let rgb = self.accent(View::Calendar);
+        let violet = [rgb[0], rgb[1], rgb[2], a];
+        const NAMES: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+        let start = calendar::week_start(self.cal.selected, monday);
+        for i in 0..7 {
+            let day = start + i as i64;
+            let rect = cal_week_rect(i);
+            let (x, y, w, h) = rect;
+            let is_today = day == today;
+            if day == self.cal.selected {
+                gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 44.0) as u8], [255, 255, 255, (alpha * 22.0) as u8], false);
+                gfx::stroke_rounded(pm, x * s + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, 6.0 * s, s, [255, 255, 255, (alpha * 90.0) as u8]);
+            } else {
+                let glow = self.hot_t(rect, s);
+                if glow > 0.01 {
+                    fill_rounded(pm, x * s, y * s, w * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
+                }
+            }
+            if is_today {
+                gfx::gradient_rounded(pm, x * s + 2.0 * s, y * s + 1.0 * s, 32.0 * s, (h - 2.0) * s, 5.0 * s, gfx::mix(violet, white, 0.25), violet, false);
+            }
+            let (_, _, dom) = calendar::civil_from_days(day);
+            let name = NAMES[calendar::weekday(day)];
+            let weekend = calendar::weekday(day) >= 5;
+            let ink = if is_today { white } else if weekend { [190, 175, 225, a] } else { grey };
+            draw_text_centered(pm, font, name, (x + 17.0) * s, (y + 10.5) * s, 9.0 * s, ink, 30.0 * s);
+            draw_text(pm, if is_today { heading } else { font }, &dom.to_string(), (x + 42.0) * s, (y + 10.5) * s, 10.0 * s, if weekend && !is_today { [190, 175, 225, a] } else { white }, 24.0 * s);
+            let (open, total) = self.todo.day_counts(day);
+            for k in 0..total.min(8) {
+                let colour = if k < open { amber } else { [110, 110, 120, a] };
+                fill_circle(pm, (x + 70.0 + k as f32 * 6.0) * s, (y + h / 2.0) * s, 1.8 * s, colour);
+            }
         }
     }
 
@@ -2347,23 +2660,35 @@ impl App {
             let tip = [(cx - 2.0 * dir * s, cy - 4.0 * s), (cx + 2.0 * dir * s, cy), (cx - 2.0 * dir * s, cy + 4.0 * s)];
             stroke_poly(pm, &tip, 1.7 * s, pick(white, grey, glow), false);
         }
-        draw_text_centered(pm, heading, &self.cal.title(), (CAL_TITLE.0 + CAL_TITLE.2 / 2.0) * s, (CAL_TITLE.1 + 13.0) * s, 12.5 * s, white, CAL_TITLE.2 * s);
-        for (i, head) in calendar::WEEK_HEADS.iter().enumerate() {
+        let (monday, week) = (self.settings.week_monday, self.settings.calendar_week);
+        let title = if week { calendar::week_title(calendar::week_start(selected, monday)) } else { self.cal.title() };
+        draw_text_centered(pm, heading, &title, (CAL_TITLE.0 + CAL_TITLE.2 / 2.0) * s, (CAL_TITLE.1 + 13.0) * s, 12.5 * s, white, CAL_TITLE.2 * s);
+        let grid = |pm: &mut Pixmap| {
+        if week {
+            self.draw_calendar_week(pm, s, alpha, monday, today);
+            return;
+        }
+        for (i, head) in calendar::week_heads(monday).iter().enumerate() {
             let x = CAL_GRID.0 + (i as f32 + 0.5) * CAL_CELL.0;
-            let ink = if i >= 5 { gfx::mix(grey, violet, 0.45) } else { [130, 130, 142, a] };
+            let ink = if calendar::is_weekend(i, monday) { gfx::mix(grey, violet, 0.45) } else { [130, 130, 142, a] };
             draw_text_centered(pm, font, head, x * s, CAL_HEADS_Y * s, 9.0 * s, ink, CAL_CELL.0 * s);
         }
 
-        // Month grid: the selected day is outlined, today is filled, and a dot marks days with tasks.
+        // Month grid: the selected day is outlined (the outline glides from day to day), today is filled, and
+        // a dot marks days with tasks.
+        if let Some(i) = (0..calendar::CELLS).find(|&i| self.cal.cell(i, monday) == Some(selected)) {
+            let (x, y, w, h) = cal_cell_rect(i);
+            let gx = self.glows.follow(KEY_CAL_SELECTED, x as f64, 30.0, 0.78) as f32;
+            let gy = self.glows.follow(KEY_CAL_SELECTED + 1, y as f64, 30.0, 0.78) as f32;
+            gfx::gradient_rounded(pm, (gx + 1.0) * s, gy * s, (w - 2.0) * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 44.0) as u8], [255, 255, 255, (alpha * 22.0) as u8], false);
+            gfx::stroke_rounded(pm, (gx + 1.0) * s + 0.5 * s, gy * s + 0.5 * s, (w - 2.0) * s - s, h * s - s, 6.0 * s, s, [255, 255, 255, (alpha * 90.0) as u8]);
+        }
         for i in 0..calendar::CELLS {
-            let Some(day) = self.cal.cell(i) else { continue };
+            let Some(day) = self.cal.cell(i, monday) else { continue };
             let rect = cal_cell_rect(i);
             let (x, y, w, h) = rect;
             let is_today = day == today;
-            if day == selected {
-                gfx::gradient_rounded(pm, (x + 1.0) * s, y * s, (w - 2.0) * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 44.0) as u8], [255, 255, 255, (alpha * 22.0) as u8], false);
-                gfx::stroke_rounded(pm, (x + 1.0) * s + 0.5 * s, y * s + 0.5 * s, (w - 2.0) * s - s, h * s - s, 6.0 * s, s, [255, 255, 255, (alpha * 90.0) as u8]);
-            } else {
+            if day != selected {
                 let glow = self.hot_t(rect, s);
                 if glow > 0.01 {
                     fill_rounded(pm, (x + 1.0) * s, y * s, (w - 2.0) * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
@@ -2374,7 +2699,7 @@ impl App {
                 gfx::gradient_rounded(pm, (x + 3.0) * s, (y + 1.0) * s, (w - 6.0) * s, (h - 2.0) * s, 5.0 * s, gfx::mix(violet, white, 0.25), violet, false);
             }
             let (_, _, dom) = calendar::civil_from_days(day);
-            let weekend = i % 7 >= 5;
+            let weekend = calendar::is_weekend(i % 7, monday);
             let ink = if is_today { white } else if weekend { [190, 175, 225, a] } else { white };
             draw_text_centered(pm, if is_today { heading } else { font }, &dom.to_string(), (x + w / 2.0) * s, (y + 11.5) * s, 10.0 * s, ink, w * s);
             let (open, total) = self.todo.day_counts(day);
@@ -2383,6 +2708,8 @@ impl App {
                 fill_circle(pm, (x + w / 2.0) * s, (y + 14.3) * s, 1.2 * s, if is_today { white } else { dot });
             }
         }
+        };
+        self.slide_in(pm, s, grid);
 
         // The selected day sits in a card: its heading and its tasks.
         draw_card(pm, (CAL_PANEL_X - 8.0, 34.0, CAL_PANEL_W + 16.0, 126.0), 12.0, s, alpha, 0.0, rgb);
@@ -2406,33 +2733,36 @@ impl App {
             draw_text_centered(pm, font, "No tasks", (CAL_PANEL_X + CAL_PANEL_W / 2.0) * s, 114.0 * s, 12.0 * s, grey, CAL_PANEL_W * s);
         }
         for (row, &i) in ids.iter().take(CAL_VISIBLE).enumerate() {
-            let task = &self.todo.tasks[i];
-            let y = CAL_ROWS_Y + row as f32 * CAL_ROW_H;
-            let rect = (CAL_PANEL_X - 4.0, y + 1.0, CAL_PANEL_W + 8.0, CAL_ROW_H - 2.0);
-            let hot = self.hot_t(rect, s);
-            if hot > 0.01 {
-                fill_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 6.0 * s, [255, 255, 255, (alpha * 30.0 * hot) as u8]);
-            }
-            draw_check(pm, CAL_PANEL_X * s, (y + 4.0) * s, 12.0 * s, task.done, amber, a);
-            let color = if task.done { [120, 120, 130, a] } else { white };
-            // The time of a reminder, so the text only gets the room that is left.
-            let time = task.due.map(|due| split_clock(due, now, offset, self.settings.clock_24h, task.done));
-            let label_w = time.as_ref().map_or(0.0, |(label, _)| text_width(font, label, 9.0 * s));
-            let text_w = (128.0 * s - label_w - if label_w > 0.0 { 6.0 * s } else { 0.0 }).max(30.0 * s);
-            draw_text(pm, font, &task.text, (CAL_PANEL_X + 18.0) * s, (y + 14.0) * s, 11.0 * s, color, text_w);
-            if task.done {
-                let w = text_width(font, &task.text, 11.0 * s).min(text_w);
-                fill_rect(pm, (CAL_PANEL_X + 18.0) * s, (y + 10.5) * s, w, 1.2 * s, color);
-            }
-            if let Some((label, overdue)) = &time {
-                let c = if *overdue { [255, 130, 120, a] } else { [255, 214, 140, a] };
-                draw_text(pm, font, label, (CAL_PANEL_X + CAL_PANEL_W - 32.0) * s - label_w, (y + 14.0) * s, 9.0 * s, c, 80.0 * s);
-            }
-            let over_remove = self.hot_t((CAL_PANEL_X + CAL_PANEL_W - 22.0, y, 30.0, CAL_ROW_H), s);
-            let over_edit = (hot - over_remove).max(0.0);
-            draw_pencil(pm, (CAL_PANEL_X + CAL_PANEL_W - 24.0) * s, (y + 10.0) * s, s * 0.85, pick(white, [120, 120, 130, a], over_edit));
-            draw_text_centered(pm, font, "\u{00D7}", (CAL_PANEL_X + CAL_PANEL_W - 6.0) * s, (y + 15.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
+            self.animated_row(pm, s, row, CAL_VISIBLE, |pm| {
+                let task = &self.todo.tasks[i];
+                let y = CAL_ROWS_Y + row as f32 * CAL_ROW_H;
+                let rect = (CAL_PANEL_X - 4.0, y + 1.0, CAL_PANEL_W + 8.0, CAL_ROW_H - 2.0);
+                let hot = self.hot_t(rect, s);
+                if hot > 0.01 {
+                    fill_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 6.0 * s, [255, 255, 255, (alpha * 30.0 * hot) as u8]);
+                }
+                draw_check(pm, CAL_PANEL_X * s, (y + 4.0) * s, 12.0 * s, task.done, amber, a);
+                let color = if task.done { [120, 120, 130, a] } else { white };
+                // The time of a reminder, so the text only gets the room that is left.
+                let time = task.due.map(|due| split_clock(due, now, offset, self.settings.clock_24h, task.done));
+                let label_w = time.as_ref().map_or(0.0, |(label, _)| text_width(font, label, 9.0 * s));
+                let text_w = (128.0 * s - label_w - if label_w > 0.0 { 6.0 * s } else { 0.0 }).max(30.0 * s);
+                draw_text(pm, font, &task.text, (CAL_PANEL_X + 18.0) * s, (y + 14.0) * s, 11.0 * s, color, text_w);
+                if task.done {
+                    let w = text_width(font, &task.text, 11.0 * s).min(text_w);
+                    fill_rect(pm, (CAL_PANEL_X + 18.0) * s, (y + 10.5) * s, w, 1.2 * s, color);
+                }
+                if let Some((label, overdue)) = &time {
+                    let c = if *overdue { [255, 130, 120, a] } else { [255, 214, 140, a] };
+                    draw_text(pm, font, label, (CAL_PANEL_X + CAL_PANEL_W - 32.0) * s - label_w, (y + 14.0) * s, 9.0 * s, c, 80.0 * s);
+                }
+                let over_remove = self.hot_t((CAL_PANEL_X + CAL_PANEL_W - 22.0, y, 30.0, CAL_ROW_H), s);
+                let over_edit = (hot - over_remove).max(0.0);
+                draw_pencil(pm, (CAL_PANEL_X + CAL_PANEL_W - 24.0) * s, (y + 10.0) * s, s * 0.85, pick(white, [120, 120, 130, a], over_edit));
+                draw_text_centered(pm, font, "\u{00D7}", (CAL_PANEL_X + CAL_PANEL_W - 6.0) * s, (y + 15.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
+            });
         }
+
 
         // Add a task for this day.
         let add = CAL_ADD;
@@ -2599,42 +2929,44 @@ impl App {
         }
 
         for row in 0..clipboard::VISIBLE {
-            let Some(i) = self.clips.index_at(row) else { continue };
-            let y = CLIP_ROWS_Y + row as f32 * CLIP_ROW_H;
-            let rect = (24.0, y + 1.0, 372.0, CLIP_ROW_H - 2.0);
-            let hot = self.hot_t(rect, s);
-            draw_card(pm, rect, 8.0, s, alpha, hot, rgb);
-            // A teal tab on the left edge marks the row under the mouse.
-            if hot > 0.01 {
-                let tab = [teal[0], teal[1], teal[2], (teal[3] as f32 * hot) as u8];
-                gfx::gradient_rounded(pm, 24.0 * s, (y + 8.0) * s, 3.0 * s, (CLIP_ROW_H - 16.0) * s, 1.5 * s, tab, [rgb[0], rgb[1], rgb[2], 0], false);
-            }
-            match &self.clips.items[i] {
-                clipboard::Content::Text(text) => {
-                    let baseline = (y + CLIP_ROW_H / 2.0 + 4.0) * s;
-                    draw_text(pm, font, &clipboard::preview(text), 34.0 * s, baseline, 12.0 * s, white, 326.0 * s);
+            self.animated_row(pm, s, row, clipboard::VISIBLE, |pm| {
+                let Some(i) = self.clips.index_at(row) else { return };
+                let y = CLIP_ROWS_Y + row as f32 * CLIP_ROW_H;
+                let rect = (24.0, y + 1.0, 372.0, CLIP_ROW_H - 2.0);
+                let hot = self.hot_t(rect, s);
+                draw_card(pm, rect, 8.0, s, alpha, hot, rgb);
+                // A teal tab on the left edge marks the row under the mouse.
+                if hot > 0.01 {
+                    let tab = [teal[0], teal[1], teal[2], (teal[3] as f32 * hot) as u8];
+                    gfx::gradient_rounded(pm, 24.0 * s, (y + 8.0) * s, 3.0 * s, (CLIP_ROW_H - 16.0) * s, 1.5 * s, tab, [rgb[0], rgb[1], rgb[2], 0], false);
                 }
-                clipboard::Content::Image(img) => {
-                    // The preview is stored at twice its drawn size, so it stays sharp on high-DPI screens.
-                    if let Some(mut thumb) = Pixmap::new(img.thumb_w, img.thumb_h) {
-                        for (dst, px) in thumb.pixels_mut().iter_mut().zip(img.thumb.as_chunks::<4>().0) {
-                            *dst = tiny_skia::ColorU8::from_rgba(px[0], px[1], px[2], px[3]).premultiply();
-                        }
-                        let (dw, dh) = (img.thumb_w as f32 / 2.0, img.thumb_h as f32 / 2.0);
-                        let (tx, ty) = (34.0 + (48.0 - dw) / 2.0, y + (CLIP_ROW_H - dh) / 2.0);
-                        let paint = PixmapPaint { opacity: alpha, quality: FilterQuality::Bilinear, ..Default::default() };
-                        let at = Transform::from_scale(s / 2.0, s / 2.0).post_translate(tx * s, ty * s);
-                        let mask = gfx::rounded_path(tx * s, ty * s, dw * s, dh * s, 3.0 * s).and_then(|shape| gfx::mask_of(pm.width(), pm.height(), &shape));
-                        pm.draw_pixmap(0, 0, thumb.as_ref(), &paint, at, mask.as_ref());
-                        gfx::stroke_rounded(pm, tx * s, ty * s, dw * s, dh * s, 3.0 * s, s, [255, 255, 255, (alpha * 40.0) as u8]);
+                match &self.clips.items[i] {
+                    clipboard::Content::Text(text) => {
+                        let baseline = (y + CLIP_ROW_H / 2.0 + 4.0) * s;
+                        draw_text(pm, font, &clipboard::preview(text), 34.0 * s, baseline, 12.0 * s, white, 326.0 * s);
                     }
-                    draw_text(pm, font, "Image", 94.0 * s, (y + 14.0) * s, 12.0 * s, white, 200.0 * s);
-                    let size = format!("{} \u{00D7} {}", img.width, img.height);
-                    draw_text(pm, font, &size, 94.0 * s, (y + 27.0) * s, 10.0 * s, grey, 200.0 * s);
+                    clipboard::Content::Image(img) => {
+                        // The preview is stored at twice its drawn size, so it stays sharp on high-DPI screens.
+                        if let Some(mut thumb) = Pixmap::new(img.thumb_w, img.thumb_h) {
+                            for (dst, px) in thumb.pixels_mut().iter_mut().zip(img.thumb.as_chunks::<4>().0) {
+                                *dst = tiny_skia::ColorU8::from_rgba(px[0], px[1], px[2], px[3]).premultiply();
+                            }
+                            let (dw, dh) = (img.thumb_w as f32 / 2.0, img.thumb_h as f32 / 2.0);
+                            let (tx, ty) = (34.0 + (48.0 - dw) / 2.0, y + (CLIP_ROW_H - dh) / 2.0);
+                            let paint = PixmapPaint { opacity: alpha, quality: FilterQuality::Bilinear, ..Default::default() };
+                            let at = Transform::from_scale(s / 2.0, s / 2.0).post_translate(tx * s, ty * s);
+                            let mask = gfx::rounded_path(tx * s, ty * s, dw * s, dh * s, 3.0 * s).and_then(|shape| gfx::mask_of(pm.width(), pm.height(), &shape));
+                            pm.draw_pixmap(0, 0, thumb.as_ref(), &paint, at, mask.as_ref());
+                            gfx::stroke_rounded(pm, tx * s, ty * s, dw * s, dh * s, 3.0 * s, s, [255, 255, 255, (alpha * 40.0) as u8]);
+                        }
+                        draw_text(pm, font, "Image", 94.0 * s, (y + 14.0) * s, 12.0 * s, white, 200.0 * s);
+                        let size = format!("{} \u{00D7} {}", img.width, img.height);
+                        draw_text(pm, font, &size, 94.0 * s, (y + 27.0) * s, 10.0 * s, grey, 200.0 * s);
+                    }
                 }
-            }
-            let over_remove = self.hot_t((372.0, y, 24.0, CLIP_ROW_H), s);
-            draw_text_centered(pm, font, "\u{00D7}", 384.0 * s, (y + CLIP_ROW_H / 2.0 + 5.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
+                let over_remove = self.hot_t((372.0, y, 24.0, CLIP_ROW_H), s);
+                draw_text_centered(pm, font, "\u{00D7}", 384.0 * s, (y + CLIP_ROW_H / 2.0 + 5.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
+            });
         }
 
         // Scroll indicator when there are more entries than rows.
@@ -2674,14 +3006,18 @@ impl App {
             self.draw_lyric_panel(pm, s, alpha * reveal, (1.0 - reveal) * 28.0);
         }
 
-        self.draw_art(pm, geo.art, s, alpha);
+        self.fade_in_track(pm, s, |pm| {
+            self.draw_art(pm, geo.art, s, alpha);
+            if let Some(font) = &self.font {
+                let heading = self.heading_font().unwrap_or(font);
+                let max_w = (geo.right - geo.text_x) * s;
+                draw_text(pm, heading, title, geo.text_x * s, 56.0 * s, 17.0 * s, white, max_w);
+                draw_text(pm, font, &sub, geo.text_x * s, 78.0 * s, 13.0 * s, gfx::mix(grey, accent, 0.4), max_w);
+            }
+        });
 
         let (bx, by, bw) = geo.bar;
         if let Some(font) = &self.font {
-            let heading = self.heading_font().unwrap_or(font);
-            let max_w = (geo.right - geo.text_x) * s;
-            draw_text(pm, heading, title, geo.text_x * s, 56.0 * s, 17.0 * s, white, max_w);
-            draw_text(pm, font, &sub, geo.text_x * s, 78.0 * s, 13.0 * s, gfx::mix(grey, accent, 0.4), max_w);
 
             // Time played on the left of the bar, time left on the right.
             let pos = fmt_time(self.position());
@@ -2908,10 +3244,6 @@ fn today_day() -> i64 {
     calendar::days_from_civil((t / 10_000) as i32, t / 100 % 100, t % 100)
 }
 
-fn island_label(auto_hide: bool) -> &'static str {
-    if auto_hide { "Always Show Island" } else { "Auto-hide Island" }
-}
-
 // Calendar tab layout, in logical pixels: month grid on the left, the chosen day's tasks on the right.
 // The month heading stays at the top; the weekday letters and the dates sit lower, with a gap between.
 const CAL_GRID: (f32, f32) = (24.0, 65.0);
@@ -2927,6 +3259,11 @@ const CAL_ROWS_Y: f32 = 60.0;
 const CAL_ROW_H: f32 = 20.0;
 const CAL_VISIBLE: usize = 4;
 const CAL_ADD: (f32, f32, f32, f32) = (CAL_PANEL_X, 142.0, CAL_PANEL_W, 18.0);
+
+/// A day's row in the week view, which fills the place of the month grid.
+fn cal_week_rect(i: usize) -> (f32, f32, f32, f32) {
+    (CAL_GRID.0, CAL_GRID.1 - 14.0 + i as f32 * 15.0, 7.0 * CAL_CELL.0, 14.0)
+}
 
 fn cal_cell_rect(i: usize) -> (f32, f32, f32, f32) {
     let (col, row) = ((i % 7) as f32, (i / 7) as f32);
@@ -3178,11 +3515,11 @@ fn draw_lyrics_icon(pm: &mut Pixmap, cx: f32, cy: f32, s: f32, c: [u8; 4]) {
     stroke_line(pm, cx - 3.5 * s, cy + 0.2 * s, cx + 1.5 * s, cy + 0.2 * s, 1.3 * s, c);
 }
 
-/// Tab `i` of `count`, centred in the notch.
-fn tab_rect(i: usize, count: usize) -> (f32, f32, f32, f32) {
+/// Tab `i` of `count`, centred in the notch, at the bottom of a window `height` logical pixels high.
+fn tab_rect(i: usize, count: usize, height: f32) -> (f32, f32, f32, f32) {
     let total = count as f32 * TAB_W + (count as f32 - 1.0) * TAB_GAP;
     let x0 = (EXPANDED.0 as f32 - total) / 2.0;
-    (x0 + i as f32 * (TAB_W + TAB_GAP), 6.0, TAB_W, 20.0)
+    (x0 + i as f32 * (TAB_W + TAB_GAP), height - TAB_BOTTOM + (TAB_PILL_H - TAB_BUTTON) / 2.0, TAB_W, TAB_BUTTON)
 }
 
 /// mm:ss, rounded up so the display hits 0:00 exactly when the phase ends.
@@ -3346,67 +3683,108 @@ fn stroke_poly(pm: &mut Pixmap, pts: &[(f32, f32)], width: f32, c: [u8; 4], clos
     }
 }
 
-/// The small icon that stands in for a tab's name, about 13 px across.
+/// Fill a path and/or draw its outline, with the theme's colours.
+fn paint_path(pm: &mut Pixmap, path: &tiny_skia::Path, fill: Option<[u8; 4]>, outline: Option<(f32, [u8; 4])>) {
+    if let Some(c) = fill {
+        let c = theme::map(c);
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        paint.anti_alias = true;
+        pm.fill_path(path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+    if let Some((width, c)) = outline {
+        let c = theme::map(c);
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        paint.anti_alias = true;
+        let stroke = Stroke { width, line_cap: LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+        pm.stroke_path(path, &paint, &stroke, Transform::identity(), None);
+    }
+}
+
+/// A closed shape through the points, filled softly and outlined.
+fn shape(pm: &mut Pixmap, pts: &[(f32, f32)], soft: [u8; 4], width: f32, c: [u8; 4]) {
+    let mut pb = PathBuilder::new();
+    pb.move_to(pts[0].0, pts[0].1);
+    for p in &pts[1..] {
+        pb.line_to(p.0, p.1);
+    }
+    pb.close();
+    if let Some(path) = pb.finish() {
+        paint_path(pm, &path, Some(soft), Some((width, c)));
+    }
+}
+
+/// A rounded box, filled softly and outlined.
+fn soft_box(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, soft: [u8; 4], width: f32, c: [u8; 4]) {
+    fill_rounded(pm, x, y, w, h, r, soft);
+    gfx::stroke_rounded(pm, x + width / 2.0, y + width / 2.0, w - width, h - width, r, width, c);
+}
+
+/// The small icon that stands in for a tab's name, about 14 px across. Each is drawn in two tones: the
+/// body in a soft wash of the colour, and the details and the outline in the colour itself.
 fn draw_tab_icon(pm: &mut Pixmap, view: View, cx: f32, cy: f32, s: f32, c: [u8; 4]) {
     let p = |dx: f32, dy: f32| (cx + dx * s, cy + dy * s);
     let w = 1.5 * s;
+    let soft = [c[0], c[1], c[2], (c[3] as f32 * 0.3) as u8];
     match view {
         View::Player => {
-            // Music note: head, stem and flag.
-            fill_circle(pm, cx - 2.5 * s, cy + 4.0 * s, 2.5 * s, c);
-            stroke_poly(pm, &[p(-0.2, 3.5), p(-0.2, -5.5), p(4.0, -3.0)], w, c, false);
+            // Two notes under one beam.
+            fill_circle(pm, cx - 4.3 * s, cy + 5.2 * s, 2.5 * s, c);
+            fill_circle(pm, cx + 3.9 * s, cy + 3.4 * s, 2.5 * s, c);
+            stroke_line(pm, cx - 2.1 * s, cy + 4.8 * s, cx - 2.1 * s, cy - 4.2 * s, w, c);
+            stroke_line(pm, cx + 6.3 * s, cy + 3.0 * s, cx + 6.3 * s, cy - 6.0 * s, w, c);
+            fill_path(pm, &[p(-2.4, -4.4), p(6.6, -6.4), p(6.6, -3.0), p(-2.4, -1.0)], c);
         }
         View::Timer => {
-            // Timer: ring with two hands.
-            stroke_arc(pm, cx, cy + 0.5 * s, 5.5 * s, w, 1.0, c);
-            stroke_poly(pm, &[p(0.0, 3.0), p(0.0, -0.5), p(2.5, 1.5)], 1.3 * s, c, false);
-            stroke_line(pm, cx - 1.8 * s, cy - 7.0 * s, cx + 1.8 * s, cy - 7.0 * s, w, c);
+            // A stopwatch: round body, a button on top and one at the side, and a hand.
+            fill_circle(pm, cx, cy + 1.4 * s, 6.4 * s, soft);
+            stroke_arc(pm, cx, cy + 1.4 * s, 6.4 * s, w, 1.0, c);
+            fill_rounded(pm, cx - 1.9 * s, cy - 8.2 * s, 3.8 * s, 2.0 * s, 0.9 * s, c);
+            stroke_line(pm, cx + 4.6 * s, cy - 4.4 * s, cx + 6.0 * s, cy - 5.8 * s, w, c);
+            stroke_line(pm, cx, cy + 1.4 * s, cx + 2.6 * s, cy - 1.4 * s, w, c);
+            fill_circle(pm, cx, cy + 1.4 * s, 1.0 * s, c);
         }
         View::Water => {
-            // Drop.
+            // A drop with a little shine.
             let mut pb = PathBuilder::new();
-            pb.move_to(cx, cy - 6.5 * s);
-            pb.cubic_to(cx + 1.0 * s, cy - 3.0 * s, cx + 5.0 * s, cy - 0.5 * s, cx + 5.0 * s, cy + 2.0 * s);
-            pb.cubic_to(cx + 5.0 * s, cy + 5.0 * s, cx + 2.8 * s, cy + 6.5 * s, cx, cy + 6.5 * s);
-            pb.cubic_to(cx - 2.8 * s, cy + 6.5 * s, cx - 5.0 * s, cy + 5.0 * s, cx - 5.0 * s, cy + 2.0 * s);
-            pb.cubic_to(cx - 5.0 * s, cy - 0.5 * s, cx - 1.0 * s, cy - 3.0 * s, cx, cy - 6.5 * s);
+            pb.move_to(cx, cy - 7.4 * s);
+            pb.cubic_to(cx + 1.2 * s, cy - 3.4 * s, cx + 5.8 * s, cy - 0.8 * s, cx + 5.8 * s, cy + 2.4 * s);
+            pb.cubic_to(cx + 5.8 * s, cy + 5.8 * s, cx + 3.2 * s, cy + 7.4 * s, cx, cy + 7.4 * s);
+            pb.cubic_to(cx - 3.2 * s, cy + 7.4 * s, cx - 5.8 * s, cy + 5.8 * s, cx - 5.8 * s, cy + 2.4 * s);
+            pb.cubic_to(cx - 5.8 * s, cy - 0.8 * s, cx - 1.2 * s, cy - 3.4 * s, cx, cy - 7.4 * s);
             pb.close();
             if let Some(path) = pb.finish() {
-                let mut paint = Paint::default();
-                {
-            let c = theme::map(c);
-            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
-        }
-                paint.anti_alias = true;
-                pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+                paint_path(pm, &path, Some(soft), Some((w, c)));
             }
+            stroke_poly(pm, &[p(-3.0, 2.4), p(-2.8, 4.4), p(-1.4, 5.6)], 1.2 * s, c, false);
         }
         View::Shelf => {
-            // Tray with an arrow dropping into it.
-            stroke_poly(pm, &[p(-6.0, 0.5), p(-6.0, 5.5), p(6.0, 5.5), p(6.0, 0.5)], w, c, false);
-            stroke_line(pm, cx, cy - 6.0 * s, cx, cy + 2.0 * s, w, c);
-            stroke_poly(pm, &[p(-3.0, -1.0), p(0.0, 2.0), p(3.0, -1.0)], w, c, false);
+            // An inbox tray with a slot.
+            shape(pm, &[p(-7.0, 0.6), p(-4.8, -5.6), p(4.8, -5.6), p(7.0, 0.6), p(7.0, 5.0), p(-7.0, 5.0)], soft, w, c);
+            stroke_poly(pm, &[p(-7.0, 0.6), p(-3.4, 0.6), p(-2.4, 2.6), p(2.4, 2.6), p(3.4, 0.6), p(7.0, 0.6)], w, c, false);
         }
         View::Todo => {
-            // Check mark in a circle.
-            stroke_arc(pm, cx, cy, 6.0 * s, w, 1.0, c);
-            stroke_poly(pm, &[p(-2.6, 0.2), p(-0.7, 2.3), p(2.8, -2.0)], w, c, false);
+            // A check mark on a round badge.
+            fill_circle(pm, cx, cy, 6.8 * s, soft);
+            stroke_arc(pm, cx, cy, 6.8 * s, w, 1.0, c);
+            stroke_poly(pm, &[p(-2.8, 0.2), p(-0.8, 2.4), p(3.0, -2.2)], 1.8 * s, c, false);
         }
         View::Clipboard => {
-            // Board, clip and two lines of text.
-            stroke_poly(pm, &[p(-5.0, -5.0), p(5.0, -5.0), p(5.0, 6.5), p(-5.0, 6.5)], w, c, true);
-            fill_rounded(pm, cx - 2.6 * s, cy - 7.2 * s, 5.2 * s, 3.4 * s, 1.2 * s, c);
-            stroke_line(pm, cx - 2.4 * s, cy, cx + 2.4 * s, cy, 1.2 * s, c);
-            stroke_line(pm, cx - 2.4 * s, cy + 3.0 * s, cx + 1.0 * s, cy + 3.0 * s, 1.2 * s, c);
+            // A board with a clip and two lines of text.
+            soft_box(pm, cx - 6.4 * s, cy - 5.0 * s, 12.8 * s, 12.8 * s, 2.6 * s, soft, w, c);
+            fill_rounded(pm, cx - 2.8 * s, cy - 7.6 * s, 5.6 * s, 3.2 * s, 1.5 * s, c);
+            stroke_line(pm, cx - 2.6 * s, cy + 0.6 * s, cx + 2.6 * s, cy + 0.6 * s, 1.3 * s, c);
+            stroke_line(pm, cx - 2.6 * s, cy + 3.8 * s, cx + 1.2 * s, cy + 3.8 * s, 1.3 * s, c);
         }
         View::Calendar => {
-            // Page with two rings, a heading line and a few dates.
-            stroke_poly(pm, &[p(-6.0, -4.5), p(6.0, -4.5), p(6.0, 6.5), p(-6.0, 6.5)], w, c, true);
-            stroke_line(pm, cx - 6.0 * s, cy - 1.0 * s, cx + 6.0 * s, cy - 1.0 * s, 1.2 * s, c);
-            stroke_line(pm, cx - 3.0 * s, cy - 7.0 * s, cx - 3.0 * s, cy - 3.5 * s, w, c);
-            stroke_line(pm, cx + 3.0 * s, cy - 7.0 * s, cx + 3.0 * s, cy - 3.5 * s, w, c);
-            for (dx, dy) in [(-3.0, 2.0), (0.0, 2.0), (3.0, 2.0), (-3.0, 4.8), (0.0, 4.8)] {
-                fill_circle(pm, cx + dx * s, cy + dy * s, 0.8 * s, c);
+            // A page with two rings, a heading line and a few dates.
+            soft_box(pm, cx - 6.6 * s, cy - 5.0 * s, 13.2 * s, 12.6 * s, 2.6 * s, soft, w, c);
+            stroke_line(pm, cx - 6.6 * s, cy - 1.0 * s, cx + 6.6 * s, cy - 1.0 * s, 1.3 * s, c);
+            stroke_line(pm, cx - 3.2 * s, cy - 7.4 * s, cx - 3.2 * s, cy - 3.6 * s, w, c);
+            stroke_line(pm, cx + 3.2 * s, cy - 7.4 * s, cx + 3.2 * s, cy - 3.6 * s, w, c);
+            for (dx, dy) in [(-3.2, 2.2), (0.0, 2.2), (3.2, 2.2), (-3.2, 5.0), (0.0, 5.0)] {
+                fill_circle(pm, cx + dx * s, cy + dy * s, 0.9 * s, c);
             }
         }
         View::Lyrics => {}
@@ -3622,10 +4000,9 @@ impl ApplicationHandler<UserEvent> for App {
                 let now = Instant::now();
                 if Some(&id) == self.tray_quit_id.as_ref() {
                     self.quit = true;
-                } else if Some(&id) == self.tray_toggle_id.as_ref() {
-                    self.settings.hide_island = !self.settings.hide_island;
-                    self.settings.save();
-                    self.sync_tray_toggle();
+                } else if Some(&id) == self.tray_about_id.as_ref() {
+                    self.panel_wanted = true;
+                    self.panel_about = true;
                     self.last_tick = now;
                 } else if Some(&id) == self.tray_settings_id.as_ref() {
                     self.panel_wanted = true;
@@ -3646,6 +4023,15 @@ impl ApplicationHandler<UserEvent> for App {
                 self.apply_visibility();
                 if let Some(w) = &self.window {
                     w.request_redraw();
+                }
+            }
+            UserEvent::Changelog(releases) => {
+                self.changelog = match releases {
+                    Some(list) => update::Changelog::Ready(list),
+                    None => update::Changelog::Failed,
+                };
+                if let Some(p) = &self.panel {
+                    p.redraw();
                 }
             }
             UserEvent::Update(status) => {
@@ -3683,6 +4069,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.lyric_manual = None;
                     self.lyric_pos = -1.0;
                     self.lyric_v = 0.0;
+                    (self.track_t, self.track_v) = (0.0, 0.0);
                     lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.proxy.clone());
                 }
                 if let Some(art) = &state.art {
@@ -3713,7 +4100,10 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorEntered { .. } => {
                 let now = Instant::now();
                 self.leave_at = None;
-                if !self.hovered {
+                // With "Open the notch" on Click, resting on it does nothing, except to bring an auto-hidden
+                // island back into view.
+                let waits_for_click = self.settings.open_on_click && self.tuck_t < 0.1;
+                if !self.hovered && !waits_for_click {
                     self.enter_at = Some(now + self.hover_open());
                     event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.hover_open()));
                 }
@@ -3728,11 +4118,11 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 // The window has a flare on each side of the notch; positions count from the notch itself.
-                let ear = EAR * self.window.as_ref().map_or(1.0, |w| w.scale_factor());
+                let ear = EAR * self.ui_scale();
                 let position = PhysicalPosition::new(position.x - ear, position.y);
                 self.cursor = (position.x, position.y);
                 if self.scrub.is_some() {
-                    let s = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
+                    let s = self.ui_scale();
                     self.scrub = Some(self.scrub_at((position.x / s) as f32));
                 }
                 // Hover highlights follow the mouse.
@@ -3747,7 +4137,18 @@ impl ApplicationHandler<UserEvent> for App {
                     }
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                self.click();
+                if self.settings.open_on_click && !self.hovered && self.progress < 0.9 {
+                    // A click on the closed notch opens it.
+                    self.hovered = true;
+                    self.enter_at = None;
+                    self.leave_at = None;
+                    self.last_tick = Instant::now();
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                } else {
+                    self.click();
+                }
             }
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
                 if let Some(at) = self.scrub.take() {
@@ -3788,13 +4189,33 @@ impl ApplicationHandler<UserEvent> for App {
                     w.request_redraw();
                 }
             }
+            WindowEvent::MouseWheel { delta, .. }
+                if self.progress >= 0.9 && !self.editing && self.timer_field.is_none() && self.wheel_changes_tab() =>
+            {
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y as f64,
+                    MouseScrollDelta::PixelDelta(p) => p.y,
+                };
+                // Scrolling down goes to the next tab, up to the one before; one step per flick.
+                if dy != 0.0 && self.last_wheel_tab.elapsed() > Duration::from_millis(220) {
+                    let tabs = self.visible_tabs();
+                    let here = if self.view == View::Lyrics { View::Player } else { self.view };
+                    if let Some(i) = tabs.iter().position(|(_, v)| *v == here) {
+                        let next = if dy < 0.0 { (i + 1).min(tabs.len() - 1) } else { i.saturating_sub(1) };
+                        if next != i {
+                            self.last_wheel_tab = Instant::now();
+                            self.go_to_view(tabs[next].1);
+                        }
+                    }
+                }
+            }
             WindowEvent::MouseWheel { delta, .. } if self.view == View::Timer && !self.editing && self.progress >= 0.9 => {
                 let dy = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y as f64,
                     MouseScrollDelta::PixelDelta(p) => p.y,
                 };
-                let s = self.window.as_ref().map_or(1.0, |w| w.scale_factor()) as f32;
-                let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s);
+                let s = self.ui_scale() as f32;
+                let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
                 let column = TIMER_COLS.iter().position(|x| (cx - x).abs() <= 28.0);
                 if let Some(i) = column.filter(|_| dy != 0.0 && (TIMER_PLUS_Y - 12.0..=TIMER_MINUS_Y + 12.0).contains(&cy))
                     && self.timer.adjust(Unit::ALL[i], if dy > 0.0 { 1 } else { -1 })
@@ -3803,8 +4224,8 @@ impl ApplicationHandler<UserEvent> for App {
                     }
             }
             WindowEvent::MouseWheel { delta, .. } if self.view == View::Lyrics && !self.editing && self.progress >= 0.9 => {
-                let s = self.window.as_ref().map_or(1.0, |w| w.scale_factor()) as f32;
-                let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s);
+                let s = self.ui_scale() as f32;
+                let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
                 let lines = match &self.lyrics {
                     LyricsState::Found(l) => l.len(),
                     _ => 0,
@@ -3830,8 +4251,8 @@ impl ApplicationHandler<UserEvent> for App {
                     MouseScrollDelta::LineDelta(_, y) => y as f64,
                     MouseScrollDelta::PixelDelta(p) => p.y,
                 };
-                let s = self.window.as_ref().map_or(1.0, |w| w.scale_factor()) as f32;
-                let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s);
+                let s = self.ui_scale() as f32;
+                let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
                 if dy != 0.0
                     && self.editor.wheel(cx, cy, if dy > 0.0 { 1 } else { -1 }, clock_now())
                     && let Some(w) = &self.window {
@@ -3946,6 +4367,9 @@ impl ApplicationHandler<UserEvent> for App {
         if self.panel_wanted {
             self.panel_wanted = false;
             self.open_panel(event_loop);
+            if std::mem::take(&mut self.panel_about) {
+                self.show_about_page();
+            }
         }
         // The settings window asks for frames while its controls are moving.
         let mut panel_wake = None;
@@ -4037,7 +4461,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         if self.view != self.shown_view {
             // Moving between Music and its lyrics is the same page; any other change is a transition in
-            // which the old view fades out as the new one slides in from the side of its tab.
+            // which the old view slides out as the new one slides in from the side of its tab.
             let tab = |v: View| self.visible_tabs().iter().position(|(_, t)| *t == if v == View::Lyrics { View::Player } else { v });
             let (from, to) = (tab(self.shown_view), tab(self.view));
             if from != to || from.is_none() {
@@ -4163,6 +4587,20 @@ mod tests {
         assert_eq!(lyric_tone(9.0), (110, 0.45));
         let (grey, strength) = lyric_tone(0.5);
         assert!(grey > 175 && grey < 255 && strength > 0.85 && strength < 1.0);
+    }
+
+    /// The tab bar's pill sits at the bottom of the notch, and the shelf's Clear button beside it, clear of
+    /// the pill and inside the notch.
+    #[test]
+    fn the_bottom_bar_and_the_clear_button_have_their_places() {
+        let height = EXPANDED.1 as f32;
+        let (first, last) = (tab_rect(0, TABS.len(), height), tab_rect(TABS.len() - 1, TABS.len(), height));
+        assert!(first.1 + first.3 <= height - 4.0, "the tabs stay inside the bottom edge");
+        let clear = shelf_clear_rect(height);
+        assert!(clear.0 > last.0 + last.2 + 6.0, "Clear is clear of the last tab");
+        assert!(clear.0 + clear.2 <= EXPANDED.0 as f32 - 20.0 && clear.1 + clear.3 <= height - 4.0);
+        // Level with the pill: the same centre.
+        assert!((clear.1 + clear.3 / 2.0 - (first.1 + first.3 / 2.0)).abs() < 0.5);
     }
 
     /// The whole tab bar has to fit in the notch.

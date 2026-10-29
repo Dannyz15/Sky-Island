@@ -38,14 +38,14 @@ It is written in Rust, runs natively on Windows 10 and 11, and keeps all of your
 | 💧 | **Water** | An optional daily glass counter with a goal and gentle reminders. It is off until you turn it on in the settings window. |
 | 📂 | **Shelf** | A place to park files. Drag them onto the notch, and drag them out again later. |
 | ✅ | **To-do** | A task list with reminders at the day and time you choose, and tasks you can edit. |
-| 📅 | **Calendar** | A month view where each day shows its own tasks. |
+| 📅 | **Calendar** | A month view (or just one week, as you choose) where each day shows its own tasks. |
 | 📋 | **Clipboard** | A history of what you copy, both text and pictures such as screenshots. Click an item to copy it again, or clear everything with one button. |
 | ⚙️ | **Settings** | Not a tab: right-click the tray icon and choose **Settings…** for a window with every switch and more (theme, animation, eye style, hover delays, volume, the timer alarm and its sound, checking for updates) and Quit. |
 
 ### It is alive even when closed
 
-- **Eyes.** The closed notch has a pair of blinking eyes (**Enable eyes**, on by default). Choose their look with **Eye style** in the settings window: **Classic** (white with a black pupil), **Dots**, **Cat** (amber with a slit pupil) or **Glow** (glowing blue). They take the place of the clock, so they show while you work only when the clock is off.
-- **A clock.** Turn on **Show clock** in the settings window and the closed notch shows the time instead. It is off by default.
+- **Eyes.** The closed notch has a pair of blinking eyes (turn on **Enable eyes** in the settings window; off by default). Choose their look with **Eye style** in the settings window: **Classic** (white with a black pupil), **Dots**, **Cat** (amber with a slit pupil) or **Glow** (glowing blue). They take the place of the clock, so they show while you work only when the clock is off.
+- **A clock.** **Show clock** is on by default, so the closed notch shows the time. Turn it off to see the eyes instead.
 - **Idle eyes.** After a while without keyboard or mouse use, the eyes appear and blink (even with the clock on). If you stay away longer, they fall asleep. When you come back, they greet you.
 - **Quick notices.** For a moment, the notch grows to show a change in volume or mute, a new audio output such as headphones, brightness, Caps Lock and Num Lock, plugging in or unplugging the charger, low battery, and Wi-Fi or internet changes.
 - **Out of the way.** When a fullscreen app such as a game or a video is in front, the notch hides itself.
@@ -64,7 +64,7 @@ It is written in Rust, runs natively on Windows 10 and 11, and keeps all of your
 
 ## Using it
 
-Hover over the notch to open it. The tab bar at the top switches between the views.
+Hover over the notch to open it. The tab bar at the bottom (a rounded pill with grey icons) switches between the views, which slide to the left or right, the way the tab is. You can also switch tabs with the mouse wheel: scroll down for the next tab and up for the one before. It works over the tab bar on every tab, and anywhere on the Music, Water and Calendar tabs. On the tabs that scroll something themselves (the lists, the lyrics, the timer numbers) the wheel keeps doing that away from the tab bar.
 
 **🎵 Music.** Press on the progress bar and drag to jump to any point in the song, or just click where you want to be. Press the speech-bubble button next to the controls to open the lyrics. The notch grows wider, staying centred on the screen, and the lyrics appear to the right of the player, with the line being sung in bold. Press the button again to close them. Click any lyric line to jump to that point in the song. Scroll the mouse wheel over the lyrics to look ahead or back; the lyrics then stop following the music and a **Sync** button appears, with an arrow showing where the line being sung is. Press **Sync** to glide back to it. Lyrics come from [LRCLIB](https://lrclib.net).
 
@@ -80,18 +80,20 @@ The task editor lets you pick a **day** (use the arrows, or None, Today and Tomo
 
 **📅 Calendar.** The month is on the left and today is marked in amber. Click a day to see its tasks on the right, and use the arrows to change month. Click the month name to jump back to today. Press **+ Add task** to add a task to the day you picked, and tick or delete tasks the same way as in the To-do tab. A dot under a date means it has tasks. The same tasks also show in the To-do tab, with their date at the right.
 
-**⚙️ Settings window.** Right-click the tray icon (next to the clock) and choose **Settings…**, and a normal window opens with every setting:
+**⚙️ Settings window.** Right-click the tray icon (next to the clock) and choose **Settings…**, and a normal window opens. A sidebar on the left has the pages, and the settings of the chosen page are shown on the right in cards, each with a short line explaining it:
 
-- **Theme:** Dark, Light, or Follow System (the Windows theme).
-- **Animation:** Calm, Normal, Snappy, or None (quick and with no bounce).
-- **Eye style:** Classic, Dots, Cat or Glow, the look of the eyes on the closed notch.
-- **Open delay** and **Close delay:** how long the mouse rests on the notch before it opens, and how long it is away before it closes.
-- **Volume** of the chimes (you hear the new level when you let go of the slider).
-- **Timer alarm:** how often it sounds again, how long it rings if nobody stops it, and the **Alarm sound**: click the button to pick your own sound file (WAV, MP3, M4A, WMA or AAC) in the normal Windows Open dialog, hear it right away, and click the × to go back to the built-in chime. A long file is left to finish instead of restarting every repeat, and the Stop button cuts it off. It follows the Volume slider.
-- **Check for updates:** asks GitHub whether a newer version has been released and tells you, or that you have the latest. If there is one, the button becomes **Download**: press it and the new setup is downloaded (with the percentage shown), checked against the size and SHA-256 that GitHub reports for it, and the button becomes **Install**. Press that and the setup opens and closes Sky Island; follow its steps and leave **Launch Sky Island** ticked to start the app again. Nothing is downloaded or installed unless you press the buttons.
-- **Open data folder**, **Reset to defaults** (click it twice to confirm), and **Quit Sky Island**.
+- **General:** **Start with Windows**, **Hide in full screen**, **Auto-hide island**, and how the notch opens: **Open the notch** by hovering over it or by clicking it, with an **Open delay** and a **Close delay** (how long the mouse rests on the notch before it opens and how long it is away before it closes).
+- **Notch:** **Notch size** (Auto, 100%, 115%, 130% or 150%) makes the whole island bigger or smaller; Auto keeps it the same share of your screen's width. **Minimal notch** makes the closed notch a smaller pill while nothing is playing. Then **Show clock** and **24-hour clock**, and **Enable eyes**, **Idle eyes** and **Eye style** (Classic, Dots, Cat or Glow).
+- **Appearance:** **Theme** (Dark, Light, or Follow System, the Windows theme) and **Animation** (Calm, Normal, Snappy, or None, which has no animation at all).
+- **Tabs:** switch on the **Water tracker** and the **Timer** tabs, and **Clipboard history**.
+- **Sounds:** **Sounds** on or off, the **Volume** of the chimes (you hear the new level when you let go of the slider), and the timer alarm: how often it sounds again, how long it rings if nobody stops it, and the **Alarm sound**: click the button to pick your own sound file (WAV, MP3, M4A, WMA or AAC) in the normal Windows Open dialog, hear it right away, and click the × to go back to the built-in chime. A long file is left to finish instead of restarting every repeat, and the Stop button cuts it off. It follows the Volume slider.
+- **Calendar:** a preview of the calendar, **Week starts on** (Sunday by default, or Monday) and **Default view** (a month, or just one week with a row for each day).
+- **Shelf:** **Start with an empty shelf** clears the shelf's files each time Sky Island starts.
+- **Notices:** choose which changes pop up on the notch: volume, brightness, Caps Lock and Num Lock, battery, Wi-Fi and internet, and headphones and speakers.
+- **About:** the version, **Check for updates**, the **Changelog** (press View to read what changed in each version, taken from the project's releases on GitHub, with Back to return), **Open data folder** and **Reset to defaults** (click it twice to confirm), then **Info** (the project's page and who made it) and **Thanks** (LRCLIB for the lyrics, and the Rust crates it is built with). **Check for updates** asks GitHub whether a newer version has been released and tells you, or that you have the latest. If there is one, the button becomes **Download**: press it and the new setup is downloaded (with the percentage shown), checked against the size and SHA-256 that GitHub reports for it, and the button becomes **Install**. Press that and the setup opens and closes Sky Island; follow its steps and leave **Launch Sky Island** ticked to start the app again. Nothing is downloaded or installed unless you press the buttons.
+- To quit, use **Exit** in the tray menu. The tray menu is short: **Settings…**, **About Sky Island** (opens the About page) and **Exit**.
 
-Changes apply right away and are saved as you make them. Press Esc to close the window.
+Changes apply right away and are saved as you make them. The Up and Down arrow keys change page, and Esc closes the window.
 
 **🌗 Windows theme.** In the settings window choose **Follow System** under Theme and the notch switches to a light look whenever Windows is using its light theme, and back to dark when Windows goes dark. It follows changes while the app is running. With Dark or Light chosen, the notch keeps that look whatever Windows does. Album covers and file icons keep their own colours.
 

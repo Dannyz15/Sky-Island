@@ -1,9 +1,9 @@
 //! Now-playing info and controls via Windows GSMTC. Runs on its own thread and
 //! pushes a fresh `MediaState` to the UI whenever something changes.
 
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
@@ -20,6 +20,19 @@ use winit::event_loop::EventLoopProxy;
 use crate::UserEvent;
 
 const ART_SIZE: u32 = 96;
+
+/// How often the player is read again even if Windows said nothing, to catch a missed change and
+/// to keep the position honest.
+const RESYNC: Duration = Duration::from_secs(4);
+/// When a track changes, browsers (YouTube above all) fill in its title, length, picture and time one
+/// piece at a time. The player is read again after these delays so the settled values win.
+const SETTLE: [Duration; 5] = [
+    Duration::from_millis(500),
+    Duration::from_millis(1500),
+    Duration::from_millis(3500),
+    Duration::from_millis(6000),
+    Duration::from_millis(10000),
+];
 
 #[derive(Clone, Default)]
 pub struct MediaState {
@@ -74,9 +87,20 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
         }));
 
         let mut subscribed: Option<Subscription> = None;
+        // What was sent last, and the times at which to read again.
+        let mut last: Option<(String, String, Duration)> = None;
+        let mut settle: Vec<Instant> = Vec::new();
         let _ = tx.send(Msg::Refresh);
 
-        while let Ok(msg) = rx.recv() {
+        loop {
+            let now = Instant::now();
+            let wait = settle.iter().map(|t| t.saturating_duration_since(now)).min().unwrap_or(RESYNC).min(RESYNC);
+            // A message from Windows or the UI, or a timer that says to read again.
+            let (msg, resubscribe) = match rx.recv_timeout(wait) {
+                Ok(msg) => (msg, true),
+                Err(RecvTimeoutError::Timeout) => (Msg::Refresh, false),
+                Err(RecvTimeoutError::Disconnected) => break,
+            };
             let session = manager.GetCurrentSession().ok();
             match msg {
                 Msg::Command(cmd) => {
@@ -90,17 +114,38 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
                                 .map(|_| ()),
                         };
                     }
+                    // The answer to a command comes a moment later; read it again then.
+                    settle = SETTLE.iter().map(|d| Instant::now() + *d).collect();
                 }
                 Msg::Refresh => {
+                    let now = Instant::now();
+                    settle.retain(|t| *t > now);
                     // Re-subscribe when the active session changes.
-                    subscribed = None;
-                    if let Some(s) = &session {
-                        subscribed = Subscription::new(s, tx.clone()).ok();
+                    if resubscribe {
+                        subscribed = None;
+                        if let Some(s) = &session {
+                            subscribed = Subscription::new(s, tx.clone()).ok();
+                        }
                     }
-                    let state = session
-                        .as_ref()
-                        .and_then(|s| read_state(s).ok())
-                        .unwrap_or_default();
+                    let state = match &session {
+                        None => MediaState::default(),
+                        Some(s) => match read_state(s) {
+                            Ok(state) => state,
+                            Err(_) => {
+                                // Not ready yet (a track is changing): keep what is shown and try again soon.
+                                if settle.is_empty() {
+                                    settle.push(now + SETTLE[0]);
+                                }
+                                continue;
+                            }
+                        },
+                    };
+                    let seen = (state.title.clone(), state.artist.clone(), state.duration);
+                    if last.as_ref() != Some(&seen) {
+                        // A new track (or the first look): read again as its details settle.
+                        settle = SETTLE.iter().map(|d| now + *d).collect();
+                        last = Some(seen);
+                    }
                     let _ = proxy.send_event(UserEvent::Media(state));
                 }
             }
@@ -162,19 +207,31 @@ fn read_state(session: &Session) -> Result<MediaState> {
     let playing = info.PlaybackStatus()? == Status::Playing;
     let next_enabled = info.Controls()?.IsNextEnabled()?;
     let timeline = session.GetTimelineProperties()?;
+    let title = props.Title()?.to_string();
+    let artist = props.Artist()?.to_string();
 
-    let art = props
-        .Thumbnail()
-        .ok()
-        .and_then(|r| read_art(&r).ok().flatten());
+    // The picture is read every time: for a moment after a skip a browser offers its own logo, and the
+    // real cover only arrives later.
+    let art = props.Thumbnail().ok().and_then(|r| read_art(&r).ok().flatten());
+
+    // Windows gives the position as it was at `LastUpdatedTime`, not now. Add the time since then
+    // while the track plays, or a restarted app starts from a stale minute.
+    let mut position = ticks(timeline.Position()?.Duration);
+    let duration = ticks(timeline.EndTime()?.Duration - timeline.StartTime()?.Duration);
+    if playing && let Ok(updated) = timeline.LastUpdatedTime() {
+        position += since(updated.UniversalTime);
+        if !duration.is_zero() {
+            position = position.min(duration);
+        }
+    }
 
     Ok(MediaState {
-        title: props.Title()?.to_string(),
-        artist: props.Artist()?.to_string(),
+        title,
+        artist,
         album: props.AlbumTitle().map(|a| a.to_string()).unwrap_or_default(),
         playing,
-        position: ticks(timeline.Position()?.Duration),
-        duration: ticks(timeline.EndTime()?.Duration - timeline.StartTime()?.Duration),
+        position,
+        duration,
         art,
         has_session: true,
         next_enabled,
@@ -191,6 +248,16 @@ fn skip_previous(s: &Session) -> Result<()> {
         s.TryChangePlaybackPositionAsync(0)?;
     }
     Ok(())
+}
+
+/// How long ago a WinRT DateTime (100 ns ticks since 1601) was. Zero for a time in the future, and for
+/// one so old that it is not a real update time.
+fn since(universal: i64) -> Duration {
+    const EPOCH_TICKS: i64 = 116_444_736_000_000_000;
+    let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else { return Duration::ZERO };
+    let now_ticks = (now.as_nanos() / 100) as i64 + EPOCH_TICKS;
+    let age = ticks(now_ticks - universal);
+    if age > Duration::from_secs(12 * 3600) { Duration::ZERO } else { age }
 }
 
 /// WinRT TimeSpan is in 100 ns ticks.
@@ -221,4 +288,26 @@ fn read_art(r: &IRandomAccessStreamReference) -> Result<Option<Vec<u8>>> {
 
 pub const fn art_size() -> u32 {
     ART_SIZE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn filetime_now() -> i64 {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        (now.as_nanos() / 100) as i64 + 116_444_736_000_000_000
+    }
+
+    #[test]
+    fn the_age_of_an_update_is_the_time_since_it() {
+        let age = since(filetime_now() - 30 * 10_000_000);
+        assert!((29..=31).contains(&age.as_secs()), "{age:?}");
+    }
+
+    #[test]
+    fn a_future_or_ancient_update_time_adds_nothing() {
+        assert_eq!(since(filetime_now() + 50_000_000), Duration::ZERO);
+        assert_eq!(since(0), Duration::ZERO);
+    }
 }

@@ -15,6 +15,7 @@ use winit::event_loop::EventLoopProxy;
 use crate::UserEvent;
 
 const LATEST: &str = "https://api.github.com/repos/Dannyz15/Sky-Island/releases/latest";
+const RELEASES: &str = "https://api.github.com/repos/Dannyz15/Sky-Island/releases?per_page=8";
 
 /// The installer attached to a release.
 #[derive(Clone, PartialEq, Debug)]
@@ -42,6 +43,117 @@ pub enum Status {
     /// The check did not work, for example because there is no internet.
     Failed,
     DownloadFailed,
+}
+
+/// One release and its notes, for the changelog.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Release {
+    pub version: String,
+    /// "2026-10-29".
+    pub date: String,
+    pub body: String,
+}
+
+/// How loading the changelog stands.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Changelog {
+    Idle,
+    Loading,
+    Ready(Vec<Release>),
+    Failed,
+}
+
+/// Fetch the latest releases and their notes on a background thread; they arrive as `UserEvent::Changelog`.
+pub fn spawn_changelog(proxy: EventLoopProxy<UserEvent>) {
+    thread::spawn(move || {
+        let _ = proxy.send_event(UserEvent::Changelog(fetch_changelog()));
+    });
+}
+
+fn fetch_changelog() -> Option<Vec<Release>> {
+    let json = agent(10)
+        .get(RELEASES)
+        .header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION")))
+        .header("Accept", "application/vnd.github+json")
+        .call()
+        .ok()?
+        .body_mut()
+        .read_json::<Value>()
+        .ok()?;
+    let releases = releases_from(&json)?;
+    (!releases.is_empty()).then_some(releases)
+}
+
+/// The releases in GitHub's answer, newest first as GitHub lists them.
+fn releases_from(json: &Value) -> Option<Vec<Release>> {
+    let list = json.as_array()?;
+    Some(
+        list.iter()
+            .filter(|r| !r.get("draft").and_then(Value::as_bool).unwrap_or(false))
+            .filter_map(|r| {
+                let tag = r.get("tag_name")?.as_str()?;
+                Some(Release {
+                    version: tag.trim_start_matches(['v', 'V']).to_string(),
+                    date: r.get("published_at").and_then(Value::as_str).unwrap_or("").chars().take(10).collect(),
+                    body: r.get("body").and_then(Value::as_str).unwrap_or("").to_string(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// A line of release notes, with the Markdown taken off.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Note {
+    Heading(String),
+    Bullet(String),
+    Text(String),
+}
+
+/// Remove the Markdown marks that would show as clutter: bold, code ticks, and links down to their text.
+pub fn plain(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' | '`' => {}
+            '[' => {
+                // [text](address) becomes text.
+                let label: String = chars.by_ref().take_while(|c| *c != ']').collect();
+                if chars.peek() == Some(&'(') {
+                    for c in chars.by_ref() {
+                        if c == ')' {
+                            break;
+                        }
+                    }
+                }
+                out.push_str(&label);
+            }
+            _ => out.push(c),
+        }
+    }
+    out.trim().to_string()
+}
+
+/// The notes of a release as headings, bullets and plain lines. Titles, rules, tables and the
+/// "Full changelog" link are left out.
+pub fn notes_of(body: &str) -> Vec<Note> {
+    let mut notes = Vec::new();
+    for raw in body.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with("# ") || line.starts_with("---") || line.starts_with('|') || line.starts_with("**Full changelog") {
+            continue;
+        }
+        let note = if let Some(h) = line.strip_prefix("### ").or_else(|| line.strip_prefix("## ")) {
+            Note::Heading(plain(h))
+        } else if let Some(b) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+            Note::Bullet(plain(b))
+        } else {
+            Note::Text(plain(line.trim_start_matches("> ")))
+        };
+        notes.push(note);
+    }
+    notes
 }
 
 /// Ask GitHub on a background thread; the answer arrives as `UserEvent::Update`.
@@ -253,6 +365,41 @@ mod tests {
         assert!(!stale("Sky-Island-Setup-1.2.0.exe", "1.1.0"), "downloaded but not installed yet");
         assert!(!stale("Sky-Island-Setup-latest.exe", "1.1.0"), "not one of ours");
         assert!(!stale("Other-Setup-1.0.0.exe", "1.1.0"));
+    }
+
+    #[test]
+    fn markdown_marks_are_taken_off() {
+        assert_eq!(plain("**Smaller notch.** The closed notch is now `148 x 28`"), "Smaller notch. The closed notch is now 148 x 28");
+        assert_eq!(plain("see [the page](https://example.com/x) now"), "see the page now");
+        assert_eq!(plain("  plain  "), "plain");
+    }
+
+    #[test]
+    fn release_notes_become_headings_bullets_and_text() {
+        let body = "# Sky Island 1.3.0\n\n## What's new\n\n- **Smaller notch.** It is 148 x 28.\n- Eyes\n\n---\n\nA closing line.\n\n**Full changelog:** [x](y)";
+        assert_eq!(
+            notes_of(body),
+            vec![
+                Note::Heading("What's new".into()),
+                Note::Bullet("Smaller notch. It is 148 x 28.".into()),
+                Note::Bullet("Eyes".into()),
+                Note::Text("A closing line.".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn releases_are_read_from_githubs_list() {
+        let json = json!([
+            { "tag_name": "v1.3.0", "published_at": "2026-10-29T10:00:00Z", "body": "- a" },
+            { "tag_name": "v1.2.0", "published_at": "2026-10-29T08:00:00Z", "body": null },
+            { "tag_name": "v9.9.9", "draft": true, "body": "hidden" }
+        ]);
+        let releases = releases_from(&json).unwrap();
+        assert_eq!(releases.len(), 2, "a draft is not shown");
+        assert_eq!((releases[0].version.as_str(), releases[0].date.as_str()), ("1.3.0", "2026-10-29"));
+        assert_eq!(releases[1].body, "", "a release with no notes has an empty body");
+        assert!(releases_from(&json!({ "message": "Not Found" })).is_none());
     }
 
     #[test]

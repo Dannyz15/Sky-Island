@@ -12,7 +12,9 @@ use std::collections::HashMap;
 /// target once it is close and slow enough.
 pub fn spring(x: &mut f64, v: &mut f64, target: f64, dt: f64, omega: f64, zeta: f64) {
     let dt = dt.clamp(0.0, 1.0 / 15.0);
-    let slices = (dt / 0.004).ceil().max(1.0) as u32;
+    // Slices short enough for the spring's own speed too: a very stiff spring (the Animation setting at
+    // None) steps in tiny slices, or its damping would overshoot and jitter.
+    let slices = (dt / 0.004).ceil().max((dt * omega / 0.25).ceil()).max(1.0) as u32;
     let h = dt / slices as f64;
     for _ in 0..slices {
         let accel = omega * omega * (target - *x) - 2.0 * zeta * omega * *v;
@@ -48,6 +50,9 @@ pub struct Glows {
     map: RefCell<HashMap<u64, Entry>>,
     dt: RefCell<f64>,
     busy: RefCell<bool>,
+    /// The Animation setting: how much faster than normal (0 means normal), and whether the bounce is off.
+    speed: RefCell<f64>,
+    flat: RefCell<bool>,
 }
 
 impl Glows {
@@ -55,6 +60,19 @@ impl Glows {
     pub fn begin(&self, dt: f64) {
         *self.dt.borrow_mut() = dt;
         *self.busy.borrow_mut() = false;
+    }
+
+    /// Apply the Animation setting to everything this keeps: `speed` times as fast as normal, and without
+    /// the bounce when `bounce` is false.
+    pub fn set_motion(&self, speed: f64, bounce: bool) {
+        *self.speed.borrow_mut() = speed;
+        *self.flat.borrow_mut() = !bounce;
+    }
+
+    /// How much faster than normal the Animation setting runs things.
+    fn speed(&self) -> f64 {
+        let speed = *self.speed.borrow();
+        if speed > 0.0 { speed } else { 1.0 }
     }
 
     /// Whether anything is still moving, so another frame is needed.
@@ -65,6 +83,7 @@ impl Glows {
     /// A value that follows `target` with a spring. `omega` and `zeta` are as in [`spring`].
     pub fn follow(&self, key: u64, target: f64, omega: f64, zeta: f64) -> f64 {
         let dt = *self.dt.borrow();
+        let (omega, zeta) = (omega * self.speed(), if *self.flat.borrow() { 1.0 } else { zeta });
         let mut map = self.map.borrow_mut();
         let e = map.entry(key).or_insert(Entry { x: target, v: 0.0, target });
         e.target = target;
@@ -75,10 +94,15 @@ impl Glows {
         e.x
     }
 
+    /// How fast a followed value is moving right now (0 for one not seen yet).
+    pub fn velocity(&self, key: u64) -> f64 {
+        self.map.borrow().get(&key).map_or(0.0, |e| e.v)
+    }
+
     /// A 0 to 1 value that fades towards 1 while `on` and back to 0 otherwise, with no overshoot.
     /// A value seen for the first time starts at 0, so it fades in.
     pub fn fade(&self, key: u64, on: bool) -> f32 {
-        let dt = *self.dt.borrow();
+        let dt = *self.dt.borrow() * self.speed();
         let target = if on { 1.0 } else { 0.0 };
         let mut map = self.map.borrow_mut();
         let e = map.entry(key).or_insert(Entry { x: 0.0, v: 0.0, target });
@@ -132,6 +156,19 @@ mod tests {
     }
 
     #[test]
+    fn a_very_stiff_spring_still_settles_without_jitter() {
+        // The Animation setting at None multiplies the stiffness by 8.
+        let (mut x, mut v) = (0.0, 0.0);
+        let mut last = 0.0;
+        for _ in 0..30 {
+            spring(&mut x, &mut v, 1.0, 1.0 / 60.0, 34.0 * 8.0, 1.0);
+            assert!(x >= last - 1e-9 && x <= 1.0 + 1e-9, "x went from {last} to {x}");
+            last = x;
+        }
+        assert_eq!(x, 1.0);
+    }
+
+    #[test]
     fn a_long_frame_does_not_blow_the_spring_up() {
         let (mut x, mut v) = (0.0, 0.0);
         for _ in 0..40 {
@@ -177,6 +214,29 @@ mod tests {
         assert!(!g.busy(), "settled");
         g.begin(1.0 / 60.0);
         assert!(g.fade(1, false) < 1.0, "fades back out");
+    }
+
+    #[test]
+    fn the_animation_setting_speeds_up_what_glows_keep() {
+        let run = |speed: f64| {
+            let g = Glows::default();
+            g.set_motion(speed, true);
+            g.begin(1.0 / 60.0);
+            g.follow(1, 0.0, 30.0, 0.8);
+            let mut x = 0.0;
+            for _ in 0..6 {
+                g.begin(1.0 / 60.0);
+                x = g.follow(1, 1.0, 30.0, 0.8);
+            }
+            x
+        };
+        assert!(run(0.6) < run(1.0) && run(1.0) < run(1.7), "{} {} {}", run(0.6), run(1.0), run(1.7));
+        let g = Glows::default();
+        g.set_motion(8.0, false);
+        g.begin(1.0 / 60.0);
+        g.follow(1, 0.0, 30.0, 0.5);
+        g.begin(1.0 / 60.0);
+        assert!(g.follow(1, 1.0, 30.0, 0.5) > 0.9, "with no animation it lands almost at once");
     }
 
     #[test]

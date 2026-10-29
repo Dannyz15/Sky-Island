@@ -41,7 +41,7 @@ pub enum Motion {
     Calm,
     Normal,
     Snappy,
-    /// No bounce, and quick.
+    /// No animation: things land at once.
     Reduced,
 }
 
@@ -51,10 +51,10 @@ impl Motion {
     /// How much faster than normal the springs run.
     pub fn speed(self) -> f64 {
         match self {
-            Motion::Calm => 0.75,
+            Motion::Calm => 0.6,
             Motion::Normal => 1.0,
-            Motion::Snappy => 1.35,
-            Motion::Reduced => 1.6,
+            Motion::Snappy => 1.7,
+            Motion::Reduced => 8.0,
         }
     }
 
@@ -107,6 +107,46 @@ impl EyeStyle {
     }
 }
 
+/// How big the whole island is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NotchSize {
+    /// Follows the screen: the island keeps the same share of the screen's width.
+    Auto,
+    X100,
+    X115,
+    X130,
+    X150,
+}
+
+impl NotchSize {
+    pub const ALL: [NotchSize; 5] = [NotchSize::Auto, NotchSize::X100, NotchSize::X115, NotchSize::X130, NotchSize::X150];
+
+    /// The scale, or `None` for Auto.
+    pub fn factor(self) -> Option<f64> {
+        match self {
+            NotchSize::Auto => None,
+            NotchSize::X100 => Some(1.0),
+            NotchSize::X115 => Some(1.15),
+            NotchSize::X130 => Some(1.3),
+            NotchSize::X150 => Some(1.5),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            NotchSize::Auto => "auto",
+            NotchSize::X100 => "100",
+            NotchSize::X115 => "115",
+            NotchSize::X130 => "130",
+            NotchSize::X150 => "150",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
 /// A number setting: smallest and largest value, and the step the slider moves in.
 #[derive(Clone, Copy)]
 pub struct Range {
@@ -141,6 +181,24 @@ pub struct Settings {
     pub eyes: bool,
     pub idle_eyes: bool,
     pub eye_style: EyeStyle,
+    /// How big the whole island is.
+    pub size: NotchSize,
+    /// A smaller closed notch while nothing is playing.
+    pub minimal: bool,
+    /// The notch opens when it is clicked instead of when the mouse rests on it.
+    pub open_on_click: bool,
+    /// The calendar's weeks start on Monday (otherwise Sunday), and it shows one week instead of a month.
+    pub week_monday: bool,
+    pub calendar_week: bool,
+    /// Forget the shelf's files when the app starts.
+    pub empty_shelf: bool,
+    /// Which notices (volume, brightness, Caps Lock and Num Lock, battery, network, audio devices) show.
+    pub hud_volume: bool,
+    pub hud_brightness: bool,
+    pub hud_lock: bool,
+    pub hud_battery: bool,
+    pub hud_network: bool,
+    pub hud_audio: bool,
     pub sound: bool,
     /// Keep a history of copied text.
     pub clipboard: bool,
@@ -163,7 +221,17 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { hide_fullscreen: true, show_clock: false, clock_24h: false, eyes: true, idle_eyes: true, eye_style: EyeStyle::Classic, sound: true, clipboard: true, hide_island: false, water: false,
+        Self { hide_fullscreen: true, show_clock: true, clock_24h: false, eyes: false, idle_eyes: true, eye_style: EyeStyle::Classic, size: NotchSize::Auto, minimal: false,
+            open_on_click: false,
+            week_monday: false,
+            calendar_week: false,
+            empty_shelf: false,
+            hud_volume: true,
+            hud_brightness: true,
+            hud_lock: true,
+            hud_battery: true,
+            hud_network: true,
+            hud_audio: true, sound: true, clipboard: true, hide_island: false, water: false,
             timer: false,
             theme: ThemeMode::Dark,
             motion: Motion::Normal,
@@ -192,6 +260,20 @@ impl Settings {
         out.clock_24h = get("clock_24h", out.clock_24h);
         out.eyes = get("eyes", out.eyes);
         out.idle_eyes = get("idle_eyes", out.idle_eyes);
+        out.minimal = get("minimal", out.minimal);
+        out.open_on_click = get("open_on_click", out.open_on_click);
+        out.week_monday = get("week_monday", out.week_monday);
+        out.calendar_week = get("calendar_week", out.calendar_week);
+        out.empty_shelf = get("empty_shelf", out.empty_shelf);
+        out.hud_volume = get("hud_volume", out.hud_volume);
+        out.hud_brightness = get("hud_brightness", out.hud_brightness);
+        out.hud_lock = get("hud_lock", out.hud_lock);
+        out.hud_battery = get("hud_battery", out.hud_battery);
+        out.hud_network = get("hud_network", out.hud_network);
+        out.hud_audio = get("hud_audio", out.hud_audio);
+        if let Some(z) = v.get("size").and_then(Value::as_str).and_then(NotchSize::from_name) {
+            out.size = z;
+        }
         if let Some(e) = v.get("eye_style").and_then(Value::as_str).and_then(EyeStyle::from_name) {
             out.eye_style = e;
         }
@@ -237,6 +319,18 @@ impl Settings {
                 "clock_24h": self.clock_24h,
                 "eyes": self.eyes,
                 "idle_eyes": self.idle_eyes,
+                "minimal": self.minimal,
+                "open_on_click": self.open_on_click,
+                "week_monday": self.week_monday,
+                "calendar_week": self.calendar_week,
+                "empty_shelf": self.empty_shelf,
+                "hud_volume": self.hud_volume,
+                "hud_brightness": self.hud_brightness,
+                "hud_lock": self.hud_lock,
+                "hud_battery": self.hud_battery,
+                "hud_network": self.hud_network,
+                "hud_audio": self.hud_audio,
+                "size": self.size.name(),
                 "eye_style": self.eye_style.name(),
                 "sound": self.sound,
                 "clipboard": self.clipboard,
