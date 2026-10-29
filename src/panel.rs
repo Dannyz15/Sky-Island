@@ -17,11 +17,11 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Icon, Window, WindowButtons};
 
 use crate::motion::Glows;
-use crate::settings::{self, Motion, Range, Settings, ThemeMode};
+use crate::settings::{self, EyeStyle, Motion, Range, Settings, ThemeMode};
 use crate::{App, View, appicon, gfx, theme};
 
 const WIDTH: f64 = 660.0;
-const HEIGHT: f64 = 548.0;
+const HEIGHT: f64 = 582.0;
 const ROW_H: f32 = 34.0;
 const HEAD_H: f32 = 34.0;
 const SLIDER_W: f32 = 112.0;
@@ -40,6 +40,7 @@ pub(crate) enum Toggle {
     HideFullscreen,
     ShowClock,
     Clock24,
+    Eyes,
     IdleEyes,
     Sound,
     Clipboard,
@@ -52,6 +53,7 @@ pub(crate) enum Toggle {
 enum Seg {
     Theme,
     Motion,
+    Eyes,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -121,6 +123,7 @@ fn layout() -> (Vec<Section>, Vec<Item>) {
                 ("Hide in fullscreen apps", Kind::Toggle(Toggle::HideFullscreen)),
                 ("Show clock", Kind::Toggle(Toggle::ShowClock)),
                 ("24-hour clock", Kind::Toggle(Toggle::Clock24)),
+                ("Enable eyes", Kind::Toggle(Toggle::Eyes)),
                 ("Idle eyes", Kind::Toggle(Toggle::IdleEyes)),
                 ("Clipboard history", Kind::Toggle(Toggle::Clipboard)),
                 ("Auto-hide island", Kind::Toggle(Toggle::HideIsland)),
@@ -128,7 +131,7 @@ fn layout() -> (Vec<Section>, Vec<Item>) {
         ),
         (
             0,
-            352.0,
+            386.0,
             "Tabs you can add",
             vec![("Water tracker", Kind::Toggle(Toggle::Water)), ("Timer", Kind::Toggle(Toggle::Timer))],
         ),
@@ -139,13 +142,14 @@ fn layout() -> (Vec<Section>, Vec<Item>) {
             vec![
                 ("Theme", Kind::Seg(Seg::Theme)),
                 ("Animation", Kind::Seg(Seg::Motion)),
+                ("Eye style", Kind::Seg(Seg::Eyes)),
                 ("Open delay", Kind::Slider(Slide::OpenDelay)),
                 ("Close delay", Kind::Slider(Slide::CloseDelay)),
             ],
         ),
         (
             1,
-            250.0,
+            284.0,
             "Sounds and timer alarm",
             vec![
                 ("Sounds", Kind::Toggle(Toggle::Sound)),
@@ -177,12 +181,12 @@ fn layout() -> (Vec<Section>, Vec<Item>) {
     }
     // The two buttons under the right-hand column, and Quit under the left-hand one.
     for (i, (label, act)) in [("Open data folder", Act::OpenFolder), ("Reset to defaults", Act::Reset)].into_iter().enumerate() {
-        let rect = (338.0 + i as f32 * 154.0, 488.0, 148.0, 26.0);
+        let rect = (338.0 + i as f32 * 154.0, 522.0, 148.0, 26.0);
         items.push(Item { label, kind: Kind::Button(act), row: rect, ctrl: rect });
     }
-    let check = (20.0, 488.0, 148.0, 26.0);
+    let check = (20.0, 522.0, 148.0, 26.0);
     items.push(Item { label: "Check for updates", kind: Kind::Button(Act::CheckUpdate), row: check, ctrl: check });
-    let quit = (492.0, 518.0, 148.0, 24.0);
+    let quit = (492.0, 552.0, 148.0, 24.0);
     items.push(Item { label: "Quit Sky Island", kind: Kind::Button(Act::Quit), row: quit, ctrl: quit });
     (sections, items)
 }
@@ -218,19 +222,20 @@ fn inside(r: Rect, x: f32, y: f32) -> bool {
 
 const THEME_NAMES: [&str; 3] = ["Dark", "Light", "Follow System"];
 const MOTION_NAMES: [&str; 4] = ["Calm", "Normal", "Snappy", "None"];
+const EYE_NAMES: [&str; 4] = ["Classic", "Dots", "Cat", "Glow"];
 
 /// How wide a choice is compared with the others in the same row ("Follow System" is the longest).
 fn seg_weights(seg: Seg) -> &'static [f32] {
     match seg {
         Seg::Theme => &[1.0, 1.0, 2.0],
-        Seg::Motion => &[1.0, 1.0, 1.0, 1.0],
+        Seg::Motion | Seg::Eyes => &[1.0, 1.0, 1.0, 1.0],
     }
 }
 
 fn seg_width(seg: Seg) -> f32 {
     match seg {
         Seg::Theme => 204.0,
-        Seg::Motion => 184.0,
+        Seg::Motion | Seg::Eyes => 184.0,
     }
 }
 
@@ -253,6 +258,7 @@ fn seg_names(seg: Seg) -> &'static [&'static str] {
     match seg {
         Seg::Theme => &THEME_NAMES,
         Seg::Motion => &MOTION_NAMES,
+        Seg::Eyes => &EYE_NAMES,
     }
 }
 
@@ -318,6 +324,7 @@ impl App {
             Toggle::HideFullscreen => self.settings.hide_fullscreen,
             Toggle::ShowClock => self.settings.show_clock,
             Toggle::Clock24 => self.settings.clock_24h,
+            Toggle::Eyes => self.settings.eyes,
             Toggle::IdleEyes => self.settings.idle_eyes,
             Toggle::Sound => self.settings.sound,
             Toggle::Clipboard => self.settings.clipboard,
@@ -339,6 +346,7 @@ impl App {
             Toggle::HideFullscreen => self.settings.hide_fullscreen = !self.settings.hide_fullscreen,
             Toggle::ShowClock => self.settings.show_clock = !self.settings.show_clock,
             Toggle::Clock24 => self.settings.clock_24h = !self.settings.clock_24h,
+            Toggle::Eyes => self.settings.eyes = !self.settings.eyes,
             Toggle::IdleEyes => self.settings.idle_eyes = !self.settings.idle_eyes,
             Toggle::Sound => self.settings.sound = !self.settings.sound,
             Toggle::Clipboard => self.settings.clipboard = !self.settings.clipboard,
@@ -394,6 +402,7 @@ impl App {
         match seg {
             Seg::Theme => ThemeMode::ALL.iter().position(|t| *t == self.settings.theme).unwrap_or(0),
             Seg::Motion => Motion::ALL.iter().position(|m| *m == self.settings.motion).unwrap_or(1),
+            Seg::Eyes => EyeStyle::ALL.iter().position(|e| *e == self.settings.eye_style).unwrap_or(0),
         }
     }
 
@@ -401,6 +410,7 @@ impl App {
         match seg {
             Seg::Theme => self.settings.theme = ThemeMode::ALL[i.min(2)],
             Seg::Motion => self.settings.motion = Motion::ALL[i.min(3)],
+            Seg::Eyes => self.settings.eye_style = EyeStyle::ALL[i.min(3)],
         }
         self.settings_changed();
     }
@@ -600,6 +610,9 @@ impl App {
                                 // The installer closes this app, installs over it and starts it again.
                                 if std::process::Command::new(path).spawn().is_ok() {
                                     self.quit = true;
+                                } else {
+                                    // The file was removed or cannot be run: offer the download again.
+                                    self.update = crate::update::Status::DownloadFailed;
                                 }
                             }
                             crate::update::Status::Checking | crate::update::Status::Downloading { .. } => {}
@@ -703,7 +716,7 @@ impl App {
             }
 
             // The bottom bar: a divider, what the last update check found, and a reassurance.
-            crate::fill_rect(&mut layer, 20.0 * s, 479.0 * s, 620.0 * s, s, [255, 255, 255, 20]);
+            crate::fill_rect(&mut layer, 20.0 * s, 513.0 * s, 620.0 * s, s, [255, 255, 255, 20]);
             let (note, note_ink) = match &self.update {
                 crate::update::Status::Idle => (String::new(), grey),
                 crate::update::Status::Checking => ("Checking...".to_string(), grey),
@@ -714,8 +727,8 @@ impl App {
                 crate::update::Status::Failed => ("Could not check. Are you online?".to_string(), [255, 130, 120, 255]),
                 crate::update::Status::DownloadFailed => ("Download failed. Try again".to_string(), [255, 130, 120, 255]),
             };
-            crate::draw_text(&mut layer, font, &note, 176.0 * s, 505.0 * s, 10.5 * s, note_ink, 156.0 * s);
-            crate::draw_text(&mut layer, font, "Your settings stay on this computer.", 24.0 * s, 535.0 * s, 10.0 * s, [120, 120, 134, 255], 280.0 * s);
+            crate::draw_text(&mut layer, font, &note, 176.0 * s, 539.0 * s, 10.5 * s, note_ink, 156.0 * s);
+            crate::draw_text(&mut layer, font, "Your settings stay on this computer.", 24.0 * s, 569.0 * s, 10.0 * s, [120, 120, 134, 255], 280.0 * s);
         }
 
         // The entrance: the layer rises into place and fades in.
@@ -894,6 +907,8 @@ mod tests {
         assert_eq!(MOTION_NAMES.len(), Motion::ALL.len());
         assert_eq!(seg_weights(Seg::Theme).len(), THEME_NAMES.len());
         assert_eq!(seg_weights(Seg::Motion).len(), MOTION_NAMES.len());
+        assert_eq!(seg_weights(Seg::Eyes).len(), EYE_NAMES.len());
+        assert_eq!(EYE_NAMES.len(), EyeStyle::ALL.len());
     }
 
     #[test]

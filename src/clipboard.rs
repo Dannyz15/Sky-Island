@@ -240,7 +240,7 @@ fn rgba_to_dib(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
     dib.extend_from_slice(&((w * h * 4) as u32).to_le_bytes());
     dib.extend_from_slice(&[0u8; 16]); // resolution and colour counts
     for y in (0..h).rev() {
-        for px in rgba[y * w * 4..(y + 1) * w * 4].chunks_exact(4) {
+        for px in rgba[y * w * 4..(y + 1) * w * 4].as_chunks::<4>().0 {
             dib.extend_from_slice(&[px[2], px[1], px[0], 255]);
         }
     }
@@ -377,8 +377,10 @@ unsafe fn set_format(format: u32, bytes: &[u8]) -> bool {
 
 /// Put an entry back on the clipboard. Returns whether it worked.
 pub fn set_content(content: &Content) -> bool {
+    // The text bytes, the bitmap and the PNG of what is put back; each entry has only what it needs.
+    type Prepared<'a> = (Option<Vec<u8>>, Option<Vec<u8>>, Option<&'a [u8]>);
     // Prepare everything before opening the clipboard, so it is held for as short a time as possible.
-    let (text_bytes, dib, png): (Option<Vec<u8>>, Option<Vec<u8>>, Option<&[u8]>) = match content {
+    let (text_bytes, dib, png): Prepared = match content {
         Content::Text(t) => {
             let wide: Vec<u16> = t.encode_utf16().chain(Some(0)).collect();
             (Some(wide.iter().flat_map(|u| u.to_le_bytes()).collect()), None, None)
@@ -577,7 +579,7 @@ mod tests {
     fn damaged_or_unsupported_bitmaps_are_rejected() {
         assert!(dib_to_rgba(&[]).is_none());
         assert!(dib_to_rgba(&[0u8; 39]).is_none());
-        let mut dib = rgba_to_dib(4, 4, &vec![255u8; 4 * 4 * 4]);
+        let mut dib = rgba_to_dib(4, 4, &[255u8; 4 * 4 * 4]);
         dib.truncate(dib.len() - 10);
         assert!(dib_to_rgba(&dib).is_none(), "pixel data is cut short");
     }

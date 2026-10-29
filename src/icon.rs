@@ -61,7 +61,7 @@ pub fn load(path: &Path) -> Option<Pixmap> {
         // Some icons come back with no alpha channel at all; treat those as opaque.
         let opaque = bgra.as_chunks::<4>().0.iter().all(|p| p[3] == 0);
         let mut pixmap = Pixmap::new(w as u32, h as u32)?;
-        for (dst, p) in pixmap.pixels_mut().iter_mut().zip(bgra.chunks_exact(4)) {
+        for (dst, p) in pixmap.pixels_mut().iter_mut().zip(bgra.as_chunks::<4>().0) {
             let a = if opaque { 255 } else { p[3] };
             // The shell returns premultiplied colour; clamp so the value is always valid.
             *dst = PremultipliedColorU8::from_rgba(p[2].min(a), p[1].min(a), p[0].min(a), a)?;

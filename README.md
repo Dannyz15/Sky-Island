@@ -40,12 +40,13 @@ It is written in Rust, runs natively on Windows 10 and 11, and keeps all of your
 | ✅ | **To-do** | A task list with reminders at the day and time you choose, and tasks you can edit. |
 | 📅 | **Calendar** | A month view where each day shows its own tasks. |
 | 📋 | **Clipboard** | A history of what you copy, both text and pictures such as screenshots. Click an item to copy it again, or clear everything with one button. |
-| ⚙️ | **Settings** | Not a tab: right-click the tray icon and choose **Settings…** for a window with every switch and more (theme, animation, hover delays, volume, the timer alarm) and Quit. |
+| ⚙️ | **Settings** | Not a tab: right-click the tray icon and choose **Settings…** for a window with every switch and more (theme, animation, eye style, hover delays, volume, the timer alarm and its sound, checking for updates) and Quit. |
 
 ### It is alive even when closed
 
-- **A clock.** The closed notch shows the time.
-- **Idle eyes.** After a while without keyboard or mouse use, a pair of eyes appears and blinks. If you stay away longer, they fall asleep. When you come back, they greet you.
+- **Eyes.** The closed notch has a pair of blinking eyes (**Enable eyes**, on by default). Choose their look with **Eye style** in the settings window: **Classic** (white with a black pupil), **Dots**, **Cat** (amber with a slit pupil) or **Glow** (glowing blue). They take the place of the clock, so they show while you work only when the clock is off.
+- **A clock.** Turn on **Show clock** in the settings window and the closed notch shows the time instead. It is off by default.
+- **Idle eyes.** After a while without keyboard or mouse use, the eyes appear and blink (even with the clock on). If you stay away longer, they fall asleep. When you come back, they greet you.
 - **Quick notices.** For a moment, the notch grows to show a change in volume or mute, a new audio output such as headphones, brightness, Caps Lock and Num Lock, plugging in or unplugging the charger, low battery, and Wi-Fi or internet changes.
 - **Out of the way.** When a fullscreen app such as a game or a video is in front, the notch hides itself.
 
@@ -57,7 +58,7 @@ It is written in Rust, runs natively on Windows 10 and 11, and keeps all of your
 
 > **A note about the Windows warning.** The setup is not code-signed, so Windows may show "Windows protected your PC". Click **More info**, then **Run anyway**. If Smart App Control is turned on, Windows may block the file completely (error 4551). In that case you need to turn Smart App Control off in Windows Security.
 
-**Updating.** Run the newer setup. It closes the running app and installs over the old version, and your data is kept.
+**Updating.** Run the newer setup, or press **Check for updates** in the settings window and then **Download** and **Install**. The setup closes the running app and installs over the old version, and your data is kept. Leave **Launch Sky Island** ticked on its last page to start the app again.
 
 **Uninstalling.** Open Windows Settings, then Apps, find Sky Island and click Uninstall. At the end it asks whether to delete your data too. The default answer is No, so your settings and tasks stay unless you choose Yes.
 
@@ -83,10 +84,11 @@ The task editor lets you pick a **day** (use the arrows, or None, Today and Tomo
 
 - **Theme:** Dark, Light, or Follow System (the Windows theme).
 - **Animation:** Calm, Normal, Snappy, or None (quick and with no bounce).
+- **Eye style:** Classic, Dots, Cat or Glow, the look of the eyes on the closed notch.
 - **Open delay** and **Close delay:** how long the mouse rests on the notch before it opens, and how long it is away before it closes.
 - **Volume** of the chimes (you hear the new level when you let go of the slider).
 - **Timer alarm:** how often it sounds again, how long it rings if nobody stops it, and the **Alarm sound**: click the button to pick your own sound file (WAV, MP3, M4A, WMA or AAC) in the normal Windows Open dialog, hear it right away, and click the × to go back to the built-in chime. A long file is left to finish instead of restarting every repeat, and the Stop button cuts it off. It follows the Volume slider.
-- **Check for updates:** asks GitHub whether a newer version has been released and tells you, or that you have the latest. If there is one, the button becomes **Download**: press it and the new setup is downloaded (with the percentage shown), checked against the size and SHA-256 that GitHub reports for it, and the button becomes **Install**. Press that and the setup runs, closes Sky Island, installs over it and starts it again. Nothing is downloaded or installed unless you press the buttons.
+- **Check for updates:** asks GitHub whether a newer version has been released and tells you, or that you have the latest. If there is one, the button becomes **Download**: press it and the new setup is downloaded (with the percentage shown), checked against the size and SHA-256 that GitHub reports for it, and the button becomes **Install**. Press that and the setup opens and closes Sky Island; follow its steps and leave **Launch Sky Island** ticked to start the app again. Nothing is downloaded or installed unless you press the buttons.
 - **Open data folder**, **Reset to defaults** (click it twice to confirm), and **Quit Sky Island**.
 
 Changes apply right away and are saved as you make them. Press Esc to close the window.

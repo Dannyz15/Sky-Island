@@ -25,9 +25,7 @@ fn fill_vertical_gradient(pm: &mut Pixmap, path: &Path, y0: f32, y1: f32, stops:
     else {
         return;
     };
-    let mut paint = Paint::default();
-    paint.shader = shader;
-    paint.anti_alias = true;
+    let paint = Paint { shader, anti_alias: true, ..Paint::default() };
     pm.fill_path(path, &paint, FillRule::Winding, Transform::identity(), None);
 }
 

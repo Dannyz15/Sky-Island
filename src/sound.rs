@@ -148,7 +148,8 @@ mod tests {
     fn a_lower_volume_makes_a_quieter_wav() {
         let peak = |loudness: f32| {
             wav(&[(659.3, 0.0, 0.9)], 1.0, loudness)[44..]
-                .chunks_exact(2)
+                .as_chunks::<2>().0
+                .iter()
                 .map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs())
                 .max()
                 .unwrap()
@@ -178,7 +179,8 @@ mod tests {
     fn wav_is_audible_but_never_clips() {
         let data = wav(&[(659.3, 0.0, 0.9), (987.8, 0.16, 1.0)], 1.3, 1.0);
         let peak = data[44..]
-            .chunks_exact(2)
+            .as_chunks::<2>().0
+            .iter()
             .map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs())
             .max()
             .unwrap();

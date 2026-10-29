@@ -50,7 +50,7 @@ use clipboard::History;
 use timer::{Timer, Unit};
 use presence::Presence;
 use panel::Panel;
-use settings::{Settings, ThemeMode};
+use settings::{EyeStyle, Settings, ThemeMode};
 use shelf::{COLS, ROWS, Shelf};
 use todo::Todo;
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem};
@@ -58,7 +58,8 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use water::Water;
 use motion::{Glows, spring};
 
-const COLLAPSED: (f64, f64) = (180.0, 32.0);
+/// The closed notch, about the size of a MacBook's.
+const COLLAPSED: (f64, f64) = (148.0, 28.0);
 /// Width of the curved flare on each side of the notch's top edge, where it meets the top of the screen.
 /// The window is this much wider than the notch on both sides; the notch is drawn in the middle.
 const EAR: f64 = 12.0;
@@ -147,7 +148,8 @@ const TILES_ORIGIN: (f32, f32) = (24.0, 36.0);
 /// Cursor travel, in physical pixels, before a press on a tile becomes a drag.
 const DRAG_THRESHOLD: f64 = 6.0;
 /// Compact size of the notch while a system notice (volume, battery...) is showing.
-const OVERLAY: (f64, f64) = (300.0, 52.0);
+/// The notch while it shows a notice (volume, battery...); the notice is laid out for 300 wide and scaled to fit.
+const OVERLAY: (f64, f64) = (240.0, 42.0);
 const NOTICE_TIME: Duration = Duration::from_millis(2200);
 const GREETING: Duration = Duration::from_millis(1600);
 const BLINK: Duration = Duration::from_millis(160);
@@ -1276,7 +1278,7 @@ impl App {
             if let (true, Some(font)) = (self.timer.running(), &self.font) {
                 let text = fmt_remaining(self.timer.remaining(Instant::now()));
                 let color = [255, 255, 255, (collapsed_alpha * 255.0) as u8];
-                draw_text_centered(&mut pixmap, self.heading_font().unwrap_or(font), &text, fw / 2.0, 21.0 * s, 13.0 * s, color, fw);
+                draw_text_centered(&mut pixmap, self.heading_font().unwrap_or(font), &text, fw / 2.0, (COLLAPSED.1 as f32 / 2.0 + 5.0) * s, 13.0 * s, color, fw);
             } else {
                 self.draw_companion(&mut pixmap, s, collapsed_alpha, fw);
             }
@@ -1361,7 +1363,7 @@ impl App {
             (Some(rgba), Some(mask)) => {
                 let n = media::art_size();
                 if let Some(mut art) = Pixmap::new(n, n) {
-                    for (dst, px) in art.pixels_mut().iter_mut().zip(rgba.chunks_exact(4)) {
+                    for (dst, px) in art.pixels_mut().iter_mut().zip(rgba.as_chunks::<4>().0) {
                         *dst = tiny_skia::ColorU8::from_rgba(px[0], px[1], px[2], 255).premultiply();
                     }
                     let scale = asz * s / n as f32;
@@ -1755,15 +1757,17 @@ impl App {
         }
     }
 
-    fn draw_notice(&self, pm: &mut Pixmap, notice: &sys::Notice, s: f32, alpha: f32, fw: f32) {
+    fn draw_notice(&self, pm: &mut Pixmap, notice: &sys::Notice, real_s: f32, alpha: f32, fw: f32) {
         use sys::{BatteryKind, Notice};
         let Some(font) = &self.font else { return };
+        // Laid out for a 300 wide notch, shrunk to the size of the notch it is shown in.
+        let s = real_s * (OVERLAY.0 / 300.0) as f32;
         let a = (alpha * 255.0) as u8;
         let (white, grey) = ([255, 255, 255, a], [160, 160, 165, a]);
         let (green, red, blue) = ([80, 200, 120, a], [255, 90, 80, a], [64, 170, 255, a]);
 
         // Content block, centered in the notch.
-        let (left, right, cy) = (fw / 2.0 - 120.0 * s, fw / 2.0 + 120.0 * s, 27.0 * s);
+        let (left, right, cy) = (fw / 2.0 - 120.0 * s, fw / 2.0 + 120.0 * s, OVERLAY.1 as f32 / 2.0 * real_s);
         let icon_x = left + 10.0 * s;
         let text_x = left + 34.0 * s;
         let right_text = |pm: &mut Pixmap, text: &str, color: [u8; 4]| {
@@ -2053,6 +2057,17 @@ impl App {
 
     /// Schedule and trigger the redraws the closed notch needs: clock minute changes, blinking
     /// eyes, dozing animation and the greeting. Does nothing when something else is showing.
+    /// Whether the awake eyes are drawn on the closed notch right now: while you are working they take
+    /// the place of the clock (so only when the clock is off), and after a while without use they come
+    /// from "Idle eyes".
+    fn eyes_open(&self) -> bool {
+        match self.presence {
+            Presence::Active => self.settings.eyes && !self.settings.show_clock,
+            Presence::Idle => self.settings.idle_eyes,
+            Presence::Dozing => false,
+        }
+    }
+
     fn companion_tick(&mut self, now: Instant, wake: &mut Option<Instant>) {
         if self.hidden || self.tuck_t >= 1.0 || self.progress > 0.0 || self.notice_until.is_some() || self.timer.running() {
             return;
@@ -2080,7 +2095,7 @@ impl App {
                 let to_next = (59 - sec) * 1000 + (1000 - ms) + 30;
                 earliest(wake, now + Duration::from_millis(to_next as u64));
             }
-            Presence::Idle if self.settings.idle_eyes => {
+            Presence::Active | Presence::Idle if self.eyes_open() => {
                 if let Some(b) = self.blink_until {
                     if now >= b {
                         self.blink_until = None;
@@ -2120,13 +2135,58 @@ impl App {
     }
 
     /// What the closed notch shows when nothing else needs it: eyes when idle, otherwise the clock.
+    /// One open (or blinking) eye on the closed notch, in the chosen style, centred at `x`, `cy`.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_eye(&self, pm: &mut Pixmap, x: f32, cy: f32, s: f32, a: u8, blink: bool, glance: f32) {
+        let c = eye_colour(self.settings.eye_style);
+        let ink = theme::map([c[0], c[1], c[2], a]);
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(ink[0], ink[1], ink[2], ink[3]);
+        paint.anti_alias = true;
+        // (width, height) of the eye; a blink squashes it to a thin line.
+        let (w, open_h) = match self.settings.eye_style {
+            EyeStyle::Classic => (9.0, 12.0),
+            EyeStyle::Dots => (8.0, 8.0),
+            EyeStyle::Cat => (10.0, 12.0),
+            EyeStyle::Glow => (7.0, 13.0),
+        };
+        let (w, h) = (w * s, if blink { 1.6 } else { open_h } * s);
+        if self.settings.eye_style == EyeStyle::Glow && !blink {
+            gfx::glow(pm, x, cy, 13.0 * s, [c[0], c[1], c[2], (a as f32 * 0.45) as u8], None);
+        }
+        if let Some(rect) = Rect::from_xywh(x - w / 2.0, cy - h / 2.0, w, h)
+            && let Some(path) = PathBuilder::from_oval(rect) {
+                pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        if blink {
+            return;
+        }
+        match self.settings.eye_style {
+            EyeStyle::Classic => fill_circle(pm, x + glance * 1.5 * s, cy + 1.0 * s, 3.0 * s, [0, 0, 0, a]),
+            EyeStyle::Cat => {
+                // A narrow slit that drifts with the glance.
+                if let Some(rect) = Rect::from_xywh(x + glance * 1.2 * s - 1.2 * s, cy - 5.0 * s, 2.4 * s, 10.0 * s)
+                    && let Some(path) = PathBuilder::from_oval(rect) {
+                        let mut slit = Paint::default();
+                        slit.set_color_rgba8(0, 0, 0, a);
+                        slit.anti_alias = true;
+                        pm.fill_path(&path, &slit, FillRule::Winding, Transform::identity(), None);
+                    }
+            }
+            EyeStyle::Dots | EyeStyle::Glow => {}
+        }
+    }
+
     fn draw_companion(&self, pm: &mut Pixmap, s: f32, alpha: f32, fw: f32) {
         let Some(font) = &self.font else { return };
         let a = (alpha * 255.0) as u8;
-        let white = [255, 255, 255, a];
-        let (cx, cy) = (fw / 2.0, 16.0 * s);
+        let (cx, cy) = (fw / 2.0, COLLAPSED.1 as f32 / 2.0 * s);
         let (left, right) = (cx - 13.0 * s, cx + 13.0 * s);
         let eyes = self.settings.idle_eyes;
+        let white = {
+            let c = eye_colour(self.settings.eye_style);
+            [c[0], c[1], c[2], a]
+        };
 
         if eyes && self.greeting_until.is_some() {
             for x in [left, right] {
@@ -2137,22 +2197,11 @@ impl App {
         }
 
         match self.presence {
-            Presence::Idle if eyes => {
+            Presence::Active | Presence::Idle if self.eyes_open() => {
                 let blink = self.blink_until.is_some();
                 let glance = (self.blink_count % 3) as f32 - 1.0;
                 for x in [left, right] {
-                    let h = if blink { 1.6 } else { 12.0 } * s;
-                    if let Some(rect) = Rect::from_xywh(x - 4.5 * s, cy - h / 2.0, 9.0 * s, h)
-                        && let Some(path) = PathBuilder::from_oval(rect) {
-                            let mut paint = Paint::default();
-                            let ink = theme::map(white);
-                            paint.set_color_rgba8(ink[0], ink[1], ink[2], a);
-                            paint.anti_alias = true;
-                            pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
-                        }
-                    if !blink {
-                        fill_circle(pm, x + glance * 1.5 * s, cy + 1.0 * s, 3.0 * s, [0, 0, 0, a]);
-                    }
+                    self.draw_eye(pm, x, cy, s, a, blink, glance);
                 }
             }
             Presence::Dozing if eyes => {
@@ -2168,7 +2217,7 @@ impl App {
             _ if self.settings.show_clock => {
                 let (hour, minute, _, _) = local_time();
                 let text = fmt_clock(hour, minute, self.settings.clock_24h);
-                draw_text_centered(pm, self.heading_font().unwrap_or(font), &text, cx, 21.0 * s, 13.0 * s, [222, 222, 230, a], fw);
+                draw_text_centered(pm, self.heading_font().unwrap_or(font), &text, cx, (COLLAPSED.1 as f32 / 2.0 + 5.0) * s, 13.0 * s, [222, 222, 230, a], fw);
             }
             _ => {}
         }
@@ -2568,7 +2617,7 @@ impl App {
                 clipboard::Content::Image(img) => {
                     // The preview is stored at twice its drawn size, so it stays sharp on high-DPI screens.
                     if let Some(mut thumb) = Pixmap::new(img.thumb_w, img.thumb_h) {
-                        for (dst, px) in thumb.pixels_mut().iter_mut().zip(img.thumb.chunks_exact(4)) {
+                        for (dst, px) in thumb.pixels_mut().iter_mut().zip(img.thumb.as_chunks::<4>().0) {
                             *dst = tiny_skia::ColorU8::from_rgba(px[0], px[1], px[2], px[3]).premultiply();
                         }
                         let (dw, dh) = (img.thumb_w as f32 / 2.0, img.thumb_h as f32 / 2.0);
@@ -2716,7 +2765,7 @@ fn load_bold_font() -> Option<Font> {
 fn art_tint(rgba: &[u8]) -> [u8; 3] {
     let (mut vivid, mut vivid_n) = ([0u64; 3], 0u64);
     let (mut all, mut all_n) = ([0u64; 3], 0u64);
-    for px in rgba.chunks_exact(4).step_by(7) {
+    for px in rgba.as_chunks::<4>().0.iter().step_by(7) {
         let c = [px[0] as u64, px[1] as u64, px[2] as u64];
         let (hi, lo) = (c[0].max(c[1]).max(c[2]), c[0].min(c[1]).min(c[2]));
         for i in 0..3 {
@@ -2836,7 +2885,7 @@ fn timer_chip_rect(i: usize) -> (f32, f32, f32, f32) {
 
 /// "5m", "30m" or "1h" for a preset length.
 fn preset_label(secs: u64) -> String {
-    if secs % 3600 == 0 { format!("{}h", secs / 3600) } else { format!("{}m", secs / 60) }
+    if secs.is_multiple_of(3600) { format!("{}h", secs / 3600) } else { format!("{}m", secs / 60) }
 }
 
 /// Reminder interval chip, centered over the right-hand column of the water view.
@@ -3514,6 +3563,15 @@ fn draw_ears(pm: &mut Pixmap, ear: f32) {
     }
 }
 
+/// The colour of the eyes (and of their sleepy and happy faces) in a style.
+fn eye_colour(style: EyeStyle) -> [u8; 3] {
+    match style {
+        EyeStyle::Classic | EyeStyle::Dots => [255, 255, 255],
+        EyeStyle::Cat => [255, 196, 80],
+        EyeStyle::Glow => [110, 175, 255],
+    }
+}
+
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }
@@ -3552,11 +3610,13 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             UserEvent::Notice(notice) => self.show_notice(notice),
             UserEvent::Clip(content) => {
-                if self.settings.clipboard && self.clips.add(content) && self.view == View::Clipboard && self.progress > 0.0 {
-                    if let Some(w) = &self.window {
+                if self.settings.clipboard
+                    && self.clips.add(content)
+                    && self.view == View::Clipboard
+                    && self.progress > 0.0
+                    && let Some(w) = &self.window {
                         w.request_redraw();
                     }
-                }
             }
             UserEvent::Menu(id) => {
                 let now = Instant::now();
@@ -3873,6 +3933,15 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
         let now = Instant::now();
+
+        // Highlighted shelf files hold the keyboard; let go of both once the notch closes or the shelf is left.
+        if self.selecting && (self.view != View::Shelf || !self.hovered) {
+            self.selected.clear();
+            self.sync_selection_focus();
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
 
         if self.panel_wanted {
             self.panel_wanted = false;

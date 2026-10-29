@@ -77,6 +77,36 @@ impl Motion {
     }
 }
 
+/// What the eyes on the closed notch look like.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EyeStyle {
+    /// White ovals with a black pupil.
+    Classic,
+    /// Plain white dots.
+    Dots,
+    /// Amber eyes with a slit pupil.
+    Cat,
+    /// Glowing blue pills.
+    Glow,
+}
+
+impl EyeStyle {
+    pub const ALL: [EyeStyle; 4] = [EyeStyle::Classic, EyeStyle::Dots, EyeStyle::Cat, EyeStyle::Glow];
+
+    fn name(self) -> &'static str {
+        match self {
+            EyeStyle::Classic => "classic",
+            EyeStyle::Dots => "dots",
+            EyeStyle::Cat => "cat",
+            EyeStyle::Glow => "glow",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
 /// A number setting: smallest and largest value, and the step the slider moves in.
 #[derive(Clone, Copy)]
 pub struct Range {
@@ -107,7 +137,10 @@ pub struct Settings {
     pub hide_fullscreen: bool,
     pub show_clock: bool,
     pub clock_24h: bool,
+    /// Show the eyes on the closed notch while you are working, when the clock is not using that place.
+    pub eyes: bool,
     pub idle_eyes: bool,
+    pub eye_style: EyeStyle,
     pub sound: bool,
     /// Keep a history of copied text.
     pub clipboard: bool,
@@ -130,7 +163,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { hide_fullscreen: true, show_clock: true, clock_24h: false, idle_eyes: true, sound: true, clipboard: true, hide_island: false, water: false,
+        Self { hide_fullscreen: true, show_clock: false, clock_24h: false, eyes: true, idle_eyes: true, eye_style: EyeStyle::Classic, sound: true, clipboard: true, hide_island: false, water: false,
             timer: false,
             theme: ThemeMode::Dark,
             motion: Motion::Normal,
@@ -157,7 +190,11 @@ impl Settings {
         out.hide_fullscreen = get("hide_fullscreen", out.hide_fullscreen);
         out.show_clock = get("show_clock", out.show_clock);
         out.clock_24h = get("clock_24h", out.clock_24h);
+        out.eyes = get("eyes", out.eyes);
         out.idle_eyes = get("idle_eyes", out.idle_eyes);
+        if let Some(e) = v.get("eye_style").and_then(Value::as_str).and_then(EyeStyle::from_name) {
+            out.eye_style = e;
+        }
         out.sound = get("sound", out.sound);
         out.clipboard = get("clipboard", out.clipboard);
         out.hide_island = get("hide_island", out.hide_island);
@@ -198,7 +235,9 @@ impl Settings {
                 "hide_fullscreen": self.hide_fullscreen,
                 "show_clock": self.show_clock,
                 "clock_24h": self.clock_24h,
+                "eyes": self.eyes,
                 "idle_eyes": self.idle_eyes,
+                "eye_style": self.eye_style.name(),
                 "sound": self.sound,
                 "clipboard": self.clipboard,
                 "hide_island": self.hide_island,
