@@ -15,7 +15,7 @@ use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{Icon, Window, WindowButtons};
+use winit::window::{Fullscreen, Icon, Window, WindowButtons};
 
 use crate::motion::Glows;
 use crate::settings::{self, EyeStyle, Motion, NotchSize, Range, Settings, ThemeMode};
@@ -26,9 +26,16 @@ const HEIGHT: f64 = 700.0;
 const SIDEBAR_W: f32 = 212.0;
 const SIDE_TOP: f32 = 62.0;
 const SIDE_ITEM_H: f32 = 42.0;
-const CONTENT_X: f32 = SIDEBAR_W + 30.0;
-const CONTENT_W: f32 = WIDTH as f32 - CONTENT_X - 30.0;
 const CONTENT_TOP: f32 = 100.0;
+/// The page's content is at least this wide (the width it has in the default window) and at most MAX_CONTENT_W.
+const MIN_CONTENT_W: f32 = WIDTH as f32 - SIDEBAR_W - 60.0;
+const MAX_CONTENT_W: f32 = 720.0;
+/// The smallest the window can be made, in logical pixels: as wide as the default, and tall enough for the sidebar.
+const MIN_HEIGHT: f64 = 520.0;
+/// Where the scrolling part of a page starts, below the title and its line.
+const SCROLL_TOP: f32 = 88.0;
+/// Room left under the last card when a page is scrolled to the end.
+const BOTTOM_PAD: f32 = 24.0;
 const ROW_H: f32 = 56.0;
 const GROUP_LABEL_H: f32 = 24.0;
 const GROUP_GAP: f32 = 16.0;
@@ -41,8 +48,23 @@ const ENTER: Duration = Duration::from_millis(420);
 /// How long a page takes to fade in when it is chosen.
 const PAGE_FADE: Duration = Duration::from_millis(220);
 const KEY_SIDE: u64 = 0x3000_0000;
+const KEY_SCROLL: u64 = 0x3000_0100;
 
 type Rect = (f32, f32, f32, f32);
+
+/// Where a page's content sits across the window: it grows with the window up to a limit and stays in the middle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Frame {
+    x: f32,
+    w: f32,
+}
+
+/// The frame for a window `width` logical pixels wide.
+fn frame_for(width: f32) -> Frame {
+    let room = (width - SIDEBAR_W - 60.0).max(MIN_CONTENT_W);
+    let w = room.min(MAX_CONTENT_W);
+    Frame { x: SIDEBAR_W + 30.0 + (room - w) / 2.0, w }
+}
 
 /// The on/off settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -146,8 +168,8 @@ impl Page {
 
     fn subtitle(self) -> &'static str {
         match self {
-            Page::General => "Startup, and how the island behaves and opens.",
-            Page::Notch => "How big the island is, and what the closed notch shows.",
+            Page::General => "How Sky Island starts.",
+            Page::Notch => "How the notch opens and hides, how big it is, and what the closed notch shows.",
             Page::Appearance => "The colours and the motion.",
             Page::Tabs => "Choose which tabs the notch has.",
             Page::Sounds => "Chimes and the timer alarm.",
@@ -183,13 +205,8 @@ fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
     match page {
         Page::General => vec![
             ("Startup", vec![("Start with Windows", "Open Sky Island when you sign in", T(Toggle::Autostart), "")]),
-            (
-                "Behaviour",
-                vec![
-                    ("Hide in full screen", "Games, videos and slides that fill the screen", T(Toggle::HideFullscreen), ""),
-                    ("Auto-hide island", "Slide out of view when you are not using it", T(Toggle::HideIsland), ""),
-                ],
-            ),
+        ],
+        Page::Notch => vec![
             (
                 "Opening",
                 vec![
@@ -198,8 +215,13 @@ fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Close delay", "How long the mouse is away before it closes", Slider(Slide::CloseDelay), ""),
                 ],
             ),
-        ],
-        Page::Notch => vec![
+            (
+                "Behaviour",
+                vec![
+                    ("Hide in full screen", "Games, videos and slides that fill the screen", T(Toggle::HideFullscreen), ""),
+                    ("Auto-hide island", "Slide out of view when you are not using it", T(Toggle::HideIsland), ""),
+                ],
+            ),
             (
                 "Size",
                 vec![
@@ -341,29 +363,64 @@ struct Layout {
     hero: Option<Rect>,
 }
 
+impl Layout {
+    /// Where the last card ends.
+    fn bottom(&self) -> f32 {
+        let groups = self.groups.iter().map(|g| g.rect.1 + g.rect.3);
+        groups.chain(self.hero.map(|h| h.1 + h.3)).fold(CONTENT_TOP, f32::max)
+    }
+
+    /// The same layout moved down by `dy` (up when negative), for a scrolled page.
+    fn shifted(mut self, dy: f32) -> Layout {
+        for g in &mut self.groups {
+            g.rect.1 += dy;
+        }
+        for item in &mut self.items {
+            item.row.1 += dy;
+            item.ctrl.1 += dy;
+        }
+        if let Some(h) = &mut self.hero {
+            h.1 += dy;
+        }
+        self
+    }
+}
+
+/// Whether the cached background was drawn for this size, page colour and look. Anything that changes how it is
+/// drawn must be part of this, or the window keeps showing the old picture (the look was missing once, and the
+/// Light theme left a dark background under dark text).
+fn backdrop_is_for(cached: &Option<(u32, u32, [u8; 3], bool, Pixmap)>, size: (u32, u32), tint: [u8; 3], light: bool) -> bool {
+    cached.as_ref().is_some_and(|(w, h, t, l, _)| ((*w, *h), *t, *l) == (size, tint, light))
+}
+
+/// How far a page can scroll in a window `height` logical pixels tall: 0 when it all fits.
+fn scroll_limit(lay: &Layout, height: f32) -> f32 {
+    (lay.bottom() + BOTTOM_PAD - height).max(0.0)
+}
+
 /// Everything on a page, laid out in logical pixels.
-fn layout(page: Page) -> Layout {
+fn layout(page: Page, frame: Frame) -> Layout {
     let (mut groups, mut items) = (Vec::new(), Vec::new());
     let mut y = CONTENT_TOP;
     let mut hero = None;
     if page == Page::About {
-        hero = Some((CONTENT_X, y, CONTENT_W, 80.0));
-        y += 80.0 + GROUP_GAP;
+        hero = Some((frame.x, y, frame.w, ABOUT_HERO_H));
+        y += ABOUT_HERO_H + GROUP_GAP;
     }
     if page == Page::Calendar {
         // A preview of the month (or week) with a label above it.
         y += GROUP_LABEL_H;
-        hero = Some((CONTENT_X, y, CONTENT_W, CAL_PREVIEW_H));
+        hero = Some((frame.x, y, frame.w, CAL_PREVIEW_H));
         y += CAL_PREVIEW_H + GROUP_GAP;
     }
     for (title, rows) in page_spec(page) {
         y += GROUP_LABEL_H;
         let height: f32 = rows.iter().map(|(_, desc, kind, _)| row_height(desc, *kind)).sum();
-        groups.push(Group { title, rect: (CONTENT_X, y, CONTENT_W, height) });
+        groups.push(Group { title, rect: (frame.x, y, frame.w, height) });
         let mut row_y = y;
         for (i, (label, desc, kind, btn)) in rows.into_iter().enumerate() {
             let row_h = row_height(desc, kind);
-            let row = (CONTENT_X, row_y, CONTENT_W, row_h);
+            let row = (frame.x, row_y, frame.w, row_h);
             row_y += row_h;
             let right = row.0 + row.2 - 18.0;
             let mid = row.1 + row_h / 2.0;
@@ -393,13 +450,18 @@ fn row_height(desc: &str, kind: Kind) -> f32 {
 /// The height of the calendar preview card.
 const CAL_PREVIEW_H: f32 = 232.0;
 
+/// The height of the card at the top of the About page: the logo with three centred lines under it.
+const ABOUT_HERO_H: f32 = 152.0;
+
 /// The sidebar row of a page.
 fn side_rect(page: Page) -> Rect {
     (12.0, SIDE_TOP + page.index() as f32 * SIDE_ITEM_H, SIDEBAR_W - 24.0, SIDE_ITEM_H - 4.0)
 }
 
 /// The Back button of the changelog, and where its card starts.
-const CHANGELOG_BACK: Rect = (CONTENT_X + CONTENT_W - 96.0, 34.0, 96.0, 30.0);
+fn changelog_back(frame: Frame) -> Rect {
+    (frame.x + frame.w - 96.0, 34.0, 96.0, 30.0)
+}
 const CHANGELOG_TOP: f32 = 100.0;
 
 /// What kind of line a changelog row is.
@@ -419,8 +481,8 @@ struct ChangeLine {
     y: f32,
 }
 
-/// Where the version number sits at the bottom of the sidebar (the baseline).
-const VERSION_Y: f32 = HEIGHT as f32 - 24.0;
+/// How far above the bottom of the window the version number sits in the sidebar (the baseline).
+const VERSION_FROM_BOTTOM: f32 = 24.0;
 
 /// How much to shrink the window to fit a screen of `width` x `height` physical pixels at scale `sf`: 1 when it
 /// fits with room for the title bar and the taskbar, otherwise less, but never below a little over half.
@@ -553,6 +615,10 @@ pub(crate) struct Panel {
     show_changelog: bool,
     changelog_scroll: f32,
     changelog_max: f32,
+    /// How far the page is scrolled (where it is going), how far it can go, and how far it is drawn scrolled right now.
+    scroll: f32,
+    scroll_max: f32,
+    scroll_shown: f32,
     /// The page being shown, and since when (for its fade).
     page: Page,
     page_since: Instant,
@@ -565,12 +631,23 @@ pub(crate) struct Panel {
     fit: f64,
     /// Something is still moving, so more frames are needed.
     pub(crate) busy: bool,
+    /// The picture each frame is drawn on, kept between frames so a big window does not allocate one every time.
+    canvas: Option<Pixmap>,
+    /// The window's background for one size, page colour and look (light or dark): it only changes when those do,
+    /// so it is drawn once.
+    backdrop: Option<(u32, u32, [u8; 3], bool, Pixmap)>,
 }
 
 impl Panel {
     /// Physical pixels per logical pixel of the window: the screen's scale, and the shrinking to fit it.
     fn scale(&self) -> f32 {
         (self.window.scale_factor() * self.fit) as f32
+    }
+
+    /// The size of the window's drawing area in logical pixels.
+    fn logical_size(&self) -> (f32, f32) {
+        let (size, s) = (self.window.inner_size(), self.scale());
+        (size.width as f32 / s, size.height as f32 / s)
     }
 
     pub(crate) fn id(&self) -> winit::window::WindowId {
@@ -592,6 +669,7 @@ impl Panel {
             self.page = page;
             self.page_since = Instant::now();
             self.drag = None;
+            self.scroll = 0.0;
             self.redraw();
         }
     }
@@ -765,8 +843,8 @@ impl App {
         let mut attrs = Window::default_attributes()
             .with_title("Sky Island Settings")
             .with_inner_size(LogicalSize::new(WIDTH, HEIGHT))
-            .with_resizable(false)
-            .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE);
+            .with_resizable(true)
+            .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE | WindowButtons::MAXIMIZE);
         if let Ok(icon) = Icon::from_rgba(appicon::rgba(32), 32, 32) {
             attrs = attrs.with_window_icon(Some(icon));
         }
@@ -781,6 +859,8 @@ impl App {
         if fit < 1.0 {
             let _ = window.request_inner_size(LogicalSize::new(WIDTH * fit, HEIGHT * fit));
         }
+        // It can be made bigger (or full screen) but not smaller than the sidebar and a page need.
+        window.set_min_inner_size(Some(LogicalSize::new(WIDTH * fit, MIN_HEIGHT * fit)));
         // In the middle of the screen the notch is on.
         if let Some(monitor) = window.current_monitor().or_else(|| window.primary_monitor()) {
             let (pos, size) = (monitor.position(), monitor.size());
@@ -802,6 +882,9 @@ impl App {
             show_changelog: false,
             changelog_scroll: 0.0,
             changelog_max: 0.0,
+            scroll: 0.0,
+            scroll_max: 0.0,
+            scroll_shown: 0.0,
             page: Page::General,
             page_since: Instant::now().checked_sub(PAGE_FADE).unwrap_or_else(Instant::now),
             reset_armed: None,
@@ -809,6 +892,8 @@ impl App {
             opened: Instant::now(),
             fit,
             busy: false,
+            canvas: None,
+            backdrop: None,
         });
     }
 
@@ -832,7 +917,15 @@ impl App {
                 let page = self.page();
                 let step = |delta: isize| Page::ALL[(page.index() as isize + delta).clamp(0, Page::ALL.len() as isize - 1) as usize];
                 match event.logical_key {
+                    Key::Named(NamedKey::F11) => {
+                        if let Some(p) = &self.panel {
+                            let full = p.window.fullscreen().is_none().then_some(Fullscreen::Borderless(None));
+                            p.window.set_fullscreen(full);
+                        }
+                    }
                     Key::Named(NamedKey::Escape) => match &mut self.panel {
+                        // Escape first leaves full screen, then the changelog, then closes the window.
+                        Some(p) if p.window.fullscreen().is_some() => p.window.set_fullscreen(None),
                         Some(p) if p.show_changelog => {
                             p.show_changelog = false;
                             p.page_since = Instant::now();
@@ -879,10 +972,10 @@ impl App {
                 let s = p.scale();
                 p.cursor = (position.x as f32 / s, position.y as f32 / s);
                 p.over_window = true;
-                let (cx, drag, page) = (p.cursor.0, p.drag, p.page);
+                let (cx, drag, page, frame) = (p.cursor.0, p.drag, p.page, frame_for(p.logical_size().0));
                 p.redraw();
                 if let Some(slide) = drag {
-                    let lay = layout(page);
+                    let lay = layout(page, frame);
                     if let Some(item) = lay.items.iter().find(|i| matches!(i.kind, Kind::Slider(k) if k == slide)) {
                         let v = slider_value(range_of(slide), item.ctrl, cx);
                         self.slider_set(slide, v);
@@ -892,6 +985,7 @@ impl App {
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
                 let Some(p) = &self.panel else { return };
                 let (cx, cy) = p.cursor;
+                let frame = frame_for(p.logical_size().0);
                 if state == ElementState::Released {
                     if let Some(slide) = self.panel.as_mut().and_then(|p| p.drag.take()) {
                         self.settings_changed();
@@ -912,7 +1006,7 @@ impl App {
                 }
                 if p.show_changelog {
                     // Only the Back button does anything here.
-                    if inside(CHANGELOG_BACK, cx, cy)
+                    if inside(changelog_back(frame), cx, cy)
                         && let Some(p) = &mut self.panel {
                             p.show_changelog = false;
                             p.page_since = Instant::now();
@@ -920,8 +1014,13 @@ impl App {
                         }
                     return;
                 }
+                // The page scrolls under its title: clicks above that line miss, and the rest are where the rows are drawn.
+                if cy < SCROLL_TOP {
+                    return;
+                }
+                let cy = cy + p.scroll_shown;
                 let page = p.page;
-                let lay = layout(page);
+                let lay = layout(page, frame);
                 let Some(item) = lay.items.iter().find(|i| match i.kind {
                     Kind::Slider(_) => inside((i.ctrl.0 - 8.0, i.row.1, SLIDER_W + 16.0, i.row.3), cx, cy),
                     Kind::Seg(_) | Kind::Pick | Kind::Button(_) => inside(i.ctrl, cx, cy),
@@ -1035,6 +1134,13 @@ impl App {
                     };
                     p.changelog_scroll = (p.changelog_scroll - dy).clamp(0.0, p.changelog_max);
                     p.redraw();
+                } else {
+                    let dy = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y * 54.0,
+                        winit::event::MouseScrollDelta::PixelDelta(d) => d.y as f32,
+                    };
+                    p.scroll = (p.scroll - dy).clamp(0.0, p.scroll_max);
+                    p.redraw();
                 }
             }
             WindowEvent::RedrawRequested => self.draw_panel(),
@@ -1075,59 +1181,116 @@ impl App {
         let (Some(w), Some(h)) = (std::num::NonZeroU32::new(size.width), std::num::NonZeroU32::new(size.height)) else {
             return;
         };
-        let Some(mut pm) = Pixmap::new(w.get(), h.get()) else { return };
         let s = panel.scale();
         let (fw, fh) = (w.get() as f32, h.get() as f32);
-        let page = panel.page;
-        let tint = page.tint();
+        let (lh, frame) = (fh / s, frame_for(fw / s));
+        let tint = panel.page.tint();
 
-        // The background: a dark gradient with a soft glow of the page's colour in the top right corner.
-        gfx::gradient_rounded(&mut pm, 0.0, 0.0, fw, fh, 0.0, [13, 13, 18, 255], [24, 24, 32, 255], false);
-        gfx::glow(&mut pm, fw * 0.92, fh * 0.04, fw * 0.55, [tint[0], tint[1], tint[2], 20], None);
-
-        // Everything else is drawn on a layer, which glides up and fades in when the window opens.
-        let mut layer = Pixmap::new(w.get(), h.get()).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
-        if let Some(font) = &self.font {
-            let heading = self.heading_font().unwrap_or(font);
-            self.paint_sidebar(&mut layer, panel, font, heading, s, fh);
-
-            // The page: its title, and its groups on a layer of its own that fades in when it is chosen.
-            let mut content = Pixmap::new(w.get(), h.get()).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
-            if panel.show_changelog {
-                self.paint_changelog(&mut content, panel, font, heading, tint, s);
-            } else {
-                crate::draw_text(&mut content, heading, page.title(), CONTENT_X * s, 52.0 * s, 24.0 * s, [255, 255, 255, 255], 400.0 * s);
-                crate::draw_text(&mut content, font, page.subtitle(), CONTENT_X * s, 74.0 * s, 11.5 * s, [150, 150, 164, 255], CONTENT_W * s);
-                let lay = layout(page);
-                self.paint_page(&mut content, panel, font, heading, &lay, tint, s);
-            }
-            let x = (panel.page_since.elapsed().as_secs_f32() * speed / PAGE_FADE.as_secs_f32()).clamp(0.0, 1.0);
-            let ease = 1.0 - (1.0 - x).powi(3);
-            let paint = tiny_skia::PixmapPaint { opacity: ease, ..Default::default() };
-            layer.draw_pixmap(0, 0, content.as_ref(), &paint, Transform::from_translate((1.0 - ease) * 14.0 * s, 0.0), None);
+        // The background is drawn once for a size, page colour and look and copied in each frame; the picture
+        // it is copied onto is the same one every time, so nothing big is allocated per frame.
+        let light = theme::is_light();
+        if !backdrop_is_for(&panel.backdrop, (w.get(), h.get()), tint, light) {
+            let Some(mut back) = Pixmap::new(w.get(), h.get()) else { return };
+            // A dark gradient with a soft glow of the page's colour in the top right corner.
+            gfx::gradient_rounded(&mut back, 0.0, 0.0, fw, fh, 0.0, [13, 13, 18, 255], [24, 24, 32, 255], false);
+            gfx::glow(&mut back, fw * 0.92, fh * 0.04, fw * 0.55, [tint[0], tint[1], tint[2], 20], None);
+            panel.backdrop = Some((w.get(), h.get(), tint, light, back));
+        }
+        let mut pm = match panel.canvas.take() {
+            Some(canvas) if (canvas.width(), canvas.height()) == (w.get(), h.get()) => canvas,
+            _ => match Pixmap::new(w.get(), h.get()) {
+                Some(canvas) => canvas,
+                None => return,
+            },
+        };
+        if let Some((_, _, _, _, back)) = &panel.backdrop {
+            pm.data_mut().copy_from_slice(back.data());
         }
 
-        // The entrance: the layer rises into place and fades in.
-        let x = (panel.opened.elapsed().as_secs_f32() * speed / ENTER.as_secs_f32()).clamp(0.0, 1.0);
-        let ease = 1.0 - (1.0 - x).powi(3);
-        let paint = tiny_skia::PixmapPaint { opacity: ease, ..Default::default() };
-        pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate(0.0, (1.0 - ease) * 16.0 * s), None);
+        // While the window is opening or a page is fading in, what fades is drawn on a layer that is moved into
+        // place. The rest of the time everything is drawn straight onto the picture, which is much cheaper.
+        let page_x = (panel.page_since.elapsed().as_secs_f32() * speed / PAGE_FADE.as_secs_f32()).clamp(0.0, 1.0);
+        let page_ease = 1.0 - (1.0 - page_x).powi(3);
+        let open_x = (panel.opened.elapsed().as_secs_f32() * speed / ENTER.as_secs_f32()).clamp(0.0, 1.0);
+        let open_ease = 1.0 - (1.0 - open_x).powi(3);
+        let opening = open_ease < 1.0;
+        if let Some(font) = &self.font {
+            let heading = self.heading_font().unwrap_or(font);
+            let blank = || Pixmap::new(w.get(), h.get()).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+            if opening {
+                // Opening: the sidebar and the page are drawn on one layer, which rises into place and fades in.
+                let (mut layer, mut content) = (blank(), blank());
+                self.paint_sidebar(&mut layer, panel, font, heading, s, fh);
+                self.paint_content(&mut content, panel, font, heading, tint, s, frame, lh);
+                let paint = tiny_skia::PixmapPaint { opacity: page_ease, ..Default::default() };
+                layer.draw_pixmap(0, 0, content.as_ref(), &paint, Transform::from_translate((1.0 - page_ease) * 14.0 * s, 0.0), None);
+                let paint = tiny_skia::PixmapPaint { opacity: open_ease, ..Default::default() };
+                pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate(0.0, (1.0 - open_ease) * 16.0 * s), None);
+            } else if page_ease < 1.0 {
+                // A page fading in: only the page is on a layer; the sidebar does not move.
+                self.paint_sidebar(&mut pm, panel, font, heading, s, fh);
+                let mut content = blank();
+                self.paint_content(&mut content, panel, font, heading, tint, s, frame, lh);
+                let paint = tiny_skia::PixmapPaint { opacity: page_ease, ..Default::default() };
+                pm.draw_pixmap(0, 0, content.as_ref(), &paint, Transform::from_translate((1.0 - page_ease) * 14.0 * s, 0.0), None);
+            } else {
+                self.paint_sidebar(&mut pm, panel, font, heading, s, fh);
+                self.paint_content(&mut pm, panel, font, heading, tint, s, frame, lh);
+            }
+        }
 
         // How far the changelog can scroll depends on its length, which is known once it has been laid out.
         if panel.show_changelog
             && let Some(font) = &self.font {
-                let (_, total) = self.changelog_lines(font, self.heading_font().unwrap_or(font), CONTENT_W - 44.0);
-                panel.changelog_max = (total - (HEIGHT as f32 - CHANGELOG_TOP - 28.0)).max(0.0);
+                let (_, total) = self.changelog_lines(font, self.heading_font().unwrap_or(font), frame.w - 44.0);
+                panel.changelog_max = (total - (lh - CHANGELOG_TOP - 28.0)).max(0.0);
                 panel.changelog_scroll = panel.changelog_scroll.clamp(0.0, panel.changelog_max);
             }
 
-        let Ok(()) = panel.surface.resize(w, h) else { return };
-        let Ok(mut buffer) = panel.surface.buffer_mut() else { return };
-        for (dst, src) in buffer.iter_mut().zip(pm.pixels()) {
-            *dst = (src.alpha() as u32) << 24 | (src.red() as u32) << 16 | (src.green() as u32) << 8 | src.blue() as u32;
-        }
-        buffer.present().ok();
+        if panel.surface.resize(w, h).is_ok()
+            && let Ok(mut buffer) = panel.surface.buffer_mut() {
+                for (dst, src) in buffer.iter_mut().zip(pm.pixels()) {
+                    *dst = (src.alpha() as u32) << 24 | (src.red() as u32) << 16 | (src.green() as u32) << 8 | src.blue() as u32;
+                }
+                buffer.present().ok();
+            }
+        panel.canvas = Some(pm);
         panel.busy = panel.glows.busy() || panel.opened.elapsed().mul_f32(speed) < ENTER || panel.page_since.elapsed().mul_f32(speed) < PAGE_FADE;
+    }
+
+    /// The part of the window beside the sidebar: the changelog, or a page with its title and its rows,
+    /// which scroll under the title. `target` is a layer or the picture itself.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_content(&self, target: &mut Pixmap, panel: &mut Panel, font: &fontdue::Font, heading: &fontdue::Font, tint: [u8; 3], s: f32, frame: Frame, lh: f32) {
+        let (w, h) = (target.width(), target.height());
+        let (fw, fh) = (w as f32, h as f32);
+        let page = panel.page;
+        if panel.show_changelog {
+            self.paint_changelog(target, panel, font, heading, tint, s, frame, lh);
+            return;
+        }
+        crate::draw_text(target, heading, page.title(), frame.x * s, 52.0 * s, 24.0 * s, [255, 255, 255, 255], 400.0 * s);
+        crate::draw_text(target, font, page.subtitle(), frame.x * s, 74.0 * s, 11.5 * s, [150, 150, 164, 255], frame.w * s);
+        let lay = layout(page, frame);
+        panel.scroll_max = scroll_limit(&lay, lh);
+        panel.scroll = panel.scroll.clamp(0.0, panel.scroll_max);
+        panel.scroll_shown = panel.glows.follow(KEY_SCROLL, panel.scroll as f64, 40.0, 1.0) as f32;
+        let lay = lay.shifted(-panel.scroll_shown);
+        if panel.scroll_shown < 0.5 {
+            // Not scrolled: nothing reaches under the title, so the rows are drawn straight on.
+            self.paint_page(target, panel, font, heading, &lay, tint, s);
+        } else {
+            // Scrolled: the rows go on a layer of their own that is cut off at the line under the title.
+            let mut rows = Pixmap::new(w, h).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
+            self.paint_page(&mut rows, panel, font, heading, &lay, tint, s);
+            let below_title = tiny_skia::Rect::from_xywh(0.0, SCROLL_TOP * s, fw, (fh - SCROLL_TOP * s).max(1.0)).map(PathBuilder::from_rect);
+            let mask = below_title.and_then(|path| gfx::mask_of(w, h, &path));
+            target.draw_pixmap(0, 0, rows.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), mask.as_ref());
+        }
+        if panel.scroll_max > 0.0 {
+            let accent = [tint[0], tint[1], tint[2], 255];
+            paint_scrollbar(target, fw / s - 12.0, SCROLL_TOP + 6.0, lh - SCROLL_TOP - 18.0, panel.scroll_shown, panel.scroll_max, accent, s);
+        }
     }
 
     /// The sidebar: the app's name, the pages with a highlight that glides between them, and Quit.
@@ -1166,7 +1329,7 @@ impl App {
 
         // The version, at the bottom. (Quitting is in the tray menu.)
         let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
-        crate::draw_text_centered(pm, font, &version, SIDEBAR_W / 2.0 * s, VERSION_Y * s, 10.5 * s, [130, 130, 144, 255], (SIDEBAR_W - 24.0) * s);
+        crate::draw_text_centered(pm, font, &version, SIDEBAR_W / 2.0 * s, fh - VERSION_FROM_BOTTOM * s, 10.5 * s, [130, 130, 144, 255], (SIDEBAR_W - 24.0) * s);
     }
 
     /// The groups of a page as cards with their rows.
@@ -1267,15 +1430,17 @@ impl App {
     }
 
     /// The changelog in place of a page: its title, a Back button, and the releases in a card that scrolls.
-    fn paint_changelog(&self, pm: &mut Pixmap, panel: &Panel, font: &fontdue::Font, heading: &fontdue::Font, tint: [u8; 3], s: f32) {
+    #[allow(clippy::too_many_arguments)]
+    fn paint_changelog(&self, pm: &mut Pixmap, panel: &Panel, font: &fontdue::Font, heading: &fontdue::Font, tint: [u8; 3], s: f32, frame: Frame, lh: f32) {
         let (white, grey) = ([255, 255, 255, 255], [160, 160, 172, 255]);
-        crate::draw_text(pm, heading, "Changelog", CONTENT_X * s, 52.0 * s, 24.0 * s, white, 400.0 * s);
-        crate::draw_text(pm, font, "What changed in each version, from the project's releases on GitHub.", CONTENT_X * s, 74.0 * s, 11.5 * s, [150, 150, 164, 255], CONTENT_W * s);
+        crate::draw_text(pm, heading, "Changelog", frame.x * s, 52.0 * s, 24.0 * s, white, 400.0 * s);
+        crate::draw_text(pm, font, "What changed in each version, from the project's releases on GitHub.", frame.x * s, 74.0 * s, 11.5 * s, [150, 150, 164, 255], frame.w * s);
 
         // The Back button.
         let (cx, cy) = panel.cursor;
-        let hot = panel.glows.fade(KEY_SIDE + 30, inside(CHANGELOG_BACK, cx, cy));
-        let (x, y, w, h) = (CHANGELOG_BACK.0 * s, CHANGELOG_BACK.1 * s, CHANGELOG_BACK.2 * s, CHANGELOG_BACK.3 * s);
+        let back = changelog_back(frame);
+        let hot = panel.glows.fade(KEY_SIDE + 30, inside(back, cx, cy));
+        let (x, y, w, h) = (back.0 * s, back.1 * s, back.2 * s, back.3 * s);
         gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [tint[0], tint[1], tint[2], crate::pick(110.0, 62.0, hot) as u8], [tint[0], tint[1], tint[2], crate::pick(66.0, 30.0, hot) as u8], false);
         gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [tint[0], tint[1], tint[2], 130]);
         let tip = [(x + 17.0 * s, y + h / 2.0 - 4.0 * s), (x + 13.0 * s, y + h / 2.0), (x + 17.0 * s, y + h / 2.0 + 4.0 * s)];
@@ -1283,9 +1448,9 @@ impl App {
         crate::draw_text_centered(pm, heading, "Back", x + w / 2.0 + 6.0 * s, y + 19.0 * s, 12.0 * s, white, w - 30.0 * s);
 
         // The card with the releases.
-        let card = (CONTENT_X, CHANGELOG_TOP, CONTENT_W, HEIGHT as f32 - CHANGELOG_TOP - 18.0);
+        let card = (frame.x, CHANGELOG_TOP, frame.w, lh - CHANGELOG_TOP - 18.0);
         crate::draw_card(pm, card, 14.0, s, 1.0, 0.0, tint);
-        let (lines, _) = self.changelog_lines(font, heading, CONTENT_W - 44.0);
+        let (lines, _) = self.changelog_lines(font, heading, frame.w - 44.0);
         let (top, bottom) = (card.1 + 8.0, card.1 + card.3 - 8.0);
         let accent = [tint[0], tint[1], tint[2], 255];
         for line in &lines {
@@ -1297,19 +1462,19 @@ impl App {
             let x = card.0 + 22.0;
             match &line.kind {
                 ChangeKind::Version(date) => {
-                    crate::draw_text(pm, heading, &line.text, x * s, (ly + 15.0) * s, 15.0 * s, white, (CONTENT_W - 150.0) * s);
+                    crate::draw_text(pm, heading, &line.text, x * s, (ly + 15.0) * s, 15.0 * s, white, (frame.w - 150.0) * s);
                     if !date.is_empty() {
                         let tw = crate::text_width(font, date, 11.0 * s);
                         crate::draw_text(pm, font, date, (card.0 + card.2 - 22.0) * s - tw, (ly + 14.0) * s, 11.0 * s, grey, 100.0 * s);
                     }
                     crate::fill_rect(pm, x * s, (ly + 22.0) * s, (card.2 - 44.0) * s, s, [255, 255, 255, 22]);
                 }
-                ChangeKind::Heading => crate::draw_text(pm, heading, &line.text, x * s, (ly + 13.0) * s, 12.5 * s, accent, (CONTENT_W - 44.0) * s),
+                ChangeKind::Heading => crate::draw_text(pm, heading, &line.text, x * s, (ly + 13.0) * s, 12.5 * s, accent, (frame.w - 44.0) * s),
                 ChangeKind::Bullet => {
                     crate::fill_circle(pm, (x + 4.0) * s, (ly + 8.0) * s, 2.0 * s, accent);
-                    crate::draw_text(pm, font, &line.text, (x + 18.0) * s, (ly + 12.0) * s, 12.0 * s, [220, 220, 230, 255], (CONTENT_W - 62.0) * s);
+                    crate::draw_text(pm, font, &line.text, (x + 18.0) * s, (ly + 12.0) * s, 12.0 * s, [220, 220, 230, 255], (frame.w - 62.0) * s);
                 }
-                ChangeKind::Plain => crate::draw_text(pm, font, &line.text, (x + 18.0) * s, (ly + 12.0) * s, 12.0 * s, [200, 200, 212, 255], (CONTENT_W - 62.0) * s),
+                ChangeKind::Plain => crate::draw_text(pm, font, &line.text, (x + 18.0) * s, (ly + 12.0) * s, 12.0 * s, [200, 200, 212, 255], (frame.w - 62.0) * s),
             }
         }
         // A scroll bar when there is more than fits.
@@ -1375,16 +1540,21 @@ impl App {
         crate::draw_card(pm, hero, 16.0, s, 1.0, 0.0, tint);
         if let Some(path) = gfx::rounded_path(x * s, y * s, w * s, h * s, 16.0 * s)
             && let Some(mask) = gfx::mask_of(pm.width(), pm.height(), &path) {
-                gfx::glow(pm, (x + 60.0) * s, (y + 50.0) * s, 170.0 * s, [tint[0], tint[1], tint[2], 36], Some(&mask));
+                gfx::glow(pm, (x + w / 2.0) * s, (y + 44.0) * s, 190.0 * s, [tint[0], tint[1], tint[2], 36], Some(&mask));
             }
         let logo = appicon::pixmap(128);
-        let scale = 64.0 * s / logo.width() as f32;
+        // The logo at the top, the name, the description and the version centred under it.
+        let side = 64.0;
+        let scale = side * s / logo.width() as f32;
         let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-        pm.draw_pixmap(0, 0, logo.as_ref(), &paint, Transform::from_scale(scale, scale).post_translate((x + 22.0) * s, (y + 12.0) * s), None);
-        crate::draw_text(pm, heading, "Sky Island", (x + 102.0) * s, (y + 36.0) * s, 21.0 * s, [255, 255, 255, 255], 300.0 * s);
-        crate::draw_text(pm, font, "A notch for the top of your Windows screen.", (x + 102.0) * s, (y + 55.0) * s, 11.5 * s, [170, 170, 182, 255], (w - 120.0) * s);
+        pm.draw_pixmap(0, 0, logo.as_ref(), &paint, Transform::from_scale(scale, scale).post_translate((x + (w - side) / 2.0) * s, (y + 12.0) * s), None);
+        let middle = |font: &fontdue::Font, text: &str, size: f32| (x + w / 2.0) * s - crate::text_width(font, text, size * s) / 2.0;
+        let name = "Sky Island";
+        crate::draw_text(pm, heading, name, middle(heading, name, 21.0), (y + 100.0) * s, 21.0 * s, [255, 255, 255, 255], w * s);
+        let tagline = "A notch for the top of your Windows screen.";
+        crate::draw_text(pm, font, tagline, middle(font, tagline, 11.5), (y + 120.0) * s, 11.5 * s, [170, 170, 182, 255], w * s);
         let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
-        crate::draw_text(pm, font, &version, (x + 102.0) * s, (y + 73.0) * s, 11.0 * s, [tint[0], tint[1], tint[2], 255], 200.0 * s);
+        crate::draw_text(pm, font, &version, middle(font, &version, 11.0), (y + 138.0) * s, 11.0 * s, [tint[0], tint[1], tint[2], 255], w * s);
     }
 
     /// The control on the right of a row.
@@ -1495,6 +1665,18 @@ impl App {
 }
 
 /// A white shape on the tile, drawn the same in the dark and the light look.
+/// A thin scroll bar: a track from `top` down `height` logical pixels at `x`, and a thumb for how far `scroll` is of `max`.
+#[allow(clippy::too_many_arguments)]
+fn paint_scrollbar(pm: &mut Pixmap, x: f32, top: f32, height: f32, scroll: f32, max: f32, accent: [u8; 4], s: f32) {
+    if max <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let thumb = (height * height / (height + max)).clamp(26.0_f32.min(height), height);
+    let at = top + (height - thumb) * (scroll / max).clamp(0.0, 1.0);
+    crate::fill_rounded(pm, x * s, top * s, 3.0 * s, height * s, 1.5 * s, [255, 255, 255, 18]);
+    crate::fill_rounded(pm, x * s, at * s, 3.0 * s, thumb * s, 1.5 * s, accent);
+}
+
 fn fill_poly(pm: &mut Pixmap, points: &[(f32, f32)], c: [u8; 4]) {
     let mut pb = PathBuilder::new();
     for (i, (x, y)) in points.iter().enumerate() {
@@ -1634,25 +1816,81 @@ mod tests {
     #[test]
     fn every_page_fits_inside_the_window() {
         for page in Page::ALL {
-            let lay = layout(page);
+            let lay = layout(page, frame_for(WIDTH as f32));
             for g in &lay.groups {
                 assert!(g.rect.0 >= SIDEBAR_W && g.rect.0 + g.rect.2 <= WIDTH as f32, "{} is outside on {}", g.title, page.title());
-                assert!(g.rect.1 + g.rect.3 <= HEIGHT as f32 - 14.0, "{} runs past the bottom on {}", g.title, page.title());
+                // About and Notch are taller than the default window and scroll; every other page fits.
+                assert!(matches!(page, Page::About | Page::Notch) || g.rect.1 + g.rect.3 <= HEIGHT as f32 - 14.0, "{} runs past the bottom on {}", g.title, page.title());
             }
             for item in &lay.items {
                 assert!(item.row.0 + item.row.2 <= WIDTH as f32, "{} is too wide", item.label);
                 assert!(item.ctrl.0 >= item.row.0 && item.ctrl.0 + item.ctrl.2 <= item.row.0 + item.row.2, "{} control is outside its row", item.label);
             }
             if let Some(hero) = lay.hero {
-                assert!(hero.1 + hero.3 <= HEIGHT as f32);
+                assert!(hero.1 + hero.3 <= HEIGHT as f32, "the card at the top is inside the window");
             }
         }
     }
 
     #[test]
+    fn the_cached_background_is_only_reused_for_the_same_size_colour_and_look() {
+        let tint = [10, 20, 30];
+        let cached = Some((800, 600, tint, false, Pixmap::new(1, 1).unwrap()));
+        assert!(backdrop_is_for(&cached, (800, 600), tint, false));
+        assert!(!backdrop_is_for(&None, (800, 600), tint, false), "nothing cached yet");
+        assert!(!backdrop_is_for(&cached, (801, 600), tint, false), "another width");
+        assert!(!backdrop_is_for(&cached, (800, 599), tint, false), "another height");
+        assert!(!backdrop_is_for(&cached, (800, 600), [10, 20, 31], false), "another page colour");
+        assert!(!backdrop_is_for(&cached, (800, 600), tint, true), "the Light theme needs its own background");
+    }
+
+    #[test]
+    fn the_content_grows_with_the_window_and_stays_in_the_middle() {
+        let default = frame_for(WIDTH as f32);
+        assert_eq!(default, Frame { x: SIDEBAR_W + 30.0, w: MIN_CONTENT_W });
+        assert_eq!(frame_for(500.0), default, "never narrower than the default");
+        for width in [900.0_f32, 1280.0, 1920.0, 3840.0] {
+            let f = frame_for(width);
+            assert!(f.w >= MIN_CONTENT_W && f.w <= MAX_CONTENT_W, "{width}: {f:?}");
+            let (left, right) = (f.x - SIDEBAR_W, width - (f.x + f.w));
+            assert!((left - right).abs() < 0.01 || f.w < MAX_CONTENT_W, "{width}: centred in the room beside the sidebar");
+            assert!(f.x >= SIDEBAR_W + 30.0 && f.x + f.w <= width - 30.0, "{width}: {f:?}");
+        }
+    }
+
+    #[test]
+    fn a_page_scrolls_only_as_far_as_it_is_taller_than_the_window() {
+        for page in Page::ALL {
+            let lay = layout(page, frame_for(WIDTH as f32));
+            // Most pages fit the default window; About (a tall card) and Notch (all the notch settings) scroll a little.
+            let limit = match page {
+                Page::About => 100.0,
+                Page::Notch => 320.0,
+                _ => 0.0,
+            };
+            assert!(scroll_limit(&lay, HEIGHT as f32) <= limit, "{} needs too much scrolling in the default window", page.title());
+            let short = scroll_limit(&lay, MIN_HEIGHT as f32);
+            assert!((short - (lay.bottom() + BOTTOM_PAD - MIN_HEIGHT as f32).max(0.0)).abs() < 0.01);
+            assert!(scroll_limit(&lay, 300.0) > short || short == 0.0 && lay.bottom() + BOTTOM_PAD <= 300.0, "{}", page.title());
+        }
+    }
+
+    #[test]
+    fn a_scrolled_layout_moves_every_rect_by_the_same_amount() {
+        let frame = frame_for(WIDTH as f32);
+        let (plain, moved) = (layout(Page::About, frame), layout(Page::About, frame).shifted(-40.0));
+        assert_eq!(plain.groups.len(), moved.groups.len());
+        for (a, b) in plain.items.iter().zip(&moved.items) {
+            assert_eq!((a.row.0, a.row.2, a.row.1 - 40.0, a.ctrl.1 - 40.0), (b.row.0, b.row.2, b.row.1, b.ctrl.1));
+        }
+        assert_eq!(plain.hero.map(|h| h.1 - 40.0), moved.hero.map(|h| h.1));
+        assert!((plain.bottom() - 40.0 - moved.bottom()).abs() < 0.01);
+    }
+
+    #[test]
     fn groups_on_a_page_do_not_overlap() {
         for page in Page::ALL {
-            let lay = layout(page);
+            let lay = layout(page, frame_for(WIDTH as f32));
             for pair in lay.groups.windows(2) {
                 assert!(pair[0].rect.1 + pair[0].rect.3 < pair[1].rect.1, "{} overlaps {} on {}", pair[0].title, pair[1].title, page.title());
             }
@@ -1662,7 +1900,7 @@ mod tests {
     #[test]
     fn labels_have_room_next_to_their_controls() {
         for page in Page::ALL {
-            for item in layout(page).items {
+            for item in layout(page, frame_for(WIDTH as f32)).items {
                 if item.ctrl.2 > 0.0 {
                     assert!(item.ctrl.0 - item.row.0 > 230.0, "{} leaves too little room for its text", item.label);
                 }
@@ -1675,7 +1913,7 @@ mod tests {
         let mut toggles = Vec::new();
         let (mut segs, mut slides, mut picks) = (Vec::new(), Vec::new(), 0);
         for page in Page::ALL {
-            for item in layout(page).items {
+            for item in layout(page, frame_for(WIDTH as f32)).items {
                 match item.kind {
                     Kind::Toggle(t) => toggles.push(t),
                     Kind::Seg(g) => segs.push(g),
@@ -1710,7 +1948,7 @@ mod tests {
     #[test]
     fn the_sidebar_rows_fit_above_the_version() {
         let last = side_rect(Page::About);
-        assert!(last.1 + last.3 < VERSION_Y - 12.0, "the pages must not run into the version");
+        assert!(last.1 + last.3 < MIN_HEIGHT as f32 - VERSION_FROM_BOTTOM - 12.0, "the pages must not run into the version, even in the smallest window");
         for (i, page) in Page::ALL.into_iter().enumerate() {
             assert_eq!(page.index(), i);
             let r = side_rect(page);

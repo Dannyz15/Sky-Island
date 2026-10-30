@@ -17,7 +17,7 @@ jobs:
   check:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # rust-toolchain.toml makes rustup install the stable compiler with clippy on the first cargo call.
       - uses: Swatinem/rust-cache@v2
       - name: Lint
