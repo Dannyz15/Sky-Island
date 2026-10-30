@@ -321,9 +321,11 @@ unsafe fn read_unicode_text() -> Option<String> {
         if ptr.is_null() {
             return None;
         }
-        // The text ends at a zero. Stop early if it is absurdly long.
+        // The text ends at a zero. Stop early if it is absurdly long, and never read past the end of the
+        // block: another app may have put text there with no zero at the end.
+        let room = GlobalSize(hglobal) / 2;
         let mut len = 0;
-        while len < MAX_CHARS * 2 && *ptr.add(len) != 0 {
+        while len < (MAX_CHARS * 2).min(room) && *ptr.add(len) != 0 {
             len += 1;
         }
         let text = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));

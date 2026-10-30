@@ -1,11 +1,12 @@
 //! A countdown timer with a length the user sets (hours, minutes and seconds). Pure state, with
 //! `now` passed in so it can be tested. The length that was last set is saved between runs.
 
-use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+
+use crate::store;
 
 const DEFAULT: Duration = Duration::from_secs(10 * 60);
 const MIN_SECS: u64 = 1;
@@ -67,8 +68,7 @@ pub struct Timer {
 impl Timer {
     pub fn load() -> Self {
         let secs = Self::path()
-            .and_then(|p| fs::read_to_string(p).ok())
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|p| store::read_json(&p))
             .and_then(|v| v.get("secs").and_then(Value::as_u64))
             .filter(|s| (MIN_SECS..=MAX_SECS).contains(s))
             .map_or(DEFAULT, Duration::from_secs);
@@ -81,9 +81,7 @@ impl Timer {
     }
 
     fn path() -> Option<PathBuf> {
-        let dir = PathBuf::from(std::env::var_os("APPDATA")?).join("Sky-Island");
-        fs::create_dir_all(&dir).ok()?;
-        Some(dir.join("timer.json"))
+        store::path("timer.json")
     }
 
     fn save(&self) {
@@ -92,7 +90,7 @@ impl Timer {
             return;
         }
         if let Some(p) = Self::path() {
-            let _ = fs::write(p, json!({ "secs": self.total.as_secs() }).to_string());
+            store::write(&p, &json!({ "secs": self.total.as_secs() }).to_string());
         }
     }
 

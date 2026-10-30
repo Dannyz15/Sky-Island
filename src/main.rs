@@ -8,6 +8,7 @@ mod gfx;
 mod lyrics;
 mod media;
 mod shelf;
+mod store;
 mod sound;
 mod presence;
 mod settings;

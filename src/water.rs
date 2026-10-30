@@ -1,11 +1,12 @@
 //! Water intake tracker with periodic reminders. Pure state, with `now` and `today` passed in
 //! so it can be tested. The day count resets when the date changes.
 
-use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+
+use crate::store;
 
 /// Reminder choices shown in the UI, in minutes. `None` turns reminders off.
 pub const INTERVALS: [Option<u32>; 4] = [Some(30), Some(60), Some(120), None];
@@ -25,9 +26,7 @@ pub struct Water {
 impl Water {
     /// Load saved state; the count only carries over if it was saved today.
     pub fn new(today: u32, now: Instant) -> Self {
-        let saved = Self::path()
-            .and_then(|p| fs::read_to_string(p).ok())
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+        let saved = Self::path().and_then(|p| store::read_json(&p));
         let get = |k: &str| saved.as_ref().and_then(|v| v.get(k)).and_then(Value::as_u64).map(|n| n as u32);
 
         let mut w = Self::with(
@@ -49,9 +48,7 @@ impl Water {
     }
 
     fn path() -> Option<PathBuf> {
-        let dir = PathBuf::from(std::env::var_os("APPDATA")?).join("Sky-Island");
-        fs::create_dir_all(&dir).ok()?;
-        Some(dir.join("water.json"))
+        store::path("water.json")
     }
 
     fn save(&self) {
@@ -66,7 +63,7 @@ impl Water {
                 "goal": self.goal,
                 "interval": self.interval,
             });
-            let _ = fs::write(p, body.to_string());
+            store::write(&p, &body.to_string());
         }
     }
 

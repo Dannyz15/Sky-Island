@@ -14,6 +14,8 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
 
+/// Where this project's releases live. The release page and the installer must both be on it.
+const REPO: &str = "https://github.com/Dannyz15/Sky-Island/";
 const LATEST: &str = "https://api.github.com/repos/Dannyz15/Sky-Island/releases/latest";
 const RELEASES: &str = "https://api.github.com/repos/Dannyz15/Sky-Island/releases?per_page=8";
 
@@ -22,8 +24,8 @@ const RELEASES: &str = "https://api.github.com/repos/Dannyz15/Sky-Island/release
 pub struct Asset {
     pub url: String,
     pub size: u64,
-    /// Lower-case SHA-256 that GitHub reports for the file, when it does.
-    pub sha256: Option<String>,
+    /// Lower-case SHA-256 that GitHub reports for the file. An installer without one is not offered.
+    pub sha256: String,
 }
 
 /// How a check for updates stands.
@@ -183,7 +185,7 @@ fn judge(release: &Value, current: &str) -> Option<Status> {
     let tag = release.get("tag_name")?.as_str()?;
     let version = tag.trim_start_matches(['v', 'V']);
     if newer(version, current) {
-        let page = release.get("html_url").and_then(Value::as_str).unwrap_or("https://github.com/Dannyz15/Sky-Island/releases/latest");
+        let page = release.get("html_url").and_then(Value::as_str).filter(|u| u.starts_with(REPO)).unwrap_or("https://github.com/Dannyz15/Sky-Island/releases/latest");
         Some(Status::Available { version: version.to_string(), page: page.to_string(), asset: installer(release) })
     } else {
         parse(version).map(|_| Status::Latest)
@@ -197,11 +199,12 @@ fn installer(release: &Value) -> Option<Asset> {
         if !(name.starts_with("Sky-Island-Setup") && name.ends_with(".exe")) {
             return None;
         }
-        Some(Asset {
-            url: a.get("browser_download_url")?.as_str()?.to_string(),
-            size: a.get("size").and_then(Value::as_u64).unwrap_or(0),
-            sha256: a.get("digest").and_then(Value::as_str).and_then(|d| d.strip_prefix("sha256:")).map(str::to_lowercase),
-        })
+        // Only a file on this project's own release downloads, with a size and a SHA-256 to check it by.
+        let url = a.get("browser_download_url")?.as_str()?;
+        let size = a.get("size").and_then(Value::as_u64).filter(|s| *s > 0)?;
+        let sha256 = a.get("digest").and_then(Value::as_str)?.strip_prefix("sha256:")?.to_lowercase();
+        let hex = sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit());
+        (url.starts_with(&format!("{REPO}releases/download/")) && hex).then(|| Asset { url: url.to_string(), size, sha256 })
     })
 }
 
@@ -309,10 +312,9 @@ fn stale(name: &str, current: &str) -> bool {
     rest.strip_suffix(".exe").is_some_and(|version| parse(version).is_some() && !newer(version, current))
 }
 
-/// Whether a downloaded file is the one the release describes: the same size, and the same hash when
-/// GitHub gave one.
+/// Whether a downloaded file is the one the release describes: the same size and the same hash.
 fn acceptable(got: u64, sha256: &str, asset: &Asset) -> bool {
-    (asset.size == 0 || got == asset.size) && asset.sha256.as_ref().is_none_or(|want| want == sha256)
+    asset.size > 0 && got == asset.size && asset.sha256 == sha256
 }
 
 #[cfg(test)]
@@ -334,18 +336,22 @@ mod tests {
     fn release() -> Value {
         json!({
             "tag_name": "v1.2.0",
-            "html_url": "https://example.com/r",
+            "html_url": "https://github.com/Dannyz15/Sky-Island/releases/tag/v1.2.0",
             "assets": [
-                { "name": "notes.txt", "browser_download_url": "https://example.com/notes.txt", "size": 5 },
-                { "name": "Sky-Island-Setup-1.2.0.exe", "browser_download_url": "https://example.com/setup.exe", "size": 1234, "digest": "sha256:ABCDEF" }
+                { "name": "notes.txt", "browser_download_url": "https://github.com/Dannyz15/Sky-Island/releases/download/v1.2.0/notes.txt", "size": 5 },
+                { "name": "Sky-Island-Setup-1.2.0.exe", "browser_download_url": SETUP_URL, "size": 1234, "digest": DIGEST }
             ]
         })
     }
 
+    const SETUP_URL: &str = "https://github.com/Dannyz15/Sky-Island/releases/download/v1.2.0/Sky-Island-Setup-1.2.0.exe";
+    const DIGEST: &str = "sha256:ABCDEF0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789";
+
     #[test]
     fn reads_a_release_answer_and_finds_the_installer() {
-        let asset = Asset { url: "https://example.com/setup.exe".into(), size: 1234, sha256: Some("abcdef".into()) };
-        assert_eq!(judge(&release(), "1.1.0"), Some(Status::Available { version: "1.2.0".into(), page: "https://example.com/r".into(), asset: Some(asset) }));
+        let asset = Asset { url: SETUP_URL.into(), size: 1234, sha256: DIGEST.strip_prefix("sha256:").unwrap().to_lowercase() };
+        let page = "https://github.com/Dannyz15/Sky-Island/releases/tag/v1.2.0";
+        assert_eq!(judge(&release(), "1.1.0"), Some(Status::Available { version: "1.2.0".into(), page: page.into(), asset: Some(asset) }));
         assert_eq!(judge(&release(), "1.2.0"), Some(Status::Latest));
         assert_eq!(judge(&release(), "1.3.0"), Some(Status::Latest), "a newer local build is not an update");
         assert_eq!(judge(&json!({ "message": "Not Found" }), "1.1.0"), None);
@@ -353,7 +359,7 @@ mod tests {
 
     #[test]
     fn a_release_without_an_installer_still_counts_as_an_update() {
-        let bare = json!({ "tag_name": "v1.2.0", "html_url": "https://example.com/r", "assets": [] });
+        let bare = json!({ "tag_name": "v1.2.0", "html_url": "https://github.com/Dannyz15/Sky-Island/releases/tag/v1.2.0", "assets": [] });
         assert!(matches!(judge(&bare, "1.1.0"), Some(Status::Available { asset: None, .. })));
     }
 
@@ -404,11 +410,35 @@ mod tests {
 
     #[test]
     fn a_download_is_accepted_only_if_size_and_hash_match() {
-        let asset = Asset { url: String::new(), size: 10, sha256: Some("aa".into()) };
+        let asset = Asset { url: String::new(), size: 10, sha256: "aa".into() };
         assert!(acceptable(10, "aa", &asset));
         assert!(!acceptable(9, "aa", &asset), "cut short");
         assert!(!acceptable(10, "bb", &asset), "different file");
-        let unchecked = Asset { url: String::new(), size: 0, sha256: None };
-        assert!(acceptable(77, "anything", &unchecked));
+        let no_size = Asset { url: String::new(), size: 0, sha256: "aa".into() };
+        assert!(!acceptable(0, "aa", &no_size), "a size of zero is never enough");
+    }
+
+    #[test]
+    fn an_installer_must_be_on_this_projects_releases_and_carry_a_hash() {
+        let with = |url: &str, digest: Option<&str>, size: u64| {
+            let mut asset = json!({ "name": "Sky-Island-Setup-1.2.0.exe", "browser_download_url": url, "size": size });
+            if let Some(d) = digest {
+                asset["digest"] = json!(d);
+            }
+            json!({ "tag_name": "v1.2.0", "html_url": "https://github.com/Dannyz15/Sky-Island/releases/tag/v1.2.0", "assets": [asset] })
+        };
+        assert!(installer(&with(SETUP_URL, Some(DIGEST), 1234)).is_some());
+        assert!(installer(&with(SETUP_URL, None, 1234)).is_none(), "no hash: not offered");
+        assert!(installer(&with(SETUP_URL, Some("sha256:abc"), 1234)).is_none(), "not a SHA-256");
+        assert!(installer(&with(SETUP_URL, Some(DIGEST), 0)).is_none(), "no size");
+        assert!(installer(&with("https://example.com/Sky-Island-Setup-1.2.0.exe", Some(DIGEST), 1234)).is_none(), "another site");
+        assert!(installer(&with("https://github.com/Other/Repo/releases/download/v1/Sky-Island-Setup-1.2.0.exe", Some(DIGEST), 1234)).is_none(), "another project");
+    }
+
+    #[test]
+    fn a_release_page_from_somewhere_else_is_replaced_by_the_projects_own() {
+        let odd = json!({ "tag_name": "v1.2.0", "html_url": "file:///C:/Windows/System32/calc.exe", "assets": [] });
+        let Some(Status::Available { page, .. }) = judge(&odd, "1.1.0") else { panic!("an update") };
+        assert!(page.starts_with("https://github.com/Dannyz15/Sky-Island/"));
     }
 }

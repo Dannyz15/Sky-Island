@@ -103,7 +103,7 @@ Changes apply right away and are saved as you make them. The Up and Down arrow k
 
 ## Your data and privacy
 
-Everything stays on your computer, in `%APPDATA%\Sky-Island`:
+Everything stays on your computer, in `%APPDATA%\Sky-Island`. Files are saved all at once, so a crash cannot leave one half-written, and a file that is found damaged is kept next to the others as `<name>.corrupt` instead of being overwritten.
 
 | File | What it holds |
 |---|---|

@@ -11,6 +11,8 @@ use winit::event_loop::EventLoopProxy;
 use crate::UserEvent;
 
 const API: &str = "https://lrclib.net/api";
+/// No song is longer than a day; a stamp beyond that is garbage.
+const MAX_STAMP_SECS: f64 = 24.0 * 3600.0;
 
 #[derive(Clone)]
 pub struct Line {
@@ -74,7 +76,7 @@ fn synced(v: &Value) -> Option<String> {
 }
 
 fn cache_path(key: &str) -> Option<PathBuf> {
-    let dir = PathBuf::from(std::env::var_os("APPDATA")?).join("Sky-Island").join("lyrics");
+    let dir = crate::store::path("lyrics")?;
     fs::create_dir_all(&dir).ok()?;
     // FNV-1a: stable across runs and Rust versions, unlike DefaultHasher.
     let hash = key
@@ -89,7 +91,7 @@ fn load_cached(key: &str) -> Option<String> {
 
 fn save_cached(key: &str, lrc: &str) {
     if let Some(p) = cache_path(key) {
-        let _ = fs::write(p, lrc);
+        crate::store::write(&p, lrc);
     }
 }
 
@@ -118,5 +120,34 @@ fn parse_stamp(s: &str) -> Option<Duration> {
     let (m, sec) = s.split_once(':')?;
     let m: u64 = m.parse().ok()?;
     let sec: f64 = sec.parse().ok()?;
-    Some(Duration::from_secs_f64(m as f64 * 60.0 + sec))
+    // Lyrics are written by anyone, and "-1", "inf" and "nan" all parse as numbers; Duration panics on them.
+    let total = m as f64 * 60.0 + sec;
+    if !(0.0..=MAX_STAMP_SECS).contains(&total) {
+        return None;
+    }
+    Duration::try_from_secs_f64(total).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_normal_stamp_is_read() {
+        assert_eq!(parse_stamp("01:02.50"), Some(Duration::from_millis(62_500)));
+        assert_eq!(parse_stamp("00:00.00"), Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn strange_stamps_are_skipped_instead_of_crashing() {
+        for bad in ["00:-1.00", "00:inf", "00:nan", "00:1e400", "99999999999999999:00", "00:-0.5", "abc", ""] {
+            assert_eq!(parse_stamp(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_line_with_a_bad_stamp_is_dropped_and_the_rest_is_kept() {
+        let lines = parse_lrc("[00:-1.00] broken\n[00:05.00] fine\n[00:nan] also broken\n[00:10.00] ok");
+        assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["fine", "ok"]);
+    }
 }

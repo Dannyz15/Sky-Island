@@ -1,10 +1,11 @@
 //! File shelf: a short list of file paths parked on the notch, saved between runs.
 //! Only paths are stored; the files themselves are never copied or moved.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
+
+use crate::store;
 
 const MAX_ITEMS: usize = 50;
 /// Tiles per row and visible rows in the shelf view.
@@ -20,8 +21,7 @@ pub struct Shelf {
 impl Shelf {
     pub fn new() -> Self {
         let items = Self::path()
-            .and_then(|p| fs::read_to_string(p).ok())
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|p| store::read_json(&p))
             .and_then(|v| {
                 v.as_array().map(|a| {
                     a.iter().filter_map(Value::as_str).map(PathBuf::from).filter(|p| p.exists()).collect()
@@ -37,9 +37,7 @@ impl Shelf {
     }
 
     fn path() -> Option<PathBuf> {
-        let dir = PathBuf::from(std::env::var_os("APPDATA")?).join("Sky-Island");
-        fs::create_dir_all(&dir).ok()?;
-        Some(dir.join("shelf.json"))
+        store::path("shelf.json")
     }
 
     fn save(&self) {
@@ -49,7 +47,7 @@ impl Shelf {
         }
         if let Some(p) = Self::path() {
             let paths: Vec<String> = self.items.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-            let _ = fs::write(p, json!(paths).to_string());
+            store::write(&p, &json!(paths).to_string());
         }
     }
 

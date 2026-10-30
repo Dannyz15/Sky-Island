@@ -1,11 +1,12 @@
 //! To-do list with optional reminders at a chosen day and time. Pure state, with the current time (unix seconds) passed in
 //! so it can be tested. Saved as JSON between runs.
 
-use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
+
+use crate::store;
 
 const MAX_TASKS: usize = 100;
 const MAX_LEN: usize = 80;
@@ -38,8 +39,7 @@ pub fn unix_now() -> u64 {
 impl Todo {
     pub fn new() -> Self {
         let tasks = Self::path()
-            .and_then(|p| fs::read_to_string(p).ok())
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|p| store::read_json(&p))
             .and_then(|v| {
                 v.as_array().map(|a| {
                     a.iter()
@@ -65,9 +65,7 @@ impl Todo {
     }
 
     fn path() -> Option<PathBuf> {
-        let dir = PathBuf::from(std::env::var_os("APPDATA")?).join("Sky-Island");
-        fs::create_dir_all(&dir).ok()?;
-        Some(dir.join("todo.json"))
+        store::path("todo.json")
     }
 
     fn save(&self) {
@@ -81,7 +79,7 @@ impl Todo {
                 .iter()
                 .map(|t| json!({ "text": t.text, "done": t.done, "due": t.due, "notified": t.notified, "date": t.date }))
                 .collect();
-            let _ = fs::write(p, json!(body).to_string());
+            store::write(&p, &json!(body).to_string());
         }
     }
 

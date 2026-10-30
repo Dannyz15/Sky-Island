@@ -422,6 +422,14 @@ struct ChangeLine {
 /// Where the version number sits at the bottom of the sidebar (the baseline).
 const VERSION_Y: f32 = HEIGHT as f32 - 24.0;
 
+/// How much to shrink the window to fit a screen of `width` x `height` physical pixels at scale `sf`: 1 when it
+/// fits with room for the title bar and the taskbar, otherwise less, but never below a little over half.
+fn fit_to_screen(width: f64, height: f64, sf: f64) -> f64 {
+    let room_h = height - 130.0 * sf;
+    let room_w = width * 0.96;
+    (room_h / (HEIGHT * sf)).min(room_w / (WIDTH * sf)).clamp(0.55, 1.0)
+}
+
 /// Ask for a sound file with the standard Windows Open dialog.
 fn pick_sound(owner: &Window) -> Option<std::path::PathBuf> {
     use windows::Win32::Foundation::HWND;
@@ -553,11 +561,18 @@ pub(crate) struct Panel {
     last_draw: Instant,
     /// When the window opened, for its entrance.
     opened: Instant,
+    /// How much the window is shrunk to fit a small screen (1 on a roomy one), as a share of its size.
+    fit: f64,
     /// Something is still moving, so more frames are needed.
     pub(crate) busy: bool,
 }
 
 impl Panel {
+    /// Physical pixels per logical pixel of the window: the screen's scale, and the shrinking to fit it.
+    fn scale(&self) -> f32 {
+        (self.window.scale_factor() * self.fit) as f32
+    }
+
     pub(crate) fn id(&self) -> winit::window::WindowId {
         self.window.id()
     }
@@ -757,6 +772,15 @@ impl App {
         }
         let Ok(window) = event_loop.create_window(attrs) else { return };
         let window = Rc::new(window);
+        // On a screen too small for the whole window (a laptop at 150 percent), the window and everything
+        // in it are shrunk to fit, with room left for the title bar and the taskbar.
+        let fit = window.current_monitor().or_else(|| window.primary_monitor()).map_or(1.0, |m| {
+            let sf = window.scale_factor();
+            fit_to_screen(m.size().width as f64, m.size().height as f64, sf)
+        });
+        if fit < 1.0 {
+            let _ = window.request_inner_size(LogicalSize::new(WIDTH * fit, HEIGHT * fit));
+        }
         // In the middle of the screen the notch is on.
         if let Some(monitor) = window.current_monitor().or_else(|| window.primary_monitor()) {
             let (pos, size) = (monitor.position(), monitor.size());
@@ -783,6 +807,7 @@ impl App {
             reset_armed: None,
             last_draw: Instant::now(),
             opened: Instant::now(),
+            fit,
             busy: false,
         });
     }
@@ -851,7 +876,7 @@ impl App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let Some(p) = &mut self.panel else { return };
-                let s = p.window.scale_factor() as f32;
+                let s = p.scale();
                 p.cursor = (position.x as f32 / s, position.y as f32 / s);
                 p.over_window = true;
                 let (cx, drag, page) = (p.cursor.0, p.drag, p.page);
@@ -1051,7 +1076,7 @@ impl App {
             return;
         };
         let Some(mut pm) = Pixmap::new(w.get(), h.get()) else { return };
-        let s = panel.window.scale_factor() as f32;
+        let s = panel.scale();
         let (fw, fh) = (w.get() as f32, h.get() as f32);
         let page = panel.page;
         let tint = page.tint();
@@ -1667,6 +1692,19 @@ mod tests {
         assert_eq!(segs.len(), 7);
         assert_eq!(slides.len(), 5);
         assert_eq!(picks, 1);
+    }
+
+    #[test]
+    fn the_window_shrinks_to_fit_a_small_screen_and_stays_whole_on_a_roomy_one() {
+        // 1920 x 1080 at 100, 125 and 150 percent, and 1366 x 768 at 100 percent.
+        assert_eq!(fit_to_screen(1920.0, 1080.0, 1.0), 1.0);
+        assert_eq!(fit_to_screen(1920.0, 1080.0, 1.25), 1.0);
+        for (w, h, sf) in [(1920.0, 1080.0, 1.5), (1366.0, 768.0, 1.0), (1280.0, 720.0, 1.0)] {
+            let fit = fit_to_screen(w, h, sf);
+            assert!((0.55..1.0).contains(&fit), "{w}x{h} at {sf}: {fit}");
+            // The window (plus about 130 logical pixels for the title bar and taskbar) fits the screen.
+            assert!(HEIGHT * fit * sf + 130.0 * sf <= h + 1.0 || fit == 0.55, "{w}x{h} at {sf}");
+        }
     }
 
     #[test]

@@ -1,10 +1,10 @@
 //! User settings, saved as JSON, plus the "start with Windows" registry entry.
 
-use std::fs;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use winreg::RegKey;
+use crate::store;
 use winreg::enums::HKEY_CURRENT_USER;
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -248,10 +248,7 @@ impl Default for Settings {
 impl Settings {
     pub fn load() -> Self {
         let mut out = Self::default();
-        let Some(v) = Self::path()
-            .and_then(|p| fs::read_to_string(p).ok())
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        else {
+        let Some(v) = Self::path().and_then(|p| store::read_json(&p)) else {
             return out;
         };
         let get = |k: &str, default: bool| v.get(k).and_then(Value::as_bool).unwrap_or(default);
@@ -303,9 +300,7 @@ impl Settings {
     }
 
     fn path() -> Option<PathBuf> {
-        let dir = PathBuf::from(std::env::var_os("APPDATA")?).join("Sky-Island");
-        fs::create_dir_all(&dir).ok()?;
-        Some(dir.join("settings.json"))
+        store::path("settings.json")
     }
 
     pub fn save(&self) {
@@ -346,7 +341,7 @@ impl Settings {
                 "alarm_for": self.alarm_for,
                 "alarm_sound": self.alarm_sound.as_ref().map(|p| p.to_string_lossy().into_owned()),
             });
-            let _ = fs::write(p, body.to_string());
+            store::write(&p, &body.to_string());
         }
     }
 }
