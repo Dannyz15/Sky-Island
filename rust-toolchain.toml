@@ -1,0 +1,5 @@
+[toolchain]
+# The current stable compiler (the code uses edition 2024, which needs a recent one), with clippy for the
+# lint check that is run before a release.
+channel = "stable"
+components = ["clippy"]

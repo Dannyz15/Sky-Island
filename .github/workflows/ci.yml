@@ -1,0 +1,28 @@
+name: CI
+
+# Runs the tests and the lint check on every push to main and on every pull request, and makes sure the
+# release build (with its icon and version resource) still works.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml makes rustup install the stable compiler with clippy on the first cargo call.
+      - uses: Swatinem/rust-cache@v2
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test
+      - name: Release build
+        run: cargo build --release

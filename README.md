@@ -135,4 +135,4 @@ If you turn on **Start with Windows**, the app adds one value named `Sky Island`
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE). The open-source crates it is built with, and their licences, are listed in [THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt); `scripts/third-party.ps1` rebuilds that file.

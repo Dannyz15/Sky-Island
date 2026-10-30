@@ -22,6 +22,10 @@ if (-not $iscc) {
 cargo build --release
 if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
 
+# The licences of the crates built into the exe travel with it.
+& (Join-Path $PSScriptRoot 'third-party.ps1')
+if ($LASTEXITCODE -ne 0 -or -not $?) { throw 'third-party licence list failed' }
+
 & $iscc "/DAppVersion=$version" 'installer\sky-island.iss'
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
 Write-Host "Created dist\Sky-Island-Setup-$version.exe"
