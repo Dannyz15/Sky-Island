@@ -41,7 +41,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.make_non_activating();
         self.build_tray();
         sys::install_lock_hook(self.proxy.clone());
-        presence::spawn(self.proxy.clone());
+        presence::spawn(self.proxy.clone(), self.native_handle().unwrap_or(0));
         clipboard::spawn_watcher(self.proxy.clone());
         self.step();
     }

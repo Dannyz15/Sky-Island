@@ -273,20 +273,27 @@ impl App {
         self.tray = tray.ok();
     }
 
+    /// The notch window's Win32 handle, as a number so it can go to another thread.
+    pub(crate) fn native_handle(&self) -> Option<isize> {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let handle = self.window.as_ref()?.window_handle().ok()?;
+        match handle.as_raw() {
+            RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+            _ => None,
+        }
+    }
+
     /// Make clicks on the notch not steal focus from the user's current app.
     pub(crate) fn make_non_activating(&self) {
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_NOACTIVATE};
-        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let Some(window) = &self.window else { return };
-        if let Ok(handle) = window.window_handle()
-            && let RawWindowHandle::Win32(h) = handle.as_raw() {
-                let hwnd = HWND(h.hwnd.get() as *mut _);
-                unsafe {
-                    let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-                    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as isize);
-                }
+        if let Some(h) = self.native_handle() {
+            let hwnd = HWND(h as *mut _);
+            unsafe {
+                let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as isize);
             }
+        }
     }
 
     /// Hide the window while a full-screen app is in front, if that setting is on.
