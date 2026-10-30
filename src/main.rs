@@ -256,6 +256,10 @@ struct App {
     view_v: f64,
     lyrics: LyricsState,
     lyrics_key: String,
+    /// The song length the lyrics were looked up with, and whether they were looked up again once a
+    /// different length arrived (the browser often reports the length a moment after the title).
+    lyrics_duration: Duration,
+    lyrics_refetched: bool,
     /// The line (fractional) in the middle of the lyrics view. A spring follows the line being sung, or
     /// wherever the wheel took it.
     lyric_pos: f64,
@@ -415,6 +419,8 @@ impl App {
             view_v: 0.0,
             lyrics: LyricsState::None,
             lyrics_key: String::new(),
+            lyrics_duration: Duration::ZERO,
+            lyrics_refetched: false,
             lyric_pos: -1.0,
             lyric_v: 0.0,
             lyric_manual: None,
@@ -4047,8 +4053,11 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Lyrics { key, lines } => {
                 // Ignore answers for a song that is no longer playing.
                 if key == self.lyrics_key {
+                    // A second look that finds nothing does not take away what the first one found.
+                    let keep = lines.is_none() && matches!(self.lyrics, LyricsState::Found(_));
                     self.lyrics = match lines {
                         Some(l) => LyricsState::Found(l),
+                        None if keep => std::mem::replace(&mut self.lyrics, LyricsState::None),
                         None => LyricsState::NotFound,
                     };
                     self.lyric_manual = None;
@@ -4071,6 +4080,15 @@ impl ApplicationHandler<UserEvent> for App {
                     self.lyric_pos = -1.0;
                     self.lyric_v = 0.0;
                     (self.track_t, self.track_v) = (0.0, 0.0);
+                    (self.lyrics_duration, self.lyrics_refetched) = (state.duration, false);
+                    lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.proxy.clone());
+                } else if !self.lyrics_refetched
+                    && !state.duration.is_zero()
+                    && state.duration.abs_diff(self.lyrics_duration) > Duration::from_secs(2)
+                {
+                    // The first look used no length or the old song's: look again, once, with the right one.
+                    // What is shown stays until the answer comes.
+                    (self.lyrics_duration, self.lyrics_refetched) = (state.duration, true);
                     lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.proxy.clone());
                 }
                 if let Some(art) = &state.art {
@@ -4565,7 +4583,36 @@ fn install_crash_log() {
     }));
 }
 
+/// The name of the lock that says "a copy is running": one per data folder, so two copies never write the
+/// same files, while a copy pointed at another folder (for testing) is its own.
+fn instance_name(data_dir: &str) -> String {
+    let hash = data_dir
+        .to_lowercase()
+        .bytes()
+        .fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+    format!("Local\\SkyIsland-{hash:016x}")
+}
+
+/// Takes the "a copy is running" lock; false when another copy of Sky Island already holds it.
+fn first_instance() -> bool {
+    use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::core::HSTRING;
+
+    let data_dir = std::env::var("APPDATA").unwrap_or_default();
+    unsafe {
+        // The handle is kept until the process ends, which is what holds the lock.
+        match CreateMutexW(None, false, &HSTRING::from(instance_name(&data_dir))) {
+            Ok(_) => GetLastError() != ERROR_ALREADY_EXISTS,
+            Err(_) => true, // cannot tell: better two copies than none
+        }
+    }
+}
+
 fn main() {
+    if !first_instance() {
+        return;
+    }
     install_crash_log();
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
@@ -4576,6 +4623,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_data_folder_has_its_own_instance_lock() {
+        let a = instance_name(r"C:\Users\A\AppData\Roaming");
+        assert_eq!(a, instance_name(r"c:\users\a\appdata\roaming"), "case does not matter on Windows");
+        assert_ne!(a, instance_name(r"C:\Users\B\AppData\Roaming"));
+        assert!(a.starts_with("Local\\SkyIsland-"));
+    }
 
     #[test]
     fn lyric_lines_shrink_and_fade_with_distance_from_the_middle() {

@@ -803,7 +803,7 @@ impl App {
             changelog_scroll: 0.0,
             changelog_max: 0.0,
             page: Page::General,
-            page_since: Instant::now() - PAGE_FADE,
+            page_since: Instant::now().checked_sub(PAGE_FADE).unwrap_or_else(Instant::now),
             reset_armed: None,
             last_draw: Instant::now(),
             opened: Instant::now(),

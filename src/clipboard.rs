@@ -12,7 +12,7 @@ use windows::Win32::System::DataExchange::{
 };
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
-use windows::core::w;
+use windows::core::{PCWSTR, w};
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
@@ -280,6 +280,12 @@ fn open_clipboard() -> bool {
     false
 }
 
+/// The `CanIncludeInClipboardHistory` format holds a DWORD that is 0 when the app that copied wants the
+/// content kept out of the clipboard history (password managers set it for what they copy).
+fn is_barred_from_history(flag: &[u8]) -> bool {
+    flag.len() >= 4 && flag[..4] == [0, 0, 0, 0]
+}
+
 /// What is on the clipboard, unless the app that copied it asked not to be monitored (password
 /// managers do this for the things they copy). Text wins over a picture when both are there, as
 /// with cells copied from a spreadsheet.
@@ -288,8 +294,15 @@ fn read_content() -> Option<Content> {
         return None;
     }
     let bytes = unsafe {
-        let excluded = RegisterClipboardFormatW(w!("ExcludeClipboardContentFromMonitorProcessing"));
-        if excluded != 0 && IsClipboardFormatAvailable(excluded).is_ok() {
+        let marked = |name: PCWSTR| {
+            let format = RegisterClipboardFormatW(name);
+            format != 0 && IsClipboardFormatAvailable(format).is_ok()
+        };
+        let can_include = RegisterClipboardFormatW(w!("CanIncludeInClipboardHistory"));
+        let kept_out_of_history = can_include != 0
+            && IsClipboardFormatAvailable(can_include).is_ok()
+            && read_format(can_include).is_some_and(|flag| is_barred_from_history(&flag));
+        if marked(w!("ExcludeClipboardContentFromMonitorProcessing")) || marked(w!("Clipboard Viewer Ignore")) || kept_out_of_history {
             (None, None, None)
         } else {
             let png_format = RegisterClipboardFormatW(w!("PNG"));
@@ -434,6 +447,14 @@ pub fn empty() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_zero_flag_keeps_a_copy_out_of_the_history() {
+        assert!(is_barred_from_history(&[0, 0, 0, 0]));
+        assert!(!is_barred_from_history(&[1, 0, 0, 0]), "1 means it may be included");
+        assert!(!is_barred_from_history(&[0, 0]), "too short to be a flag");
+        assert!(!is_barred_from_history(&[]));
+    }
 
     fn text(s: &str) -> Content {
         Content::Text(s.to_string())

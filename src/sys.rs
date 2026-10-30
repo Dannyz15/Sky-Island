@@ -4,7 +4,7 @@
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::Networking::Connectivity::{NetworkInformation, NetworkStatusChangedEventHandler};
 use windows::Win32::Devices::Display::{DISPLAY_BRIGHTNESS, IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS};
@@ -199,6 +199,15 @@ fn battery(proxy: Proxy) {
 
 // ---- Brightness (laptop panels) ----
 
+const BRIGHTNESS_IDLE: Duration = Duration::from_millis(300);
+const BRIGHTNESS_QUICK: Duration = Duration::from_millis(100);
+const BRIGHTNESS_QUICK_FOR: Duration = Duration::from_secs(3);
+
+/// How long to wait before reading the brightness again, given how much of the "quick" period is left.
+fn brightness_interval(quick_left: Duration) -> Duration {
+    if quick_left.is_zero() { BRIGHTNESS_IDLE } else { BRIGHTNESS_QUICK }
+}
+
 fn brightness(proxy: Proxy) {
     unsafe {
         let Ok(lcd) = CreateFileW(w!("\\\\.\\LCD"), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, Default::default(), None) else {
@@ -228,11 +237,14 @@ fn brightness(proxy: Proxy) {
             let _ = CloseHandle(lcd);
             return;
         };
+        // Slow while nothing happens, quick for a few seconds after a change so a dragged slider is followed.
+        let mut quick_until = Instant::now();
         loop {
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(brightness_interval(quick_until.saturating_duration_since(Instant::now())));
             match read(lcd) {
                 Some(now) if now != last => {
                     last = now;
+                    quick_until = Instant::now() + BRIGHTNESS_QUICK_FOR;
                     send(&proxy, Notice::Brightness { percent: now });
                 }
                 Some(_) => {}
@@ -321,4 +333,16 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         }
     }
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn brightness_is_read_slowly_until_it_changes() {
+        assert_eq!(brightness_interval(Duration::ZERO), BRIGHTNESS_IDLE);
+        assert_eq!(brightness_interval(Duration::from_secs(1)), BRIGHTNESS_QUICK);
+        assert!(BRIGHTNESS_IDLE >= Duration::from_millis(250), "far fewer wake-ups than the old 100 ms");
+    }
 }

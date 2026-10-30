@@ -20,12 +20,22 @@ pub struct Line {
     pub text: String,
 }
 
+/// The name a song's lyrics are cached under: the song and its length, because versions of one song
+/// (live, remastered) differ in length and in timing. `None` while the length is not known, as then
+/// the match is a guess that must not be kept.
+fn cache_key(key: &str, duration: Duration) -> Option<String> {
+    (!duration.is_zero()).then(|| format!("{key}|{}", duration.as_secs()))
+}
+
 /// Look up lyrics on a background thread; the result arrives as `UserEvent::Lyrics`.
 pub fn spawn_fetch(key: String, title: String, artist: String, duration: Duration, proxy: EventLoopProxy<UserEvent>) {
     thread::spawn(move || {
-        let lrc = load_cached(&key).or_else(|| {
+        let cached = cache_key(&key, duration);
+        let lrc = cached.as_deref().and_then(load_cached).or_else(|| {
             let lrc = fetch(&title, &artist, duration)?;
-            save_cached(&key, &lrc);
+            if let Some(name) = &cached {
+                save_cached(name, &lrc);
+            }
             Some(lrc)
         });
         let lines = lrc.map(|l| parse_lrc(&l)).filter(|l| !l.is_empty());
@@ -131,6 +141,13 @@ fn parse_stamp(s: &str) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lyrics_are_cached_per_length_and_never_without_one() {
+        let (a, b) = (cache_key("Song|Artist", Duration::from_secs(200)), cache_key("Song|Artist", Duration::from_secs(215)));
+        assert!(a.is_some() && b.is_some() && a != b, "another version has its own entry");
+        assert_eq!(cache_key("Song|Artist", Duration::ZERO), None, "a guess is not kept");
+    }
 
     #[test]
     fn a_normal_stamp_is_read() {

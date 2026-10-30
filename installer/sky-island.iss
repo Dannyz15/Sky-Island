@@ -2,7 +2,7 @@
 ; Inno Setup compiler after running `cargo build --release`.
 
 #ifndef AppVersion
-  #define AppVersion "1.4.1"
+  #define AppVersion "1.4.2"
 #endif
 #define AppName "Sky Island"
 #define AppExe "sky-island.exe"
@@ -56,12 +56,31 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-{ A running copy would keep the exe locked, so close it before installing or removing. }
-procedure StopRunningApp;
+{ True while a copy of the app is running (find answers 0 when tasklist lists it). }
+function AppIsRunning: Boolean;
 var
   ResultCode: Integer;
 begin
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM {#AppExe} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := Exec(ExpandConstant('{cmd}'), '/C tasklist /FI "IMAGENAME eq {#AppExe}" /NH | find /I "{#AppExe}"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+end;
+
+{ A running copy would keep the exe locked, so close it before installing or removing. It is asked to
+  close first, so it can finish a save, and is only forced if it is still there a few seconds later. }
+procedure StopRunningApp;
+var
+  ResultCode: Integer;
+  Waited: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Waited := 0;
+  while AppIsRunning and (Waited < 4000) do
+  begin
+    Sleep(250);
+    Waited := Waited + 250;
+  end;
+  if AppIsRunning then
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM {#AppExe} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

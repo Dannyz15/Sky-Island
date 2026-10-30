@@ -48,6 +48,15 @@ pub struct MediaState {
     pub next_enabled: bool,
 }
 
+impl MediaState {
+    /// Nothing the UI shows differs between the two.
+    fn same_as(&self, o: &MediaState) -> bool {
+        (&self.title, &self.artist, &self.album, self.playing, self.position, self.duration)
+            == (&o.title, &o.artist, &o.album, o.playing, o.position, o.duration)
+            && (self.has_session, self.next_enabled, &self.art) == (o.has_session, o.next_enabled, &o.art)
+    }
+}
+
 pub enum Command {
     TogglePlay,
     Next,
@@ -89,16 +98,20 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
         let mut subscribed: Option<Subscription> = None;
         // What was sent last, and the times at which to read again.
         let mut last: Option<(String, String, Duration)> = None;
+        // The last state sent to the UI, so a quiet resync can reuse its cover and need not repeat it.
+        let mut sent: Option<MediaState> = None;
         let mut settle: Vec<Instant> = Vec::new();
         let _ = tx.send(Msg::Refresh);
 
         loop {
             let now = Instant::now();
+            // Nothing is settling: a timeout is then only the regular resync, not a track change.
+            let resync_only = settle.is_empty();
             let wait = settle.iter().map(|t| t.saturating_duration_since(now)).min().unwrap_or(RESYNC).min(RESYNC);
             // A message from Windows or the UI, or a timer that says to read again.
-            let (msg, resubscribe) = match rx.recv_timeout(wait) {
-                Ok(msg) => (msg, true),
-                Err(RecvTimeoutError::Timeout) => (Msg::Refresh, false),
+            let (msg, resubscribe, quiet) = match rx.recv_timeout(wait) {
+                Ok(msg) => (msg, true, false),
+                Err(RecvTimeoutError::Timeout) => (Msg::Refresh, false, resync_only),
                 Err(RecvTimeoutError::Disconnected) => break,
             };
             let session = manager.GetCurrentSession().ok();
@@ -129,7 +142,7 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
                     }
                     let state = match &session {
                         None => MediaState::default(),
-                        Some(s) => match read_state(s) {
+                        Some(s) => match read_state(s, quiet.then_some(sent.as_ref()).flatten()) {
                             Ok(state) => state,
                             Err(_) => {
                                 // Not ready yet (a track is changing): keep what is shown and try again soon.
@@ -146,6 +159,11 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
                         settle = SETTLE.iter().map(|d| now + *d).collect();
                         last = Some(seen);
                     }
+                    // A paused player that has not changed tells the UI nothing new.
+                    if !state.playing && sent.as_ref().is_some_and(|old| old.same_as(&state)) {
+                        continue;
+                    }
+                    sent = Some(state.clone());
                     let _ = proxy.send_event(UserEvent::Media(state));
                 }
             }
@@ -201,7 +219,9 @@ impl Drop for Subscription {
     }
 }
 
-fn read_state(session: &Session) -> Result<MediaState> {
+/// `reuse`: the state sent last, on a plain resync. Its cover is kept for the same song instead of being
+/// read and decoded again.
+fn read_state(session: &Session, reuse: Option<&MediaState>) -> Result<MediaState> {
     let props = session.TryGetMediaPropertiesAsync()?.join()?;
     let info = session.GetPlaybackInfo()?;
     let playing = info.PlaybackStatus()? == Status::Playing;
@@ -210,9 +230,12 @@ fn read_state(session: &Session) -> Result<MediaState> {
     let title = props.Title()?.to_string();
     let artist = props.Artist()?.to_string();
 
-    // The picture is read every time: for a moment after a skip a browser offers its own logo, and the
-    // real cover only arrives later.
-    let art = props.Thumbnail().ok().and_then(|r| read_art(&r).ok().flatten());
+    // The picture is read on every look except a plain resync of the same song: for a moment after a skip
+    // a browser offers its own logo, and the real cover only arrives later (the settle reads catch it).
+    let art = match reuse {
+        Some(old) if old.title == title && old.artist == artist => old.art.clone(),
+        _ => props.Thumbnail().ok().and_then(|r| read_art(&r).ok().flatten()),
+    };
 
     // Windows gives the position as it was at `LastUpdatedTime`, not now. Add the time since then
     // while the track plays, or a restarted app starts from a stale minute.
