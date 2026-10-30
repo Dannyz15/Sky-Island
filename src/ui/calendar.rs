@@ -6,43 +6,43 @@ const KEY_CAL_SELECTED: u64 = 0x4000_0000_0000_0010;
 
 // Calendar tab layout, in logical pixels: month grid on the left, the chosen day's tasks on the right.
 // The month heading stays at the top; the weekday letters and the dates sit lower, with a gap between.
-pub(crate) const CAL_GRID: (f32, f32) = (24.0, 65.0);
+const CAL_GRID: (f32, f32) = (24.0, 65.0);
 
-pub(crate) const CAL_CELL: (f32, f32) = (24.0, 16.0);
+const CAL_CELL: (f32, f32) = (24.0, 16.0);
 
-pub(crate) const CAL_HEADS_Y: f32 = 62.0; // baseline of the weekday letters
-pub(crate) const CAL_PREV: (f32, f32, f32, f32) = (24.0, 30.0, 24.0, 16.0);
+const CAL_HEADS_Y: f32 = 62.0; // baseline of the weekday letters
+const CAL_PREV: (f32, f32, f32, f32) = (24.0, 30.0, 24.0, 16.0);
 
-pub(crate) const CAL_NEXT: (f32, f32, f32, f32) = (168.0, 30.0, 24.0, 16.0);
+const CAL_NEXT: (f32, f32, f32, f32) = (168.0, 30.0, 24.0, 16.0);
 
-pub(crate) const CAL_TITLE: (f32, f32, f32, f32) = (52.0, 30.0, 112.0, 16.0);
+const CAL_TITLE: (f32, f32, f32, f32) = (52.0, 30.0, 112.0, 16.0);
 
 /// The day panel on the right, from this x to `CAL_PANEL_X + CAL_PANEL_W`.
-pub(crate) const CAL_PANEL_X: f32 = 216.0;
+const CAL_PANEL_X: f32 = 216.0;
 
-pub(crate) const CAL_PANEL_W: f32 = 180.0;
+const CAL_PANEL_W: f32 = 180.0;
 
-pub(crate) const CAL_ROWS_Y: f32 = 60.0;
+const CAL_ROWS_Y: f32 = 60.0;
 
-pub(crate) const CAL_ROW_H: f32 = 20.0;
+const CAL_ROW_H: f32 = 20.0;
 
-pub(crate) const CAL_VISIBLE: usize = 4;
+const CAL_VISIBLE: usize = 4;
 
-pub(crate) const CAL_ADD: (f32, f32, f32, f32) = (CAL_PANEL_X, 142.0, CAL_PANEL_W, 18.0);
+const CAL_ADD: (f32, f32, f32, f32) = (CAL_PANEL_X, 142.0, CAL_PANEL_W, 18.0);
 
 /// A day's row in the week view, which fills the place of the month grid.
-pub(crate) fn cal_week_rect(i: usize) -> (f32, f32, f32, f32) {
+fn cal_week_rect(i: usize) -> (f32, f32, f32, f32) {
     (CAL_GRID.0, CAL_GRID.1 - 14.0 + i as f32 * 15.0, 7.0 * CAL_CELL.0, 14.0)
 }
 
-pub(crate) fn cal_cell_rect(i: usize) -> (f32, f32, f32, f32) {
+fn cal_cell_rect(i: usize) -> (f32, f32, f32, f32) {
     let (col, row) = ((i % 7) as f32, (i / 7) as f32);
     (CAL_GRID.0 + col * CAL_CELL.0, CAL_GRID.1 + row * CAL_CELL.1, CAL_CELL.0, CAL_CELL.1)
 }
 
 impl App {
     /// One week as seven rows, one per day: its name, its date, and a dot for each task.
-    pub(crate) fn draw_calendar_week(&self, pm: &mut Pixmap, s: f32, alpha: f32, monday: bool, today: i64) {
+    fn draw_calendar_week(&self, pm: &mut Pixmap, s: f32, alpha: f32, monday: bool, today: i64) {
         let Some(font) = &self.font else { return };
         let heading = self.heading_font().unwrap_or(font);
         let a = (alpha * 255.0) as u8;

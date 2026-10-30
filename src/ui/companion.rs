@@ -12,7 +12,7 @@ impl App {
     /// Whether the awake eyes are drawn on the closed notch right now: while you are working they take
     /// the place of the clock (so only when the clock is off), and after a while without use they come
     /// from "Idle eyes".
-    pub(crate) fn eyes_open(&self) -> bool {
+    fn eyes_open(&self) -> bool {
         match self.presence {
             Presence::Active => self.settings.eyes && !self.settings.show_clock,
             Presence::Idle => self.settings.idle_eyes,
@@ -89,7 +89,7 @@ impl App {
     /// What the closed notch shows when nothing else needs it: eyes when idle, otherwise the clock.
     /// One open (or blinking) eye on the closed notch, in the chosen style, centred at `x`, `cy`.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn draw_eye(&self, pm: &mut Pixmap, x: f32, cy: f32, s: f32, a: u8, blink: bool, glance: f32) {
+    fn draw_eye(&self, pm: &mut Pixmap, x: f32, cy: f32, s: f32, a: u8, blink: bool, glance: f32) {
         let c = eye_colour(self.settings.eye_style);
         let ink = theme::map([c[0], c[1], c[2], a]);
         let mut paint = Paint::default();

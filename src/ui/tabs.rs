@@ -30,7 +30,7 @@ const TAB_BUTTON: f32 = 24.0;
 pub(crate) const TAB_SHIFT: f32 = 22.0;
 
 /// Tab `i` of `count`, centred in the notch, at the bottom of a window `height` logical pixels high.
-pub(crate) fn tab_rect(i: usize, count: usize, height: f32) -> (f32, f32, f32, f32) {
+fn tab_rect(i: usize, count: usize, height: f32) -> (f32, f32, f32, f32) {
     let total = count as f32 * TAB_W + (count as f32 - 1.0) * TAB_GAP;
     let x0 = (EXPANDED.0 as f32 - total) / 2.0;
     (x0 + i as f32 * (TAB_W + TAB_GAP), height - TAB_BOTTOM + (TAB_PILL_H - TAB_BUTTON) / 2.0, TAB_W, TAB_BUTTON)

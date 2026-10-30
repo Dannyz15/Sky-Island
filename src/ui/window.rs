@@ -15,7 +15,7 @@ pub(crate) const EXPANDED: (f64, f64) = (420.0, 176.0);
 const TUCK_STRIP: f64 = 3.0;
 
 impl App {
-    pub(crate) fn target(&self) -> f64 {
+    fn target(&self) -> f64 {
         if self.hovered || self.drag_hover || self.editing || self.timer_field.is_some() || self.alert_until.is_some() { 1.0 } else { 0.0 }
     }
 
@@ -56,11 +56,11 @@ impl App {
                 && (self.lyric_pos - self.lyric_target()).abs() > f64::EPSILON)
     }
 
-    pub(crate) fn ov_target(&self) -> f64 {
+    fn ov_target(&self) -> f64 {
         if self.notice_until.is_some() { 1.0 } else { 0.0 }
     }
 
-    pub(crate) fn view_target(&self) -> f64 {
+    fn view_target(&self) -> f64 {
         if self.view == View::Lyrics { 1.0 } else { 0.0 }
     }
 
@@ -212,7 +212,7 @@ impl App {
 
     /// The scale the Size setting asks for. Auto keeps the island the same share of the screen's width
     /// (normal at 1536 logical pixels, which is a 1920 pixel screen at 125 percent).
-    pub(crate) fn target_k(&self) -> f64 {
+    fn target_k(&self) -> f64 {
         match self.settings.size.factor() {
             Some(k) => k,
             None => ((self.screen_w / 1536.0).clamp(0.9, 1.3) * 20.0).round() / 20.0,
@@ -221,7 +221,7 @@ impl App {
 
     /// How much of its normal size the closed notch should have: smaller when the minimal notch is on
     /// and nothing is playing.
-    pub(crate) fn closed_target(&self) -> f64 {
+    fn closed_target(&self) -> f64 {
         if self.settings.minimal && !self.media.playing { 0.8 } else { 1.0 }
     }
 

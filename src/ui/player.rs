@@ -116,12 +116,12 @@ pub(crate) fn art_tint(rgba: &[u8]) -> [u8; 3] {
 /// Where the parts of the player sit. `t` is how far the lyrics have opened (0 closed, 1 open): the
 /// player slides into a narrower column on the left to make room for them.
 pub(crate) struct PlayerGeo {
-    pub(crate) art: (f32, f32, f32), // x, y, size
-    pub(crate) text_x: f32,
-    pub(crate) left: f32,
-    pub(crate) right: f32,
-    pub(crate) bar: (f32, f32, f32), // x, y, width
-    pub(crate) ctrl_x: [f32; 4],     // lyrics, previous, play/pause, next
+    art: (f32, f32, f32), // x, y, size
+    text_x: f32,
+    left: f32,
+    right: f32,
+    bar: (f32, f32, f32), // x, y, width
+    ctrl_x: [f32; 4],     // lyrics, previous, play/pause, next
 }
 
 pub(crate) fn player_geo(t: f32) -> PlayerGeo {
@@ -151,7 +151,7 @@ impl App {
     }
 
     /// Whether the lyrics were scrolled to somewhere other than the line being sung, so Sync is offered.
-    pub(crate) fn lyric_off_sync(&self) -> bool {
+    fn lyric_off_sync(&self) -> bool {
         let sung = self.current_line().map_or(-1.0, |c| c as f64);
         self.lyric_manual.is_some_and(|m| (m - sung).abs() >= 1.0)
     }
@@ -231,7 +231,7 @@ impl App {
         items
     }
 
-    pub(crate) fn draw_art(&self, pm: &mut Pixmap, rect: (f32, f32, f32), s: f32, alpha: f32) {
+    fn draw_art(&self, pm: &mut Pixmap, rect: (f32, f32, f32), s: f32, alpha: f32) {
         let (ax, ay, asz) = rect;
         let radius = (asz * 0.16).min(10.0);
         let [ar, ag, ab] = self.art_tint;
@@ -267,7 +267,7 @@ impl App {
 
     /// The lyrics to the right of the player: the line being sung is large and bright, the rest fade away.
     /// `dx` pushes the panel to the right, which is how it slides in while the notch widens.
-    pub(crate) fn draw_lyric_panel(&self, pm: &mut Pixmap, s: f32, alpha: f32, dx: f32) {
+    fn draw_lyric_panel(&self, pm: &mut Pixmap, s: f32, alpha: f32, dx: f32) {
         let Some(font) = &self.font else { return };
         let a = (alpha * 255.0) as u8;
         let grey = [160, 160, 165, a];
@@ -312,7 +312,7 @@ impl App {
 
     /// The Sync button: it fades in once the lyrics were scrolled away from the music, with an arrow
     /// that points to where the line being sung is.
-    pub(crate) fn draw_lyric_sync(&self, pm: &mut Pixmap, font: &Font, s: f32, alpha: f32, dx: f32) {
+    fn draw_lyric_sync(&self, pm: &mut Pixmap, font: &Font, s: f32, alpha: f32, dx: f32) {
         let show = self.glows.fade(KEY_LYRIC_SYNC, self.lyric_off_sync());
         if show < 0.01 {
             return;

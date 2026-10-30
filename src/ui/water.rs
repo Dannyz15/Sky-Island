@@ -15,7 +15,7 @@ const ADJUST_R: f32 = 11.0;
 const WATER_CHIP_W: f32 = 46.0;
 
 /// Reminder interval chip, centered over the right-hand column of the water view.
-pub(crate) fn water_chip_rect(i: usize) -> (f32, f32, f32, f32) {
+fn water_chip_rect(i: usize) -> (f32, f32, f32, f32) {
     let n = water::INTERVALS.len() as f32;
     let total = n * WATER_CHIP_W + (n - 1.0) * CHIP_GAP;
     (WATER_X[1] - total / 2.0 + i as f32 * (WATER_CHIP_W + CHIP_GAP), 34.0, WATER_CHIP_W, 18.0)

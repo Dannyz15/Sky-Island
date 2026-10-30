@@ -53,7 +53,7 @@ impl App {
     }
 
     /// How far row `row` of `rows` has come in, 0 to 1: each row a little after the one above it.
-    pub(crate) fn row_in(&self, row: usize, rows: usize) -> f32 {
+    fn row_in(&self, row: usize, rows: usize) -> f32 {
         const STAGGER: f32 = 0.07;
         let span = 1.0 - STAGGER * (rows.max(1) - 1) as f32;
         let t = ((self.list_t as f32 - row as f32 * STAGGER) / span).clamp(0.0, 1.0);
@@ -256,7 +256,7 @@ impl App {
 
     /// The tab bar and the open view. While the view is changing, the old one slides out and the new one
     /// slides in, towards the side of the tab it is on.
-    pub(crate) fn draw_content(&self, pm: &mut Pixmap, s: f32, alpha: f32, size: (u32, u32)) {
+    fn draw_content(&self, pm: &mut Pixmap, s: f32, alpha: f32, size: (u32, u32)) {
         self.draw_tabs(pm, s, alpha);
         self.draw_shelf_clear(pm, s, alpha);
         // The other views are drawn for the normal width, so keep them centred while it is still wide.
@@ -294,13 +294,13 @@ impl App {
     }
 
     /// A view, drawn a little higher than it is laid out so the tab bar fits under it.
-    pub(crate) fn draw_view(&self, pm: &mut Pixmap, s: f32, alpha: f32, view: View) {
+    fn draw_view(&self, pm: &mut Pixmap, s: f32, alpha: f32, view: View) {
         let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return };
         self.draw_view_in_place(&mut layer, s, alpha, view);
         pm.draw_pixmap(0, -(TAB_SHIFT * s).round() as i32, layer.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
     }
 
-    pub(crate) fn draw_view_in_place(&self, pm: &mut Pixmap, s: f32, alpha: f32, view: View) {
+    fn draw_view_in_place(&self, pm: &mut Pixmap, s: f32, alpha: f32, view: View) {
         match view {
             View::Player | View::Lyrics => self.draw_player(pm, s, alpha),
             View::Timer => self.draw_timer(pm, s, alpha),

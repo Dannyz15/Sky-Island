@@ -40,19 +40,19 @@ pub(crate) const ALERT: Duration = Duration::from_secs(6);
 pub(crate) const TIMES_UP: &str = "Time's up!";
 
 /// The area of one timer number that can be clicked to type a value.
-pub(crate) fn timer_value_rect(i: usize) -> (f32, f32, f32, f32) {
+fn timer_value_rect(i: usize) -> (f32, f32, f32, f32) {
     (TIMER_COLS[i] - 21.0, TIMER_VALUE_Y - 17.0, 40.0, 24.0)
 }
 
 /// Preset chip, centered over the right-hand column of the timer view.
-pub(crate) fn timer_chip_rect(i: usize) -> (f32, f32, f32, f32) {
+fn timer_chip_rect(i: usize) -> (f32, f32, f32, f32) {
     let n = timer::PRESETS.len() as f32;
     let total = n * TIMER_CHIP_W + (n - 1.0) * CHIP_GAP;
     (TIMER_COLS[1] - total / 2.0 + i as f32 * (TIMER_CHIP_W + CHIP_GAP), 34.0, TIMER_CHIP_W, 18.0)
 }
 
 /// "5m", "30m" or "1h" for a preset length.
-pub(crate) fn preset_label(secs: u64) -> String {
+fn preset_label(secs: u64) -> String {
     if secs.is_multiple_of(3600) { format!("{}h", secs / 3600) } else { format!("{}m", secs / 60) }
 }
 
@@ -175,7 +175,7 @@ impl App {
     }
 
     /// Start typing one of the timer's numbers: take the keyboard, remembering where it came from.
-    pub(crate) fn begin_timer_edit(&mut self, field: usize) {
+    fn begin_timer_edit(&mut self, field: usize) {
         use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
         if self.timer_field.is_none() && self.prev_foreground.is_none() {
             let fg = unsafe { GetForegroundWindow() };
@@ -208,7 +208,7 @@ impl App {
     }
 
     /// Put the digits typed so far into the timer's length.
-    pub(crate) fn apply_timer_input(&mut self) {
+    fn apply_timer_input(&mut self) {
         if let (Some(field), Ok(value)) = (self.timer_field, self.timer_input.parse::<u64>()) {
             self.timer.set_part(Unit::ALL[field], value);
         }
@@ -216,7 +216,7 @@ impl App {
     }
 
     /// Carry on typing in the next (`dir` = 1) or previous (-1) number.
-    pub(crate) fn move_timer_field(&mut self, dir: isize) {
+    fn move_timer_field(&mut self, dir: isize) {
         let Some(field) = self.timer_field else { return };
         self.apply_timer_input();
         self.timer_field = Some((field as isize + dir).rem_euclid(Unit::ALL.len() as isize) as usize);

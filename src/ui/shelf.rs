@@ -18,7 +18,7 @@ pub(crate) fn shelf_clear_rect(height: f32) -> (f32, f32, f32, f32) {
     (360.0, height - TAB_BOTTOM + (TAB_PILL_H - 16.0) / 2.0, 36.0, 16.0)
 }
 
-pub(crate) fn tile_rect(slot: usize) -> (f32, f32, f32, f32) {
+fn tile_rect(slot: usize) -> (f32, f32, f32, f32) {
     let (col, row) = ((slot % COLS) as f32, (slot / COLS) as f32);
     (
         TILES_ORIGIN.0 + col * (TILE.0 + TILE_GAP.0),
