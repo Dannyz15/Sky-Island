@@ -8,7 +8,7 @@ licence named next to it (where a crate offers a choice, any of the named licenc
 used), and the licence texts follow the list. Sky Island does not bundle a font: it draws
 with a font that is already installed on the computer.
 
-Crates (101)
+Crates (102)
 ------
 adler2 2.0.1  [0BSD OR MIT OR Apache-2.0]  https://github.com/oyvindln/adler2
 allocator-api2 0.2.21  [MIT OR Apache-2.0]  https://github.com/zakarumych/allocator-api2
@@ -16,30 +16,31 @@ arrayref 0.3.9  [BSD-2-Clause]  https://github.com/droundy/arrayref
 arrayvec 0.7.8  [MIT OR Apache-2.0]  https://github.com/bluss/arrayvec
 base64 0.23.1  [MIT OR Apache-2.0]  https://github.com/marshallpierce/rust-base64
 bitflags 2.13.2  [MIT OR Apache-2.0]  https://github.com/bitflags/bitflags
-block-buffer 0.10.4  [MIT OR Apache-2.0]  https://github.com/RustCrypto/utils
+block-buffer 0.12.1  [MIT OR Apache-2.0]  https://github.com/RustCrypto/utils
 bytemuck 1.25.2  [Zlib OR Apache-2.0 OR MIT]  https://github.com/Lokathor/bytemuck
 byteorder-lite 0.1.0  [Unlicense OR MIT]  https://github.com/image-rs/byteorder-lite
 bytes 1.12.1  [MIT]  https://github.com/tokio-rs/bytes
 cfg-if 1.0.5  [MIT OR Apache-2.0]  https://github.com/rust-lang/cfg-if
+const-oid 0.10.2  [Apache-2.0 OR MIT]  https://github.com/RustCrypto/formats
 core_maths 0.1.1  [MIT]  https://github.com/robertbastian/core_maths
-cpufeatures 0.2.17  [MIT OR Apache-2.0]  https://github.com/RustCrypto/utils
+cpufeatures 0.3.1  [MIT OR Apache-2.0]  https://github.com/RustCrypto/utils
 crc32fast 1.5.3  [MIT OR Apache-2.0]  https://github.com/srijs/rust-crc32fast
 crossbeam-channel 0.5.17  [MIT OR Apache-2.0]  https://github.com/crossbeam-rs/crossbeam
 crossbeam-utils 0.8.23  [MIT OR Apache-2.0]  https://github.com/crossbeam-rs/crossbeam
-crypto-common 0.1.7  [MIT OR Apache-2.0]  https://github.com/RustCrypto/traits
+crypto-common 0.2.2  [MIT OR Apache-2.0]  https://github.com/RustCrypto/traits
 cursor-icon 1.2.0  [MIT OR Apache-2.0 OR Zlib]  https://github.com/rust-windowing/cursor-icon
-digest 0.10.7  [MIT OR Apache-2.0]  https://github.com/RustCrypto/traits
+digest 0.11.3  [MIT OR Apache-2.0]  https://github.com/RustCrypto/traits
 dpi 0.1.2  [Apache-2.0 AND MIT]  https://github.com/rust-windowing/winit
 equivalent 1.0.3  [Apache-2.0 OR MIT]  https://github.com/indexmap-rs/equivalent
 fdeflate 0.3.7  [MIT OR Apache-2.0]  https://github.com/image-rs/fdeflate
 flate2 1.1.10  [MIT OR Apache-2.0]  https://github.com/rust-lang/flate2-rs
 foldhash 0.1.5  [Zlib]  https://github.com/orlp/foldhash
 fontdue 0.9.5  [MIT OR Apache-2.0 OR Zlib]  https://github.com/mooman219/fontdue
-generic-array 0.14.7  [MIT]  https://github.com/fizyk20/generic-array.git
 getrandom 0.2.17  [MIT OR Apache-2.0]  https://github.com/rust-random/getrandom
 hashbrown 0.15.5  [MIT OR Apache-2.0]  https://github.com/rust-lang/hashbrown
 http 1.5.0  [MIT OR Apache-2.0]  https://github.com/hyperium/http
 httparse 1.10.1  [MIT OR Apache-2.0]  https://github.com/seanmonstar/httparse
+hybrid-array 0.4.15  [MIT OR Apache-2.0]  https://github.com/RustCrypto/hybrid-array
 image 0.25.10  [MIT OR Apache-2.0]  https://github.com/image-rs/image
 itoa 1.0.18  [MIT OR Apache-2.0]  https://github.com/dtolnay/itoa
 keyboard-types 0.8.3  [MIT OR Apache-2.0]  https://github.com/rust-windowing/keyboard-types
@@ -66,7 +67,7 @@ rustls-webpki 0.103.16  [ISC]  https://github.com/rustls/webpki
 serde 1.0.229  [MIT OR Apache-2.0]  https://github.com/serde-rs/serde
 serde_core 1.0.229  [MIT OR Apache-2.0]  https://github.com/serde-rs/serde
 serde_json 1.0.154  [MIT OR Apache-2.0]  https://github.com/serde-rs/json
-sha2 0.10.9  [MIT OR Apache-2.0]  https://github.com/RustCrypto/hashes
+sha2 0.11.1  [MIT OR Apache-2.0]  https://github.com/RustCrypto/hashes
 simd-adler32 0.3.10  [MIT]  https://github.com/mcountryman/simd-adler32
 smol_str 0.2.2  [MIT OR Apache-2.0]  https://github.com/rust-analyzer/smol_str
 softbuffer 0.4.8  [MIT OR Apache-2.0]  https://github.com/rust-windowing/softbuffer
@@ -871,7 +872,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ================================================================================
-Used by: block-buffer 0.10.4, cpufeatures 0.2.17, crypto-common 0.1.7, digest 0.10.7, sha2 0.10.9
+Used by: block-buffer 0.12.1, const-oid 0.10.2, cpufeatures 0.3.1, crypto-common 0.2.2, digest 0.11.3, hybrid-array 0.4.15, sha2 0.11.1
 ================================================================================
 
 Apache License
@@ -1077,10 +1078,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ================================================================================
-Used by: block-buffer 0.10.4
+Used by: block-buffer 0.12.1
 ================================================================================
 
-Copyright (c) 2018-2019 The RustCrypto Project Developers
+Copyright (c) 2018-2025 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -1318,36 +1319,10 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ================================================================================
-Used by: core_maths 0.1.1
+Used by: const-oid 0.10.2, cpufeatures 0.3.1
 ================================================================================
 
-MIT License
-
-Copyright (c) 2024 Robert Bastian
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-================================================================================
-Used by: cpufeatures 0.2.17
-================================================================================
-
-Copyright (c) 2020-2025 The RustCrypto Project Developers
+Copyright (c) 2020-2026 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -1372,6 +1347,32 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+
+================================================================================
+Used by: core_maths 0.1.1
+================================================================================
+
+MIT License
+
+Copyright (c) 2024 Robert Bastian
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ================================================================================
 Used by: crc32fast 1.5.3, dpi 0.1.2, winit 0.30.13
@@ -2236,10 +2237,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ================================================================================
-Used by: crypto-common 0.1.7
+Used by: crypto-common 0.2.2
 ================================================================================
 
-Copyright (c) 2021 RustCrypto Developers
+Copyright (c) 2021-2026 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -2512,9 +2513,10 @@ Permission is granted to anyone to use this software for any purpose, including 
 3. This notice may not be removed or altered from any source distribution.
 
 ================================================================================
-Used by: digest 0.10.7
+Used by: digest 0.11.3
 ================================================================================
 
+Copyright (c) 2017-2025 RustCrypto Developers
 Copyright (c) 2017 Artyom Pavlov
 
 Permission is hereby granted, free of charge, to any
@@ -2943,32 +2945,6 @@ the following restrictions:
    misrepresented as being the original software.
 
 3. This notice may not be removed or altered from any source distribution.
-
-================================================================================
-Used by: generic-array 0.14.7
-================================================================================
-
-The MIT License (MIT)
-
-Copyright (c) 2015 Bartłomiej Kamiński
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 
 ================================================================================
 Used by: getrandom 0.2.17
@@ -3496,6 +3472,36 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+================================================================================
+Used by: hybrid-array 0.4.15
+================================================================================
+
+Copyright (c) 2022-2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 
 ================================================================================
 Used by: keyboard-types 0.8.3
@@ -4878,12 +4884,13 @@ The files under third-party/chromium are licensed as described in
 third-party/chromium/LICENSE.
 
 ================================================================================
-Used by: sha2 0.10.9
+Used by: sha2 0.11.1
 ================================================================================
 
-Copyright (c) 2006-2009 Graydon Hoare
-Copyright (c) 2009-2013 Mozilla Foundation
+Copyright (c) 2016-2026 The RustCrypto Project Developers
 Copyright (c) 2016 Artyom Pavlov
+Copyright (c) 2009-2013 Mozilla Foundation
+Copyright (c) 2006-2009 Graydon Hoare
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated

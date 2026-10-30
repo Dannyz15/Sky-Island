@@ -2,7 +2,7 @@
 ; Inno Setup compiler after running `cargo build --release`.
 
 #ifndef AppVersion
-  #define AppVersion "1.4.3"
+  #define AppVersion "1.4.4"
 #endif
 #define AppName "Sky Island"
 #define AppExe "sky-island.exe"
@@ -14,6 +14,13 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Dannyz15
 AppPublisherURL=https://github.com/Dannyz15/Sky-Island
+; What Properties, Details shows for the setup file itself.
+VersionInfoVersion={#AppVersion}.0
+VersionInfoProductVersion={#AppVersion}
+VersionInfoCompany=Dannyz15
+VersionInfoDescription={#AppName} Setup
+VersionInfoProductName={#AppName}
+VersionInfoCopyright=Copyright (c) 2026 Dannyz15. MIT License.
 AppSupportURL=https://github.com/Dannyz15/Sky-Island
 DefaultDirName={autopf}\{#AppName}
 DisableProgramGroupPage=yes

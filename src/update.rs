@@ -270,7 +270,7 @@ fn download(version: &str, asset: &Asset, mut progress: impl FnMut(u32)) -> Opti
         }
     };
     drop(file);
-    let hex: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let hex = hex_of(&hash.finalize());
     if !finished || !acceptable(got, &hex, asset) {
         let _ = fs::remove_file(&part);
         return None;
@@ -312,6 +312,11 @@ fn stale(name: &str, current: &str) -> bool {
     rest.strip_suffix(".exe").is_some_and(|version| parse(version).is_some() && !newer(version, current))
 }
 
+/// A checksum as the lower-case hex text GitHub gives it in.
+fn hex_of(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Whether a downloaded file is the one the release describes: the same size and the same hash.
 fn acceptable(got: u64, sha256: &str, asset: &Asset) -> bool {
     asset.size > 0 && got == asset.size && asset.sha256 == sha256
@@ -320,6 +325,14 @@ fn acceptable(got: u64, sha256: &str, asset: &Asset) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_checksum_of_a_known_text_comes_out_as_expected() {
+        let mut hash = Sha256::new();
+        hash.update(b"ab");
+        hash.update(b"c");
+        assert_eq!(hex_of(&hash.finalize()), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
     use serde_json::json;
 
     #[test]

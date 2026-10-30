@@ -41,13 +41,21 @@ struct Entry {
     x: f64,
     v: f64,
     target: f64,
+    /// The frame this was last asked for, so values nobody asks for any more can be let go.
+    seen: u64,
 }
+
+/// A value nobody has asked for during this many frames is forgotten, and how often that is checked.
+/// Moving rectangles get a new key every frame they move, so without this the map would only grow.
+const KEEP_FRAMES: u64 = 3600;
+const PRUNE_EVERY: u64 = 600;
 
 /// Smoothed values for things that animate on their own, such as a hover highlight fading in and out
 /// or a switch knob sliding across, each found by a key.
 #[derive(Default)]
 pub struct Glows {
     map: RefCell<HashMap<u64, Entry>>,
+    frame: RefCell<u64>,
     dt: RefCell<f64>,
     busy: RefCell<bool>,
     /// The Animation setting: how much faster than normal (0 means normal), and whether the bounce is off.
@@ -60,6 +68,14 @@ impl Glows {
     pub fn begin(&self, dt: f64) {
         *self.dt.borrow_mut() = dt;
         *self.busy.borrow_mut() = false;
+        let frame = {
+            let mut f = self.frame.borrow_mut();
+            *f += 1;
+            *f
+        };
+        if frame % PRUNE_EVERY == 0 {
+            self.map.borrow_mut().retain(|_, e| frame - e.seen <= KEEP_FRAMES);
+        }
     }
 
     /// Apply the Animation setting to everything this keeps: `speed` times as fast as normal, and without
@@ -84,9 +100,11 @@ impl Glows {
     pub fn follow(&self, key: u64, target: f64, omega: f64, zeta: f64) -> f64 {
         let dt = *self.dt.borrow();
         let (omega, zeta) = (omega * self.speed(), if *self.flat.borrow() { 1.0 } else { zeta });
+        let frame = *self.frame.borrow();
         let mut map = self.map.borrow_mut();
-        let e = map.entry(key).or_insert(Entry { x: target, v: 0.0, target });
+        let e = map.entry(key).or_insert(Entry { x: target, v: 0.0, target, seen: frame });
         e.target = target;
+        e.seen = frame;
         spring(&mut e.x, &mut e.v, target, dt, omega, zeta);
         if e.x != target {
             *self.busy.borrow_mut() = true;
@@ -104,9 +122,11 @@ impl Glows {
     pub fn fade(&self, key: u64, on: bool) -> f32 {
         let dt = *self.dt.borrow() * self.speed();
         let target = if on { 1.0 } else { 0.0 };
+        let frame = *self.frame.borrow();
         let mut map = self.map.borrow_mut();
-        let e = map.entry(key).or_insert(Entry { x: 0.0, v: 0.0, target });
+        let e = map.entry(key).or_insert(Entry { x: 0.0, v: 0.0, target, seen: frame });
         e.target = target;
+        e.seen = frame;
         let k = 1.0 - (-dt * 20.0).exp();
         e.x += (target - e.x) * k;
         if (target - e.x).abs() < 0.004 {
@@ -121,6 +141,23 @@ impl Glows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keys that are asked for once and never again (a moving rectangle gets a new one every frame) must
+    /// not pile up, while a key that is still in use keeps its state.
+    #[test]
+    fn values_nobody_asks_for_any_more_are_forgotten() {
+        let glows = Glows::default();
+        let mut kept = 0.0;
+        for i in 0..20_000u64 {
+            glows.begin(1.0 / 120.0);
+            glows.fade(1_000_000 + i, true); // a new key every frame
+            kept = glows.follow(7, 1.0, 20.0, 1.0); // one key used all the time
+        }
+        let live = glows.map.borrow().len();
+        assert!(live < (KEEP_FRAMES + 2 * PRUNE_EVERY) as usize, "{live} entries kept after 20000 frames");
+        assert!(glows.map.borrow().contains_key(&7), "a key in use is kept");
+        assert_eq!(kept, 1.0);
+    }
 
     fn run(target: f64, omega: f64, zeta: f64, secs: f64) -> (f64, f64) {
         let (mut x, mut v) = (0.0, 0.0);

@@ -1,8 +1,8 @@
 [package]
 name = "sky-island"
-version = "1.4.3"
+version = "1.4.4"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.99"
 description = "A notch for the top of your Windows screen: music, lyrics, timer, water reminders, file shelf and system notices."
 license = "MIT"
 publish = false
@@ -12,7 +12,7 @@ repository = "https://github.com/Dannyz15/Sky-Island"
 fontdue = "0.9.5"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 serde_json = "1.0.154"
-sha2 = "0.10"
+sha2 = "0.11"
 softbuffer = "0.4.8"
 tiny-skia = "0.12.0"
 tray-icon = "0.26.1"

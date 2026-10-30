@@ -48,7 +48,7 @@ It is written in Rust, runs natively on Windows 10 and 11, and keeps all of your
 - **A clock.** **Show clock** is on by default, so the closed notch shows the time. Turn it off to see the eyes instead.
 - **Idle eyes.** After a while without keyboard or mouse use, the eyes appear and blink (even with the clock on). If you stay away longer, they fall asleep. When you come back, they greet you.
 - **Quick notices.** For a moment, the notch grows to show a change in volume or mute, a new audio output such as headphones, brightness, Caps Lock and Num Lock, plugging in or unplugging the charger, low battery, and Wi-Fi or internet changes.
-- **Out of the way.** When a fullscreen app such as a game or a video is in front, the notch hides itself.
+- **Out of the way.** When a fullscreen app such as a game or a video is in front, the notch hides itself. With more than one screen it hides only when that app is on the same screen as the notch, so a video on your second screen leaves it alone.
 
 ## Installation
 

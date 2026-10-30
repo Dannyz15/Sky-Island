@@ -20,6 +20,15 @@ pub struct Line {
     pub text: String,
 }
 
+/// What looking a song up came to.
+pub enum Fetched {
+    Lines(Vec<Line>),
+    /// LRCLIB answered, and has no synced lyrics for this song.
+    NotFound,
+    /// LRCLIB could not be reached or is failing, which says nothing about the song.
+    Unreachable,
+}
+
 /// The name a song's lyrics are cached under: the song and its length, because versions of one song
 /// (live, remastered) differ in length and in timing. `None` while the length is not known, as then
 /// the match is a guess that must not be kept.
@@ -31,19 +40,45 @@ fn cache_key(key: &str, duration: Duration) -> Option<String> {
 pub fn spawn_fetch(key: String, title: String, artist: String, duration: Duration, proxy: EventLoopProxy<UserEvent>) {
     thread::spawn(move || {
         let cached = cache_key(&key, duration);
-        let lrc = cached.as_deref().and_then(load_cached).or_else(|| {
-            let lrc = fetch(&title, &artist, duration)?;
-            if let Some(name) = &cached {
-                save_cached(name, &lrc);
+        let looked = match cached.as_deref().and_then(load_cached) {
+            Some(lrc) => Looked::Found(lrc),
+            None => {
+                let looked = fetch(&title, &artist, duration);
+                if let (Looked::Found(lrc), Some(name)) = (&looked, &cached) {
+                    save_cached(name, lrc);
+                }
+                looked
             }
-            Some(lrc)
-        });
-        let lines = lrc.map(|l| parse_lrc(&l)).filter(|l| !l.is_empty());
-        let _ = proxy.send_event(UserEvent::Lyrics { key, lines });
+        };
+        let fetched = match looked {
+            Looked::Found(lrc) => match parse_lrc(&lrc) {
+                lines if lines.is_empty() => Fetched::NotFound,
+                lines => Fetched::Lines(lines),
+            },
+            Looked::NotFound => Fetched::NotFound,
+            Looked::Unreachable => Fetched::Unreachable,
+        };
+        let _ = proxy.send_event(UserEvent::Lyrics { key, fetched });
     });
 }
 
-fn fetch(title: &str, artist: &str, duration: Duration) -> Option<String> {
+enum Looked {
+    Found(String),
+    NotFound,
+    Unreachable,
+}
+
+/// Whether a failed request says that LRCLIB itself is the problem (no connection, a timeout, a server
+/// error, too many requests) and not that the song is simply not there (a 404, an answer that is no JSON).
+fn means_down(e: &ureq::Error) -> bool {
+    match e {
+        ureq::Error::StatusCode(code) => *code == 429 || *code >= 500,
+        ureq::Error::Json(_) => false,
+        _ => true,
+    }
+}
+
+fn fetch(title: &str, artist: &str, duration: Duration) -> Looked {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(8)))
         .build()
@@ -58,13 +93,15 @@ fn fetch(title: &str, artist: &str, duration: Duration) -> Option<String> {
     if !duration.is_zero() {
         req = req.query("duration", duration.as_secs().to_string());
     }
-    if let Some(lrc) = req
-        .call()
-        .ok()
-        .and_then(|mut r| r.body_mut().read_json::<Value>().ok())
-        .and_then(|v| synced(&v))
-    {
-        return Some(lrc);
+    match req.call().and_then(|mut r| r.body_mut().read_json::<Value>()) {
+        Ok(v) => {
+            if let Some(lrc) = synced(&v) {
+                return Looked::Found(lrc);
+            }
+        }
+        // No connection: the search would only wait for its own timeout.
+        Err(e) if means_down(&e) => return Looked::Unreachable,
+        Err(_) => {}
     }
 
     // Titles from browsers are often messy; fall back to a looser search.
@@ -73,11 +110,12 @@ fn fetch(title: &str, artist: &str, duration: Duration) -> Option<String> {
         .header("User-Agent", "Sky-Island/0.1")
         .query("q", format!("{title} {artist}"))
         .call()
-        .ok()?
-        .body_mut()
-        .read_json::<Value>()
-        .ok()?;
-    results.as_array()?.iter().find_map(synced)
+        .and_then(|mut r| r.body_mut().read_json::<Value>());
+    match results {
+        Ok(v) => v.as_array().and_then(|list| list.iter().find_map(synced)).map_or(Looked::NotFound, Looked::Found),
+        Err(e) if means_down(&e) => Looked::Unreachable,
+        Err(_) => Looked::NotFound,
+    }
 }
 
 fn synced(v: &Value) -> Option<String> {
@@ -141,6 +179,19 @@ fn parse_stamp(s: &str) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_site_that_is_down_is_told_apart_from_a_song_that_is_missing() {
+        use ureq::{Error, Timeout};
+        assert!(!means_down(&Error::StatusCode(404)), "no lyrics for the song");
+        assert!(!means_down(&Error::StatusCode(400)));
+        assert!(means_down(&Error::StatusCode(500)));
+        assert!(means_down(&Error::StatusCode(503)));
+        assert!(means_down(&Error::StatusCode(429)), "asked too often");
+        assert!(means_down(&Error::Timeout(Timeout::Global)));
+        assert!(means_down(&Error::HostNotFound));
+        assert!(means_down(&Error::ConnectionFailed));
+    }
 
     #[test]
     fn lyrics_are_cached_per_length_and_never_without_one() {

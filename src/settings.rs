@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use winreg::RegKey;
 use crate::store;
 use winreg::enums::HKEY_CURRENT_USER;
@@ -172,7 +172,7 @@ pub const ALARM_EVERY: Range = Range { min: 1, max: 10, step: 1 };
 /// How long the timer's alarm rings if nobody stops it, in seconds.
 pub const ALARM_FOR: Range = Range { min: 10, max: 120, step: 10 };
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Settings {
     pub hide_fullscreen: bool,
     pub show_clock: bool,
@@ -245,42 +245,48 @@ impl Default for Settings {
     }
 }
 
+/// The on/off settings, listed once: each is kept in settings.json under its own name, so adding one here
+/// is all it takes for it to be loaded and saved.
+macro_rules! on_off_settings {
+    ($($field:ident),* $(,)?) => {
+        impl Settings {
+            fn load_on_off(&mut self, v: &Value) {
+                $( self.$field = v.get(stringify!($field)).and_then(Value::as_bool).unwrap_or(self.$field); )*
+            }
+
+            fn save_on_off(&self, body: &mut Map<String, Value>) {
+                $( body.insert(stringify!($field).to_string(), Value::Bool(self.$field)); )*
+            }
+        }
+    };
+}
+
+on_off_settings!(
+    hide_fullscreen, show_clock, clock_24h, eyes, idle_eyes, minimal, open_on_click, week_monday, calendar_week,
+    empty_shelf, hud_volume, hud_brightness, hud_lock, hud_battery, hud_network, hud_audio, sound, clipboard,
+    hide_island, water, timer,
+);
+
 impl Settings {
     pub fn load() -> Self {
+        match Self::path().and_then(|p| store::read_json(&p)) {
+            Some(v) => Self::from_json(&v),
+            None => Self::default(),
+        }
+    }
+
+    /// The settings a settings.json says; whatever it leaves out, or gets wrong, stays at its default.
+    fn from_json(v: &Value) -> Self {
         let mut out = Self::default();
-        let Some(v) = Self::path().and_then(|p| store::read_json(&p)) else {
-            return out;
-        };
-        let get = |k: &str, default: bool| v.get(k).and_then(Value::as_bool).unwrap_or(default);
-        out.hide_fullscreen = get("hide_fullscreen", out.hide_fullscreen);
-        out.show_clock = get("show_clock", out.show_clock);
-        out.clock_24h = get("clock_24h", out.clock_24h);
-        out.eyes = get("eyes", out.eyes);
-        out.idle_eyes = get("idle_eyes", out.idle_eyes);
-        out.minimal = get("minimal", out.minimal);
-        out.open_on_click = get("open_on_click", out.open_on_click);
-        out.week_monday = get("week_monday", out.week_monday);
-        out.calendar_week = get("calendar_week", out.calendar_week);
-        out.empty_shelf = get("empty_shelf", out.empty_shelf);
-        out.hud_volume = get("hud_volume", out.hud_volume);
-        out.hud_brightness = get("hud_brightness", out.hud_brightness);
-        out.hud_lock = get("hud_lock", out.hud_lock);
-        out.hud_battery = get("hud_battery", out.hud_battery);
-        out.hud_network = get("hud_network", out.hud_network);
-        out.hud_audio = get("hud_audio", out.hud_audio);
+        out.load_on_off(v);
         if let Some(z) = v.get("size").and_then(Value::as_str).and_then(NotchSize::from_name) {
             out.size = z;
         }
         if let Some(e) = v.get("eye_style").and_then(Value::as_str).and_then(EyeStyle::from_name) {
             out.eye_style = e;
         }
-        out.sound = get("sound", out.sound);
-        out.clipboard = get("clipboard", out.clipboard);
-        out.hide_island = get("hide_island", out.hide_island);
-        out.water = get("water", out.water);
-        out.timer = get("timer", out.timer);
         // The first light-theme build had an on/off switch for following Windows.
-        if get("follow_theme", false) {
+        if v.get("follow_theme").and_then(Value::as_bool).unwrap_or(false) {
             out.theme = ThemeMode::System;
         }
         if let Some(t) = v.get("theme").and_then(Value::as_str).and_then(ThemeMode::from_name) {
@@ -303,45 +309,29 @@ impl Settings {
         store::path("settings.json")
     }
 
+    /// What goes into settings.json.
+    fn to_json(&self) -> Value {
+        let mut body = Map::new();
+        self.save_on_off(&mut body);
+        body.insert("size".into(), json!(self.size.name()));
+        body.insert("eye_style".into(), json!(self.eye_style.name()));
+        body.insert("theme".into(), json!(self.theme.name()));
+        body.insert("motion".into(), json!(self.motion.name()));
+        body.insert("open_delay".into(), json!(self.open_delay));
+        body.insert("close_delay".into(), json!(self.close_delay));
+        body.insert("volume".into(), json!(self.volume));
+        body.insert("alarm_every".into(), json!(self.alarm_every));
+        body.insert("alarm_for".into(), json!(self.alarm_for));
+        body.insert("alarm_sound".into(), json!(self.alarm_sound.as_ref().map(|p| p.to_string_lossy().into_owned())));
+        Value::Object(body)
+    }
+
     pub fn save(&self) {
         if cfg!(test) {
             return;
         }
         if let Some(p) = Self::path() {
-            let body = json!({
-                "hide_fullscreen": self.hide_fullscreen,
-                "show_clock": self.show_clock,
-                "clock_24h": self.clock_24h,
-                "eyes": self.eyes,
-                "idle_eyes": self.idle_eyes,
-                "minimal": self.minimal,
-                "open_on_click": self.open_on_click,
-                "week_monday": self.week_monday,
-                "calendar_week": self.calendar_week,
-                "empty_shelf": self.empty_shelf,
-                "hud_volume": self.hud_volume,
-                "hud_brightness": self.hud_brightness,
-                "hud_lock": self.hud_lock,
-                "hud_battery": self.hud_battery,
-                "hud_network": self.hud_network,
-                "hud_audio": self.hud_audio,
-                "size": self.size.name(),
-                "eye_style": self.eye_style.name(),
-                "sound": self.sound,
-                "clipboard": self.clipboard,
-                "hide_island": self.hide_island,
-                "water": self.water,
-                "timer": self.timer,
-                "theme": self.theme.name(),
-                "motion": self.motion.name(),
-                "open_delay": self.open_delay,
-                "close_delay": self.close_delay,
-                "volume": self.volume,
-                "alarm_every": self.alarm_every,
-                "alarm_for": self.alarm_for,
-                "alarm_sound": self.alarm_sound.as_ref().map(|p| p.to_string_lossy().into_owned()),
-            });
-            store::write(&p, &body.to_string());
+            store::write(&p, &self.to_json().to_string());
         }
     }
 }
@@ -363,5 +353,72 @@ pub fn set_autostart(on: bool) {
         }
     } else {
         let _ = key.delete_value(RUN_NAME);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every setting, each different from its default. It is written out field by field on purpose: a setting
+    /// added to the struct has to be added here too, and then this fails until it is also saved and loaded.
+    fn every_setting_changed() -> Settings {
+        Settings {
+            hide_fullscreen: false,
+            show_clock: false,
+            clock_24h: true,
+            eyes: true,
+            idle_eyes: false,
+            eye_style: EyeStyle::Cat,
+            size: NotchSize::X130,
+            minimal: true,
+            open_on_click: true,
+            week_monday: true,
+            calendar_week: true,
+            empty_shelf: true,
+            hud_volume: false,
+            hud_brightness: false,
+            hud_lock: false,
+            hud_battery: false,
+            hud_network: false,
+            hud_audio: false,
+            sound: false,
+            clipboard: false,
+            hide_island: true,
+            water: true,
+            timer: true,
+            theme: ThemeMode::System,
+            motion: Motion::Snappy,
+            open_delay: 150,
+            close_delay: 400,
+            volume: 40,
+            alarm_every: 5,
+            alarm_for: 30,
+            alarm_sound: Some(PathBuf::from("C:/Sounds/ring.wav")),
+        }
+    }
+
+    #[test]
+    fn every_setting_survives_a_save_and_a_load() {
+        let changed = every_setting_changed();
+        assert_ne!(changed, Settings::default(), "the test must change something");
+        assert_eq!(Settings::from_json(&changed.to_json()), changed);
+        assert_eq!(Settings::from_json(&Settings::default().to_json()), Settings::default());
+    }
+
+    #[test]
+    fn a_missing_or_wrong_setting_keeps_its_default() {
+        let defaults = Settings::default();
+        assert_eq!(Settings::from_json(&json!({})), defaults);
+        let wrong = json!({ "show_clock": "yes", "theme": 5, "open_delay": "fast", "size": "huge" });
+        assert_eq!(Settings::from_json(&wrong), defaults);
+        // Numbers are held to their range.
+        assert_eq!(Settings::from_json(&json!({ "volume": 5000 })).volume, VOLUME.max);
+    }
+
+    #[test]
+    fn the_first_light_theme_switch_still_means_follow_windows() {
+        assert_eq!(Settings::from_json(&json!({ "follow_theme": true })).theme, ThemeMode::System);
+        assert_eq!(Settings::from_json(&json!({ "follow_theme": true, "theme": "light" })).theme, ThemeMode::Light);
     }
 }
