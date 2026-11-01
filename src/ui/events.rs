@@ -2,8 +2,6 @@
 
 use crate::*;
 
-const FRAME: Duration = Duration::from_millis(8);
-
 const PROGRESS_TICK: Duration = Duration::from_millis(500);
 
 /// How often the timer's ring is redrawn while it is on screen and running, so it empties smoothly.
@@ -85,6 +83,25 @@ impl ApplicationHandler<UserEvent> for App {
                 self.apply_visibility();
                 if let Some(w) = &self.window {
                     w.request_redraw();
+                }
+            }
+            UserEvent::Screens => {
+                // Place the island again, on the screen it belongs on, and read the refresh rate afresh.
+                self.rate_read = None;
+                self.monitor_area = None;
+                self.last_tick = Instant::now();
+                self.step();
+            }
+            UserEvent::Icon { path, icon } => {
+                // Only for a file still on the shelf: it may have been removed while the icon was loading.
+                if let Some(slot) = self.icons.get_mut(&path) {
+                    *slot = icon;
+                    if self.view == View::Shelf
+                        && self.progress > 0.0
+                        && let Some(w) = &self.window
+                    {
+                        w.request_redraw();
+                    }
                 }
             }
             UserEvent::Changelog(releases) => {
@@ -405,7 +422,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.drag_hover = true;
                 self.view = View::Shelf;
                 self.last_tick = Instant::now();
-                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME));
+                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.frame));
             }
             WindowEvent::HoveredFileCancelled => {
                 self.drag_hover = false;
@@ -427,6 +444,11 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }
+            }
+            // The island moved to a screen with another scale: size and place it for that one.
+            WindowEvent::ScaleFactorChanged { .. } => {
+                self.last_tick = Instant::now();
+                self.step();
             }
             WindowEvent::RedrawRequested => self.draw(),
             _ => {}
@@ -458,6 +480,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
         // The settings window asks for frames while its controls are moving.
         let mut panel_wake = None;
+        let frame = self.frame;
         if let Some(p) = &mut self.panel {
             if p.reset_armed.is_some_and(|t| now >= t) {
                 p.reset_armed = None;
@@ -465,7 +488,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             if p.busy {
                 p.redraw();
-                panel_wake = Some(now + FRAME);
+                panel_wake = Some(now + frame);
             } else if let Some(t) = p.reset_armed {
                 panel_wake = Some(t);
             }
@@ -509,6 +532,15 @@ impl ApplicationHandler<UserEvent> for App {
             self.view = View::Todo;
             self.last_tick = now;
             self.play_sound(sound::Chime::Reminder);
+        }
+        // Copied items are forgotten after the time the user chose.
+        if let Some(keep) = self.settings.clip_keep.duration()
+            && self.clips.expire(now, keep)
+            && self.view == View::Clipboard
+            && self.progress > 0.0
+            && let Some(w) = &self.window
+        {
+            w.request_redraw();
         }
         self.water.roll(today());
         if self.settings.water && self.water.due(now) {
@@ -570,7 +602,7 @@ impl ApplicationHandler<UserEvent> for App {
         // Only tick while something is changing; otherwise sleep until the next event (0% idle CPU).
         if self.animating() {
             self.step();
-            event_loop.set_control_flow(ControlFlow::WaitUntil(now + FRAME));
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame(now)));
             return;
         }
 
@@ -629,6 +661,9 @@ impl ApplicationHandler<UserEvent> for App {
             at(t);
         }
         if let Some((_, t)) = self.clip_flash {
+            at(t);
+        }
+        if let Some(t) = self.settings.clip_keep.duration().and_then(|keep| self.clips.next_expiry(keep)) {
             at(t);
         }
 

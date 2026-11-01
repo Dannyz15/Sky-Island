@@ -24,6 +24,11 @@ const ART_SIZE: u32 = 96;
 /// How often the player is read again even if Windows said nothing, to catch a missed change and
 /// to keep the position honest.
 const RESYNC: Duration = Duration::from_secs(4);
+/// The same while nothing is playing: Windows still announces every change, and no position is running
+/// that needs to be kept honest, so the thread can sleep longer.
+const RESYNC_IDLE: Duration = Duration::from_secs(15);
+/// How long to wait before asking Windows for the media sessions again when that failed.
+const START_RETRY: Duration = Duration::from_secs(5);
 /// When a track changes, browsers (YouTube above all) fill in its title, length, picture and time one
 /// piece at a time. The player is read again after these delays so the settled values win.
 const SETTLE: [Duration; 5] = [
@@ -85,8 +90,16 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
         unsafe {
             let _ = RoInitialize(RO_INIT_MULTITHREADED);
         }
-        let Ok(manager) = Manager::RequestAsync().and_then(|op| op.join()) else {
-            return;
+        // Windows may not be ready for this right after signing in: try again until it is.
+        let manager = loop {
+            match Manager::RequestAsync().and_then(|op| op.join()) {
+                Ok(manager) => break manager,
+                // A command meant for a player that is not there yet is dropped.
+                Err(_) => match rx.recv_timeout(START_RETRY) {
+                    Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => return,
+                },
+            }
         };
 
         let t = tx.clone();
@@ -107,7 +120,8 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
             let now = Instant::now();
             // Nothing is settling: a timeout is then only the regular resync, not a track change.
             let resync_only = settle.is_empty();
-            let wait = settle.iter().map(|t| t.saturating_duration_since(now)).min().unwrap_or(RESYNC).min(RESYNC);
+            let resync = if sent.as_ref().is_some_and(|state| state.playing) { RESYNC } else { RESYNC_IDLE };
+            let wait = settle.iter().map(|t| t.saturating_duration_since(now)).min().unwrap_or(resync).min(resync);
             // A message from Windows or the UI, or a timer that says to read again.
             let (msg, resubscribe, quiet) = match rx.recv_timeout(wait) {
                 Ok(msg) => (msg, true, false),

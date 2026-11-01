@@ -22,6 +22,7 @@ mod theme;
 mod timer;
 mod icon;
 mod motion;
+mod msgwin;
 mod panel;
 mod ui;
 mod update;
@@ -71,6 +72,10 @@ pub enum UserEvent {
     Menu(MenuId),
     /// Text or a picture was copied to the clipboard.
     Clip(clipboard::Content),
+    /// A screen was plugged in or out, changed its size or position, or the taskbar moved.
+    Screens,
+    /// A shelf file's icon, loaded off the UI thread; `None` when the shell has none.
+    Icon { path: PathBuf, icon: Option<Pixmap> },
     /// The answer to "Check for updates".
     Update(update::Status),
     /// The releases and their notes, for the changelog in the settings window.
@@ -124,6 +129,8 @@ struct App {
     shelf: Shelf,
     /// Shell icons for shelf files; `None` when the shell has no icon for a file.
     icons: HashMap<PathBuf, Option<Pixmap>>,
+    /// Where to send a file whose icon is wanted; the thread that loads them starts with the first one.
+    icon_loader: Option<std::sync::mpsc::Sender<PathBuf>>,
     /// A file is being dragged over the notch from outside.
     drag_hover: bool,
     /// Shelf item index and cursor position where the mouse went down.
@@ -238,6 +245,15 @@ struct App {
     /// Hover glows, switch knobs and other small values that glide towards their goal.
     glows: Glows,
     last_draw: Instant,
+    /// The open notch's background (body, glow and border), kept while nothing about it changes.
+    body: Option<(ui::BodyKey, Pixmap)>,
+    /// How long one frame of an animation is: one refresh of the screen the notch is on.
+    frame: Duration,
+    /// When the screen's refresh rate was last read. Windows can change it at any time (the user picks another
+    /// one, the notch moves to another screen), so it is read again every few seconds.
+    rate_read: Option<Instant>,
+    /// When a frame of the animation was last due; the next ones follow at steady steps of `frame`.
+    beat: Instant,
     /// Windows is using its light theme (apps), as last reported by the system.
     system_light: bool,
     /// The settings window, while it is open.
@@ -289,6 +305,7 @@ impl App {
                 shelf
             },
             icons: HashMap::new(),
+            icon_loader: None,
             drag_hover: false,
             press: None,
             selected: Vec::new(),
@@ -320,7 +337,7 @@ impl App {
             editor: editor::Editor::new_task(None, clock_now()),
             prev_foreground: None,
             settings: settings.clone(),
-            autostart: settings::autostart_enabled(),
+            autostart: settings::repair_autostart(),
             presence: Presence::Active,
             fullscreen: presence::Fullscreen::No,
             monitor_area: None,
@@ -364,6 +381,10 @@ impl App {
             switch_dir: 1.0,
             glows: Glows::default(),
             last_draw: Instant::now(),
+            body: None,
+            frame: Duration::from_micros(16_667),
+            rate_read: None,
+            beat: Instant::now(),
             system_light: false,
             panel: None,
             panel_wanted: false,

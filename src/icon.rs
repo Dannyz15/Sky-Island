@@ -2,7 +2,9 @@
 
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Sender};
+use std::thread;
 
 use tiny_skia::{Pixmap, PremultipliedColorU8};
 use windows::Win32::Foundation::SIZE;
@@ -11,10 +13,31 @@ use windows::Win32::Graphics::Gdi::{
     HGDIOBJ, ReleaseDC,
 };
 use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY};
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::core::PCWSTR;
+use winit::event_loop::EventLoopProxy;
+
+use crate::UserEvent;
 
 /// Requested icon size in pixels; drawn scaled down on screen so it stays sharp on high-DPI displays.
 const SIZE_PX: i32 = 64;
+
+/// Start the thread that loads icons one at a time, so a file on a slow or unreachable network drive cannot
+/// freeze the notch. Each path sent to it comes back as `UserEvent::Icon`.
+pub fn spawn_loader(proxy: EventLoopProxy<UserEvent>) -> Sender<PathBuf> {
+    let (tx, rx) = mpsc::channel::<PathBuf>();
+    thread::spawn(move || {
+        // The shell wants COM on the thread that asks it for an icon.
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        while let Ok(path) = rx.recv() {
+            let icon = load(&path);
+            let _ = proxy.send_event(UserEvent::Icon { path, icon });
+        }
+    });
+    tx
+}
 
 /// The shell icon for `path` as a premultiplied RGBA pixmap, or `None` if the shell has none.
 pub fn load(path: &Path) -> Option<Pixmap> {

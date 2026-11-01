@@ -21,6 +21,7 @@ mod water;
 mod window;
 
 pub(crate) use clock::*;
+pub(crate) use render::BodyKey;
 pub(crate) use icons::*;
 pub(crate) use player::*;
 pub(crate) use shapes::*;

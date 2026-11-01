@@ -130,74 +130,25 @@ impl App {
         let Some(mut pixmap) = Pixmap::new(w.get(), h.get()) else { return };
         pixmap.fill(Color::TRANSPARENT);
 
-        // The notch: square top edge, rounded bottom corners, a dark gradient and a hairline border.
-        let (fw, fh) = (w.get() as f32, h.get() as f32);
-        let r = (fh / 2.0).min(28.0 * s);
-        let mut pb = PathBuilder::new();
-        pb.move_to(0.0, 0.0);
-        pb.line_to(fw, 0.0);
-        pb.line_to(fw, fh - r);
-        pb.quad_to(fw, fh, fw - r, fh);
-        pb.line_to(r, fh);
-        pb.quad_to(0.0, fh, 0.0, fh - r);
-        pb.close();
+        // The notch's body, glow and border only change with its size, the look and the tab's colour. Once it
+        // is at rest (fully open or closed) it is drawn once and copied in the following frames.
+        let fw = w.get() as f32;
         let open = self.progress.clamp(0.0, 1.0) as f32;
-        if let Some(path) = pb.finish() {
-            let body = theme::body();
-            let stops = vec![
-                tiny_skia::GradientStop::new(0.0, Color::from_rgba8(body[0][0], body[0][1], body[0][2], 255)),
-                tiny_skia::GradientStop::new(0.5, Color::from_rgba8(body[1][0], body[1][1], body[1][2], 255)),
-                tiny_skia::GradientStop::new(1.0, Color::from_rgba8(body[2][0], body[2][1], body[2][2], 255)),
-            ];
-            let shader = tiny_skia::LinearGradient::new(
-                tiny_skia::Point::from_xy(0.0, 0.0),
-                tiny_skia::Point::from_xy(0.0, fh),
-                stops,
-                tiny_skia::SpreadMode::Pad,
-                Transform::identity(),
-            );
-            let mut paint = Paint::default();
-            match shader {
-                Some(shader) => paint.shader = shader,
-                None => paint.set_color_rgba8(body[0][0], body[0][1], body[0][2], 255),
+        let key = (open == 0.0 || open >= 1.0).then(|| BodyKey {
+            size: (w.get(), h.get()),
+            scale: s.to_bits(),
+            light: self.light(),
+            open: open >= 1.0,
+            accent: if open >= 1.0 { self.accent(self.view) } else { [0; 3] },
+        });
+        match (&key, &self.body) {
+            (Some(key), Some((kept, picture))) if key == kept => pixmap.data_mut().copy_from_slice(picture.data()),
+            _ => {
+                self.paint_body(&mut pixmap, s, ear, open);
+                if let Some(key) = key {
+                    self.body = Some((key, pixmap.clone()));
+                }
             }
-            paint.anti_alias = true;
-            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
-
-            // A faint wash of the tab's colour rising from the bottom edge.
-            if open > 0.0 {
-                let mask = gfx::mask_of(w.get(), h.get(), &path);
-                let [ar, ag, ab] = self.accent(self.view);
-                gfx::glow(&mut pixmap, fw / 2.0, fh * 1.05, fw * 0.62, [ar, ag, ab, (open * 40.0) as u8], mask.as_ref());
-            }
-        }
-        // Border along the sides and bottom; the top edge is flush with the screen.
-        let hw = 0.5 * s;
-        let mut pb = PathBuilder::new();
-        pb.move_to(hw, 0.0);
-        pb.line_to(hw, fh - r);
-        pb.quad_to(hw, fh - hw, r, fh - hw);
-        pb.line_to(fw - r, fh - hw);
-        pb.quad_to(fw - hw, fh - hw, fw - hw, fh - r);
-        pb.line_to(fw - hw, 0.0);
-        if let Some(path) = pb.finish() {
-            let mut paint = Paint::default();
-            let edge = theme::border();
-            paint.set_color_rgba8(edge[0], edge[1], edge[2], edge[3]);
-            // The line fades in below the flares, so it does not show beside them.
-            let (clear, solid) = (Color::from_rgba8(edge[0], edge[1], edge[2], 0), Color::from_rgba8(edge[0], edge[1], edge[2], edge[3]));
-            if let Some(shader) = tiny_skia::LinearGradient::new(
-                tiny_skia::Point::from_xy(0.0, ear),
-                tiny_skia::Point::from_xy(0.0, ear * 3.0),
-                vec![tiny_skia::GradientStop::new(0.0, clear), tiny_skia::GradientStop::new(1.0, solid)],
-                tiny_skia::SpreadMode::Pad,
-                Transform::identity(),
-            ) {
-                paint.shader = shader;
-            }
-            paint.anti_alias = true;
-            let stroke = Stroke { width: 1.0 * s, ..Default::default() };
-            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
         }
 
         // Fade content in over the second half of the expand animation.
@@ -252,6 +203,79 @@ impl App {
                 | src.blue() as u32;
         }
         buffer.present().ok();
+    }
+
+    /// The notch itself on a blank picture: square top edge, rounded bottom corners, a dark gradient, a faint
+    /// wash of the tab's colour and a hairline border.
+    fn paint_body(&self, pixmap: &mut Pixmap, s: f32, ear: f32, open: f32) {
+        let (w, h) = (pixmap.width(), pixmap.height());
+        let (fw, fh) = (w as f32, h as f32);
+        let r = (fh / 2.0).min(28.0 * s);
+        let mut pb = PathBuilder::new();
+        pb.move_to(0.0, 0.0);
+        pb.line_to(fw, 0.0);
+        pb.line_to(fw, fh - r);
+        pb.quad_to(fw, fh, fw - r, fh);
+        pb.line_to(r, fh);
+        pb.quad_to(0.0, fh, 0.0, fh - r);
+        pb.close();
+        if let Some(path) = pb.finish() {
+            let body = theme::body();
+            let stops = vec![
+                tiny_skia::GradientStop::new(0.0, Color::from_rgba8(body[0][0], body[0][1], body[0][2], 255)),
+                tiny_skia::GradientStop::new(0.5, Color::from_rgba8(body[1][0], body[1][1], body[1][2], 255)),
+                tiny_skia::GradientStop::new(1.0, Color::from_rgba8(body[2][0], body[2][1], body[2][2], 255)),
+            ];
+            let shader = tiny_skia::LinearGradient::new(
+                tiny_skia::Point::from_xy(0.0, 0.0),
+                tiny_skia::Point::from_xy(0.0, fh),
+                stops,
+                tiny_skia::SpreadMode::Pad,
+                Transform::identity(),
+            );
+            let mut paint = Paint::default();
+            match shader {
+                Some(shader) => paint.shader = shader,
+                None => paint.set_color_rgba8(body[0][0], body[0][1], body[0][2], 255),
+            }
+            paint.anti_alias = true;
+            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+
+            // A faint wash of the tab's colour rising from the bottom edge.
+            if open > 0.0 {
+                let mask = gfx::mask_of(w, h, &path);
+                let [ar, ag, ab] = self.accent(self.view);
+                gfx::glow(pixmap, fw / 2.0, fh * 1.05, fw * 0.62, [ar, ag, ab, (open * 40.0) as u8], mask.as_ref());
+            }
+        }
+        // Border along the sides and bottom; the top edge is flush with the screen.
+        let hw = 0.5 * s;
+        let mut pb = PathBuilder::new();
+        pb.move_to(hw, 0.0);
+        pb.line_to(hw, fh - r);
+        pb.quad_to(hw, fh - hw, r, fh - hw);
+        pb.line_to(fw - r, fh - hw);
+        pb.quad_to(fw - hw, fh - hw, fw - hw, fh - r);
+        pb.line_to(fw - hw, 0.0);
+        if let Some(path) = pb.finish() {
+            let mut paint = Paint::default();
+            let edge = theme::border();
+            paint.set_color_rgba8(edge[0], edge[1], edge[2], edge[3]);
+            // The line fades in below the flares, so it does not show beside them.
+            let (clear, solid) = (Color::from_rgba8(edge[0], edge[1], edge[2], 0), Color::from_rgba8(edge[0], edge[1], edge[2], edge[3]));
+            if let Some(shader) = tiny_skia::LinearGradient::new(
+                tiny_skia::Point::from_xy(0.0, ear),
+                tiny_skia::Point::from_xy(0.0, ear * 3.0),
+                vec![tiny_skia::GradientStop::new(0.0, clear), tiny_skia::GradientStop::new(1.0, solid)],
+                tiny_skia::SpreadMode::Pad,
+                Transform::identity(),
+            ) {
+                paint.shader = shader;
+            }
+            paint.anti_alias = true;
+            let stroke = Stroke { width: 1.0 * s, ..Default::default() };
+            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        }
     }
 
     /// The tab bar and the open view. While the view is changing, the old one slides out and the new one
@@ -311,4 +335,14 @@ impl App {
             View::Clipboard => self.draw_clipboard(pm, s, alpha),
         }
     }
+}
+
+/// What the notch's body depends on: when none of it changed, the picture of it can be reused.
+#[derive(PartialEq)]
+pub(crate) struct BodyKey {
+    size: (u32, u32),
+    scale: u32,
+    light: bool,
+    open: bool,
+    accent: [u8; 3],
 }

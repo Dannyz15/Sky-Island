@@ -86,12 +86,17 @@ impl App {
     }
 
     /// Fetch icons for any shelf files that don't have one cached yet, and forget removed files.
+    /// The icons are loaded on another thread; until one arrives the tile shows the plain file look.
     pub(crate) fn load_icons(&mut self) {
         self.icons.retain(|p, _| self.shelf.items.contains(p));
-        for path in &self.shelf.items {
-            if !self.icons.contains_key(path) {
-                self.icons.insert(path.clone(), icon::load(path));
-            }
+        let wanted: Vec<PathBuf> = self.shelf.items.iter().filter(|p| !self.icons.contains_key(*p)).cloned().collect();
+        if wanted.is_empty() {
+            return;
+        }
+        let loader = self.icon_loader.get_or_insert_with(|| icon::spawn_loader(self.proxy.clone()));
+        for path in wanted {
+            let _ = loader.send(path.clone());
+            self.icons.insert(path, None);
         }
     }
 

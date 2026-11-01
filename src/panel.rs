@@ -18,7 +18,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Fullscreen, Icon, Window, WindowButtons};
 
 use crate::motion::Glows;
-use crate::settings::{self, EyeStyle, Motion, NotchSize, Range, Settings, ThemeMode};
+use crate::settings::{self, ClipKeep, EyeStyle, Motion, NotchSize, Range, Screen, Settings, ThemeMode};
 use crate::{App, View, appicon, gfx, theme};
 
 const WIDTH: f64 = 840.0;
@@ -99,6 +99,8 @@ enum Seg {
     Open,
     WeekStart,
     CalView,
+    ClipKeep,
+    Screen,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -230,6 +232,10 @@ fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 ],
             ),
             (
+                "Screen",
+                vec![("Show on", "Which screen the island is on", S(Seg::Screen), "")],
+            ),
+            (
                 "Closed notch",
                 vec![
                     ("Show clock", "The time on the closed notch", T(Toggle::ShowClock), ""),
@@ -262,7 +268,13 @@ fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Timer", "A countdown timer with an alarm", T(Toggle::Timer), ""),
                 ],
             ),
-            ("Clipboard", vec![("Clipboard history", "Keep what you copy, text and pictures", T(Toggle::Clipboard), "")]),
+            (
+                "Clipboard",
+                vec![
+                    ("Clipboard history", "Keep what you copy, text and pictures", T(Toggle::Clipboard), ""),
+                    ("Forget copied items", "Remove them from the history after a while", S(Seg::ClipKeep), ""),
+                ],
+            ),
         ],
         Page::Sounds => vec![
             (
@@ -528,6 +540,8 @@ const SIZE_NAMES: [&str; 5] = ["Auto", "100%", "115%", "130%", "150%"];
 const OPEN_NAMES: [&str; 2] = ["Hover", "Click"];
 const WEEK_NAMES: [&str; 2] = ["Sunday", "Monday"];
 const VIEW_NAMES: [&str; 2] = ["Month", "Week"];
+const KEEP_NAMES: [&str; 4] = ["Never", "5 min", "30 min", "1 hour"];
+const SCREEN_NAMES: [&str; 3] = ["Main", "Screen 2", "Screen 3"];
 
 /// How wide a choice is compared with the others in the same row ("Follow System" is the longest).
 fn seg_weights(seg: Seg) -> &'static [f32] {
@@ -536,6 +550,8 @@ fn seg_weights(seg: Seg) -> &'static [f32] {
         Seg::Motion | Seg::Eyes => &[1.0, 1.0, 1.0, 1.0],
         Seg::Size => &[1.0, 1.0, 1.0, 1.0, 1.0],
         Seg::Open | Seg::WeekStart | Seg::CalView => &[1.0, 1.0],
+        Seg::ClipKeep => &[1.0, 1.0, 1.0, 1.0],
+        Seg::Screen => &[1.0, 1.0, 1.0],
     }
 }
 
@@ -546,6 +562,8 @@ fn seg_width(seg: Seg) -> f32 {
         Seg::Size => 300.0,
         Seg::Open | Seg::CalView => 170.0,
         Seg::WeekStart => 190.0,
+        Seg::ClipKeep => 270.0,
+        Seg::Screen => 250.0,
     }
 }
 
@@ -573,6 +591,8 @@ fn seg_names(seg: Seg) -> &'static [&'static str] {
         Seg::Open => &OPEN_NAMES,
         Seg::WeekStart => &WEEK_NAMES,
         Seg::CalView => &VIEW_NAMES,
+        Seg::ClipKeep => &KEEP_NAMES,
+        Seg::Screen => &SCREEN_NAMES,
     }
 }
 
@@ -781,6 +801,8 @@ impl App {
             Seg::Open => usize::from(self.settings.open_on_click),
             Seg::WeekStart => usize::from(self.settings.week_monday),
             Seg::CalView => usize::from(self.settings.calendar_week),
+            Seg::ClipKeep => ClipKeep::ALL.iter().position(|k| *k == self.settings.clip_keep).unwrap_or(0),
+            Seg::Screen => Screen::ALL.iter().position(|s| *s == self.settings.screen).unwrap_or(0),
         }
     }
 
@@ -793,6 +815,8 @@ impl App {
             Seg::Open => self.settings.open_on_click = i == 1,
             Seg::WeekStart => self.settings.week_monday = i == 1,
             Seg::CalView => self.settings.calendar_week = i == 1,
+            Seg::ClipKeep => self.settings.clip_keep = ClipKeep::ALL[i.min(3)],
+            Seg::Screen => self.settings.screen = Screen::ALL[i.min(2)],
         }
         self.settings_changed();
     }
@@ -1865,7 +1889,7 @@ mod tests {
             // Most pages fit the default window; About (a tall card) and Notch (all the notch settings) scroll a little.
             let limit = match page {
                 Page::About => 100.0,
-                Page::Notch => 320.0,
+                Page::Notch => 440.0,
                 _ => 0.0,
             };
             assert!(scroll_limit(&lay, HEIGHT as f32) <= limit, "{} needs too much scrolling in the default window", page.title());
@@ -1927,7 +1951,7 @@ mod tests {
         for (i, a) in toggles.iter().enumerate() {
             assert!(!toggles[i + 1..].contains(a), "{a:?} is on two pages");
         }
-        assert_eq!(segs.len(), 7);
+        assert_eq!(segs.len(), 9);
         assert_eq!(slides.len(), 5);
         assert_eq!(picks, 1);
     }

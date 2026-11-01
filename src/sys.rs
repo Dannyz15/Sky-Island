@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use windows::Networking::Connectivity::{NetworkInformation, NetworkStatusChangedEventHandler};
 use windows::Win32::Devices::Display::{DISPLAY_BRIGHTNESS, IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioEndpointVolumeCallback, IAudioEndpointVolumeCallback_Impl};
 use windows::Win32::Media::Audio::{
     AUDIO_VOLUME_NOTIFICATION_DATA, DEVICE_STATE, EDataFlow, ERole, IMMDevice, IMMDeviceEnumerator, IMMNotificationClient,
@@ -18,15 +18,19 @@ use windows::Win32::Media::Audio::{
 use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, STGM_READ};
 use windows::Win32::System::IO::DeviceIoControl;
-use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+use windows::Win32::System::Power::{
+    GetSystemPowerStatus, RegisterPowerSettingNotification, SYSTEM_POWER_STATUS,
+};
+use windows::Win32::System::SystemServices::{GUID_ACDC_POWER_SOURCE, GUID_BATTERY_PERCENTAGE_REMAINING};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL, VK_NUMLOCK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, KBDLLHOOKSTRUCT, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    CallNextHookEx, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, KBDLLHOOKSTRUCT, PBT_POWERSETTINGCHANGE, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN,
+    WM_POWERBROADCAST, WM_SYSKEYDOWN,
 };
 use windows::core::{PCWSTR, Result, implement, w};
 use winit::event_loop::EventLoopProxy;
 
-use crate::UserEvent;
+use crate::{UserEvent, msgwin};
 
 /// Something worth showing briefly in the notch.
 #[derive(Clone)]
@@ -39,7 +43,7 @@ pub enum Notice {
     Audio { name: String, headphones: bool },
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum BatteryKind {
     Plugged,
     Unplugged,
@@ -168,33 +172,89 @@ fn audio(proxy: Proxy) {
 
 // ---- Battery ----
 
-fn battery(proxy: Proxy) {
-    let mut last_ac: Option<u8> = None;
-    let mut last_percent: Option<u32> = None;
-    loop {
-        let mut st = SYSTEM_POWER_STATUS::default();
-        if unsafe { GetSystemPowerStatus(&mut st) }.is_err() || st.BatteryFlag & 128 != 0 {
-            return; // no battery (desktop), nothing to watch
-        }
-        let percent = st.BatteryLifePercent as u32;
-        let known = st.BatteryLifePercent != 255 && st.ACLineStatus != 255;
+/// How often the battery is looked at if Windows cannot tell the app when its state changes.
+const BATTERY_POLL: Duration = Duration::from_secs(3);
 
-        if known {
-            if let Some(prev) = last_ac
-                && prev != st.ACLineStatus {
-                    let kind = if st.ACLineStatus == 1 { BatteryKind::Plugged } else { BatteryKind::Unplugged };
-                    send(&proxy, Notice::Battery { percent, kind });
-                }
-            // Warn once as the charge falls through each threshold while unplugged.
-            if let (Some(prev), 0) = (last_percent, st.ACLineStatus)
-                && [20, 10, 5].iter().any(|&t| prev > t && percent <= t) {
-                    send(&proxy, Notice::Battery { percent, kind: BatteryKind::Low });
-                }
-            last_ac = Some(st.ACLineStatus);
-            last_percent = Some(percent);
+/// What the battery looked like at the last look, to tell what changed.
+struct BatteryWatch {
+    ac: Option<u8>,
+    percent: Option<u32>,
+}
+
+impl BatteryWatch {
+    /// The notices that a new look calls for: one when the charger is plugged in or pulled out, and one as
+    /// the charge falls through 20, 10 and 5 percent while unplugged. `ac` and `percent` are Windows' own
+    /// numbers, 255 meaning unknown.
+    fn look(&mut self, ac: u8, percent: u8) -> Vec<BatteryKind> {
+        let mut notices = Vec::new();
+        if percent == 255 || ac == 255 {
+            return notices;
         }
-        thread::sleep(Duration::from_secs(3));
+        let percent = percent as u32;
+        if let Some(prev) = self.ac
+            && prev != ac
+        {
+            notices.push(if ac == 1 { BatteryKind::Plugged } else { BatteryKind::Unplugged });
+        }
+        if let (Some(prev), 0) = (self.percent, ac)
+            && [20, 10, 5].iter().any(|&t| prev > t && percent <= t)
+        {
+            notices.push(BatteryKind::Low);
+        }
+        self.ac = Some(ac);
+        self.percent = Some(percent);
+        notices
     }
+}
+
+static BATTERY: Mutex<BatteryWatch> = Mutex::new(BatteryWatch { ac: None, percent: None });
+static BATTERY_PROXY: OnceLock<Proxy> = OnceLock::new();
+
+/// Whether this PC has a battery to watch.
+fn has_battery() -> bool {
+    let mut st = SYSTEM_POWER_STATUS::default();
+    unsafe { GetSystemPowerStatus(&mut st) }.is_ok() && st.BatteryFlag & 128 == 0
+}
+
+/// Look at the power status now and tell the UI what changed since the last look.
+fn look_at_battery() {
+    let mut st = SYSTEM_POWER_STATUS::default();
+    if unsafe { GetSystemPowerStatus(&mut st) }.is_err() {
+        return;
+    }
+    let (Ok(mut watch), Some(proxy)) = (BATTERY.lock(), BATTERY_PROXY.get()) else { return };
+    for kind in watch.look(st.ACLineStatus, st.BatteryLifePercent) {
+        send(proxy, Notice::Battery { percent: st.BatteryLifePercent as u32, kind });
+    }
+}
+
+/// Windows says when the power source or the charge changes (to a hidden window), so nothing runs in
+/// between. If that cannot be set up, the battery is looked at every few seconds instead.
+fn battery(proxy: Proxy) {
+    if !has_battery() || BATTERY_PROXY.set(proxy).is_err() {
+        return; // no battery (desktop), nothing to watch
+    }
+    look_at_battery(); // the starting point; nothing is announced for it
+    let listening = msgwin::spawn(w!("SkyIslandPower"), Some(power_proc), |window| unsafe {
+        let target = HANDLE(window.0);
+        let source = RegisterPowerSettingNotification(target, &GUID_ACDC_POWER_SOURCE, DEVICE_NOTIFY_WINDOW_HANDLE);
+        let charge = RegisterPowerSettingNotification(target, &GUID_BATTERY_PERCENTAGE_REMAINING, DEVICE_NOTIFY_WINDOW_HANDLE);
+        source.is_ok() && charge.is_ok()
+    });
+    if !listening {
+        loop {
+            thread::sleep(BATTERY_POLL);
+            look_at_battery();
+        }
+    }
+}
+
+unsafe extern "system" fn power_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if message == WM_POWERBROADCAST && wparam.0 as u32 == PBT_POWERSETTINGCHANGE {
+        look_at_battery();
+        return LRESULT(1);
+    }
+    unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
 
 // ---- Brightness (laptop panels) ----
@@ -338,6 +398,39 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn watch() -> BatteryWatch {
+        BatteryWatch { ac: None, percent: None }
+    }
+
+    #[test]
+    fn the_first_look_announces_nothing() {
+        assert!(watch().look(0, 15).is_empty(), "already low when the app starts: no warning");
+        assert!(watch().look(255, 255).is_empty(), "unknown values");
+    }
+
+    #[test]
+    fn plugging_in_and_pulling_out_are_announced() {
+        let mut w = watch();
+        w.look(0, 80);
+        assert_eq!(w.look(1, 80), vec![BatteryKind::Plugged]);
+        assert!(w.look(1, 81).is_empty());
+        assert_eq!(w.look(0, 81), vec![BatteryKind::Unplugged]);
+    }
+
+    #[test]
+    fn the_low_battery_warning_comes_once_per_threshold_and_only_unplugged() {
+        let mut w = watch();
+        w.look(0, 22);
+        assert!(w.look(0, 21).is_empty());
+        assert_eq!(w.look(0, 20), vec![BatteryKind::Low], "falls through 20");
+        assert!(w.look(0, 19).is_empty(), "no repeat below it");
+        assert_eq!(w.look(0, 10), vec![BatteryKind::Low]);
+        assert_eq!(w.look(0, 4), vec![BatteryKind::Low], "5 percent");
+        let mut charging = watch();
+        charging.look(1, 21);
+        assert!(charging.look(1, 19).is_empty(), "no warning while the charger is in");
+    }
 
     #[test]
     fn brightness_is_read_slowly_until_it_changes() {

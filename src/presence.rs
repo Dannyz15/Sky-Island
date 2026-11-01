@@ -75,6 +75,7 @@ pub fn classify(idle: Duration) -> Presence {
 pub fn spawn(proxy: EventLoopProxy<UserEvent>, island: isize) {
     thread::spawn(move || {
         let mut last = (Presence::Active, Fullscreen::No);
+        let mut seen = screens();
         loop {
             let now = (classify(idle_time()), fullscreen());
             if now != last {
@@ -82,9 +83,38 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>, island: isize) {
                 let _ = proxy.send_event(UserEvent::Presence { presence: now.0, fullscreen: now.1 });
             }
             keep_in_front(HWND(island as *mut _));
+            let now = screens();
+            if now != seen {
+                seen = now;
+                let _ = proxy.send_event(UserEvent::Screens);
+            }
             thread::sleep(POLL);
         }
     });
+}
+
+/// A number that changes when a screen is plugged in or out, moved or resized, or when the usable part of one
+/// changes (a taskbar docked somewhere else).
+fn screens() -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    use windows::Win32::Foundation::{LPARAM, TRUE};
+    use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+
+    unsafe extern "system" fn each(monitor: HMONITOR, _: HDC, _: *mut RECT, hasher: LPARAM) -> windows::core::BOOL {
+        let hasher = unsafe { &mut *(hasher.0 as *mut DefaultHasher) };
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+            let (m, w) = (info.rcMonitor, info.rcWork);
+            (m.left, m.top, m.right, m.bottom, w.left, w.top, w.right, w.bottom, info.dwFlags).hash(hasher);
+        }
+        TRUE
+    }
+
+    let mut hasher = DefaultHasher::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(None, None, Some(each), LPARAM(&mut hasher as *mut DefaultHasher as isize));
+    }
+    hasher.finish()
 }
 
 /// Whether two areas share any pixel.

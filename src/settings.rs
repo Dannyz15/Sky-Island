@@ -1,11 +1,12 @@
 //! User settings, saved as JSON, plus the "start with Windows" registry entry.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 use winreg::RegKey;
 use crate::store;
-use winreg::enums::HKEY_CURRENT_USER;
+use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_NAME: &str = "Sky Island";
@@ -147,6 +148,77 @@ impl NotchSize {
     }
 }
 
+/// How long copied items stay in the clipboard history.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ClipKeep {
+    Forever,
+    Minutes5,
+    Minutes30,
+    Hour1,
+}
+
+impl ClipKeep {
+    pub const ALL: [ClipKeep; 4] = [ClipKeep::Forever, ClipKeep::Minutes5, ClipKeep::Minutes30, ClipKeep::Hour1];
+
+    /// How long an item is kept, or `None` for as long as the app runs.
+    pub fn duration(self) -> Option<Duration> {
+        match self {
+            ClipKeep::Forever => None,
+            ClipKeep::Minutes5 => Some(Duration::from_secs(5 * 60)),
+            ClipKeep::Minutes30 => Some(Duration::from_secs(30 * 60)),
+            ClipKeep::Hour1 => Some(Duration::from_secs(60 * 60)),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            ClipKeep::Forever => "forever",
+            ClipKeep::Minutes5 => "5m",
+            ClipKeep::Minutes30 => "30m",
+            ClipKeep::Hour1 => "1h",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.name() == name)
+    }
+}
+
+/// Which screen the island is on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Screen {
+    /// The main screen.
+    Main,
+    /// The screen Windows calls Display 2 or Display 3 in its settings; the main screen if there is none.
+    Display2,
+    Display3,
+}
+
+impl Screen {
+    pub const ALL: [Screen; 3] = [Screen::Main, Screen::Display2, Screen::Display3];
+
+    /// The number Windows gives the screen, or `None` for the main one.
+    pub fn display_number(self) -> Option<u32> {
+        match self {
+            Screen::Main => None,
+            Screen::Display2 => Some(2),
+            Screen::Display3 => Some(3),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Screen::Main => "main",
+            Screen::Display2 => "display2",
+            Screen::Display3 => "display3",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name() == name)
+    }
+}
+
 /// A number setting: smallest and largest value, and the step the slider moves in.
 #[derive(Clone, Copy)]
 pub struct Range {
@@ -202,6 +274,10 @@ pub struct Settings {
     pub sound: bool,
     /// Keep a history of copied text.
     pub clipboard: bool,
+    /// How long copied items stay in that history.
+    pub clip_keep: ClipKeep,
+    /// Which screen the island is on.
+    pub screen: Screen,
     /// Slide the island out of view when idle; hovering the top edge brings it back.
     pub hide_island: bool,
     /// Show the Water tab and send water reminders. Off until the user turns it on.
@@ -231,7 +307,7 @@ impl Default for Settings {
             hud_lock: true,
             hud_battery: true,
             hud_network: true,
-            hud_audio: true, sound: true, clipboard: true, hide_island: false, water: false,
+            hud_audio: true, sound: true, clipboard: true, clip_keep: ClipKeep::Forever, screen: Screen::Main, hide_island: false, water: false,
             timer: false,
             theme: ThemeMode::Dark,
             motion: Motion::Normal,
@@ -282,6 +358,12 @@ impl Settings {
         if let Some(z) = v.get("size").and_then(Value::as_str).and_then(NotchSize::from_name) {
             out.size = z;
         }
+        if let Some(k) = v.get("clip_keep").and_then(Value::as_str).and_then(ClipKeep::from_name) {
+            out.clip_keep = k;
+        }
+        if let Some(s) = v.get("screen").and_then(Value::as_str).and_then(Screen::from_name) {
+            out.screen = s;
+        }
         if let Some(e) = v.get("eye_style").and_then(Value::as_str).and_then(EyeStyle::from_name) {
             out.eye_style = e;
         }
@@ -315,6 +397,8 @@ impl Settings {
         self.save_on_off(&mut body);
         body.insert("size".into(), json!(self.size.name()));
         body.insert("eye_style".into(), json!(self.eye_style.name()));
+        body.insert("clip_keep".into(), json!(self.clip_keep.name()));
+        body.insert("screen".into(), json!(self.screen.name()));
         body.insert("theme".into(), json!(self.theme.name()));
         body.insert("motion".into(), json!(self.motion.name()));
         body.insert("open_delay".into(), json!(self.open_delay));
@@ -344,6 +428,24 @@ pub fn autostart_enabled() -> bool {
         .is_ok()
 }
 
+/// The program a startup value runs, when the value is quoted the way this app writes it.
+fn quoted_target(value: &str) -> Option<&str> {
+    value.trim().strip_prefix('"')?.split('"').next().filter(|path| !path.is_empty())
+}
+
+/// Whether the app is registered to start with Windows, after removing an entry that points to a program that
+/// is gone (a portable copy that was started with Windows and then deleted). Run when the app starts.
+pub fn repair_autostart() -> bool {
+    let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(RUN_KEY, KEY_READ | KEY_SET_VALUE);
+    let Ok(key) = key else { return false };
+    let Ok(value) = key.get_value::<String, _>(RUN_NAME) else { return false };
+    if quoted_target(&value).is_some_and(|path| !std::path::Path::new(path).exists()) {
+        let _ = key.delete_value(RUN_NAME);
+        return false;
+    }
+    true
+}
+
 /// Add or remove the per-user startup entry. Only touches this app's own value.
 pub fn set_autostart(on: bool) {
     let Ok((key, _)) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(RUN_KEY) else { return };
@@ -360,6 +462,14 @@ pub fn set_autostart(on: bool) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_startup_value_names_its_program_only_when_quoted() {
+        assert_eq!(quoted_target(r#""C:\Apps\Sky Island\sky-island.exe""#), Some(r"C:\Apps\Sky Island\sky-island.exe"));
+        assert_eq!(quoted_target(r#"  "D:\x.exe" --flag"#), Some(r"D:\x.exe"));
+        assert_eq!(quoted_target(r"C:\Program Files\x.exe"), None, "unquoted: not written by this app, left alone");
+        assert_eq!(quoted_target(&format!("{0}{0}", '"')), None, "nothing between the quotes");
+    }
+
     /// Every setting, each different from its default. It is written out field by field on purpose: a setting
     /// added to the struct has to be added here too, and then this fails until it is also saved and loaded.
     fn every_setting_changed() -> Settings {
@@ -370,6 +480,8 @@ mod tests {
             eyes: true,
             idle_eyes: false,
             eye_style: EyeStyle::Cat,
+            clip_keep: ClipKeep::Minutes5,
+            screen: Screen::Display2,
             size: NotchSize::X130,
             minimal: true,
             open_on_click: true,

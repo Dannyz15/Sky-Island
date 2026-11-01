@@ -79,6 +79,22 @@ impl App {
         p
     }
 
+    /// The screen the island is on: the one the Screen setting names, if it is connected, otherwise the main
+    /// screen.
+    fn island_monitor(&self, window: &Window) -> Option<winit::monitor::MonitorHandle> {
+        let wanted = self.settings.screen.display_number();
+        let chosen = wanted.and_then(|n| window.available_monitors().find(|m| m.name().and_then(|name| display_number(&name)) == Some(n)));
+        chosen.or_else(|| window.primary_monitor()).or_else(|| window.current_monitor())
+    }
+
+    /// When the next frame of a running animation is due: the next step of the screen's rhythm after `now`,
+    /// so frames come at its refresh rate however long drawing one takes (as long as it fits in one).
+    pub(crate) fn next_frame(&mut self, now: Instant) -> Instant {
+        let (beat, next) = next_beat(self.beat, self.frame, now);
+        self.beat = beat;
+        next
+    }
+
     /// Advance animation, then resize/reposition the window to match.
     pub(crate) fn step(&mut self) {
         let now = Instant::now();
@@ -174,11 +190,17 @@ impl App {
         // The Size setting scales the window itself; everything in it is drawn at the same scale.
         let _ = window.request_inner_size(LogicalSize::new((w + 2.0 * EAR) * k, h * k));
 
-        if let Some(monitor) = window.current_monitor().or_else(|| window.primary_monitor()) {
+        if let Some(monitor) = self.island_monitor(&window) {
             let scale = window.scale_factor() * k;
             let mpos = monitor.position();
             let msize = monitor.size();
             self.screen_w = msize.width as f64 / window.scale_factor();
+            if self.rate_read.is_none_or(|at| at.elapsed() > RATE_RECHECK) {
+                self.rate_read = Some(Instant::now());
+                if let Some(millihertz) = monitor.refresh_rate_millihertz() {
+                    self.frame = frame_length(millihertz);
+                }
+            }
             let area = (mpos.x, mpos.y, mpos.x + msize.width as i32, mpos.y + msize.height as i32);
             if self.monitor_area != Some(area) {
                 self.monitor_area = Some(area);
@@ -186,8 +208,10 @@ impl App {
             }
             let pw = (w + 2.0 * EAR) * scale;
             let x = mpos.x as f64 + (msize.width as f64 - pw) / 2.0;
-            // Tucked away, only a thin strip stays on screen, so the cursor can still find the island.
-            let y = mpos.y as f64 - self.tuck_t.clamp(0.0, 1.0) * (h - TUCK_STRIP) * scale;
+            // Tucked away, only a thin strip stays on screen, so the cursor can still find the island. A taskbar
+            // along the top of the screen keeps it below, instead of covering the middle of the bar.
+            let top = mpos.y as f64 + top_inset(&monitor) as f64;
+            let y = top - self.tuck_t.clamp(0.0, 1.0) * (h - TUCK_STRIP) * scale;
             window.set_outer_position(PhysicalPosition::new(x, y));
         }
         window.request_redraw();
@@ -311,5 +335,82 @@ impl App {
                 w.set_visible(!hide);
             }
         }
+    }
+}
+
+/// The number Windows gives a screen, from the device name winit reports (`\\.\DISPLAY2` is 2).
+fn display_number(device: &str) -> Option<u32> {
+    let digits: String = device.chars().rev().take_while(char::is_ascii_digit).collect::<Vec<_>>().into_iter().rev().collect();
+    digits.parse().ok()
+}
+
+/// How far down from the top of the screen the usable area starts: more than zero when a taskbar (or any
+/// other bar) is docked along the top.
+fn top_inset(monitor: &winit::monitor::MonitorHandle) -> i32 {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
+    use winit::platform::windows::MonitorHandleExtWindows;
+    let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    let handle = HMONITOR(HANDLE(monitor.hmonitor() as *mut _).0);
+    if unsafe { GetMonitorInfoW(handle, &mut info) }.as_bool() { (info.rcWork.top - info.rcMonitor.top).max(0) } else { 0 }
+}
+
+/// How often the screen's refresh rate is read again while the notch animates.
+const RATE_RECHECK: Duration = Duration::from_secs(2);
+
+/// How long one refresh of a screen takes, given its rate in thousandths of a hertz, kept to something a
+/// timer can keep up with. Windows reports 0 or 1 Hz for "whatever the hardware does" (some virtual and
+/// remote screens): that counts as 60.
+pub(crate) fn frame_length(millihertz: u32) -> Duration {
+    if millihertz < 24_000 {
+        return Duration::from_micros(16_667);
+    }
+    Duration::from_micros(1_000_000_000 / u64::from(millihertz)).clamp(Duration::from_millis(3), Duration::from_millis(33))
+}
+
+/// The rhythm of frames: given when the beat started, how long a frame is and the time now, the beat to
+/// keep and the first step of it after now. A pause of a few frames starts a new beat at `now`.
+fn next_beat(beat: Instant, frame: Duration, now: Instant) -> (Instant, Instant) {
+    let late = now.saturating_duration_since(beat);
+    if late > frame * 4 {
+        return (now, now + frame);
+    }
+    let steps = late.as_nanos() / frame.as_nanos().max(1) + 1;
+    (beat, beat + frame * steps as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_screen_is_known_by_the_number_in_its_device_name() {
+        assert_eq!(display_number(r"\\.\DISPLAY1"), Some(1));
+        assert_eq!(display_number(r"\\.\DISPLAY12"), Some(12));
+        assert_eq!(display_number(r"\\.\DISPLAY"), None);
+        assert_eq!(display_number(""), None);
+    }
+
+    #[test]
+    fn a_frame_lasts_one_refresh_of_the_screen() {
+        assert_eq!(frame_length(60_000), Duration::from_micros(16_666));
+        assert_eq!(frame_length(144_000), Duration::from_micros(6_944));
+        assert_eq!(frame_length(59_940), Duration::from_micros(16_683));
+        assert_eq!(frame_length(1_000_000), Duration::from_millis(3), "an absurdly fast screen is held to what a timer can do");
+        assert_eq!(frame_length(0), Duration::from_micros(16_667), "Windows says 0 Hz for the hardware default");
+        assert_eq!(frame_length(1_000), Duration::from_micros(16_667), "and 1 Hz");
+    }
+
+    #[test]
+    fn frames_follow_one_steady_rhythm() {
+        let (start, frame) = (Instant::now(), Duration::from_millis(10));
+        // Right on the beat, or a little late: the next step of the rhythm, whatever the drawing took.
+        assert_eq!(next_beat(start, frame, start), (start, start + frame));
+        assert_eq!(next_beat(start, frame, start + Duration::from_millis(3)), (start, start + frame));
+        assert_eq!(next_beat(start, frame, start + Duration::from_millis(10)), (start, start + frame * 2));
+        assert_eq!(next_beat(start, frame, start + Duration::from_millis(27)), (start, start + frame * 3), "two frames missed: skip to the next step");
+        // After a pause the rhythm starts again from now.
+        let later = start + Duration::from_secs(5);
+        assert_eq!(next_beat(start, frame, later), (later, later + frame));
     }
 }

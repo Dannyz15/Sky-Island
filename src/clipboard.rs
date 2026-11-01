@@ -1,21 +1,24 @@
 //! Clipboard history for text and images (screenshots). Kept in memory only and never written to
 //! disk, so it is gone when the app closes. Also holds the Windows clipboard calls the app needs.
 
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use image::{ImageEncoder, RgbaImage};
-use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
+use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable,
-    OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+    AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
+    IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
 };
+use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, KillTimer, SetTimer, WM_CLIPBOARDUPDATE, WM_TIMER};
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
 use windows::core::{PCWSTR, w};
 use winit::event_loop::EventLoopProxy;
 
-use crate::UserEvent;
+use crate::{UserEvent, msgwin};
 
 /// Entries kept, newest first.
 pub const MAX_ITEMS: usize = 30;
@@ -25,10 +28,13 @@ const MAX_CHARS: usize = 5000;
 pub const VISIBLE: usize = 3;
 /// Images are stored compressed (PNG). Once they add up to more than this, the oldest are dropped.
 const MAX_IMAGE_BYTES: usize = 48 * 1024 * 1024;
-/// Pictures with more pixels than this are not kept.
-const MAX_PIXELS: usize = 64 * 1024 * 1024;
+/// Pictures with more pixels than this are not kept (an 8K screenshot has 33 million).
+const MAX_PIXELS: usize = 40 * 1024 * 1024;
+/// The most bytes of a picture read from the clipboard: that many pixels as an uncompressed bitmap.
+const MAX_PICTURE_BYTES: usize = MAX_PIXELS * 4 + 4096;
 /// The preview of an image fits in this box, at twice the size it is drawn so it stays sharp.
 pub const THUMB_MAX: (u32, u32) = (96, 52);
+/// How often the clipboard is looked at if Windows cannot tell the app when it changes.
 const POLL: Duration = Duration::from_millis(400);
 
 #[derive(Clone)]
@@ -68,13 +74,15 @@ impl Content {
 
 pub struct History {
     pub items: Vec<Content>,
+    /// When each entry was copied, in the same order as `items`.
+    copied: Vec<Instant>,
     /// First visible row.
     pub scroll: usize,
 }
 
 impl History {
     pub fn new() -> Self {
-        Self { items: Vec::new(), scroll: 0 }
+        Self { items: Vec::new(), copied: Vec::new(), scroll: 0 }
     }
 
     /// Add something copied, at the top. Blank text is ignored, and copying the same thing again moves
@@ -85,12 +93,40 @@ impl History {
             Content::Text(t) => Content::Text(t.chars().take(MAX_CHARS).collect()),
             image => image,
         };
-        self.items.retain(|c| !c.same_as(&content));
+        if let Some(i) = self.items.iter().position(|c| c.same_as(&content)) {
+            self.forget(i);
+        }
         self.items.insert(0, content);
+        self.copied.insert(0, Instant::now());
         self.items.truncate(MAX_ITEMS);
+        self.copied.truncate(MAX_ITEMS);
         self.evict_old_images();
         self.scroll = 0;
         true
+    }
+
+    fn forget(&mut self, index: usize) {
+        self.items.remove(index);
+        self.copied.remove(index);
+    }
+
+    /// Forget what was copied more than `keep` ago. Returns whether anything went.
+    pub fn expire(&mut self, now: Instant, keep: Duration) -> bool {
+        let before = self.items.len();
+        let mut i = self.items.len();
+        while i > 0 {
+            i -= 1;
+            if now.saturating_duration_since(self.copied[i]) >= keep {
+                self.forget(i);
+            }
+        }
+        self.clamp_scroll();
+        self.items.len() != before
+    }
+
+    /// When the oldest entry is due to be forgotten.
+    pub fn next_expiry(&self, keep: Duration) -> Option<Instant> {
+        self.copied.iter().min().map(|at| *at + keep)
     }
 
     /// Drop the oldest images while the stored pictures take too much memory. The newest entry stays.
@@ -102,20 +138,21 @@ impl History {
             let size = self.items[i].image_bytes();
             if size > 0 {
                 total -= size;
-                self.items.remove(i);
+                self.forget(i);
             }
         }
     }
 
     pub fn remove(&mut self, index: usize) {
         if index < self.items.len() {
-            self.items.remove(index);
+            self.forget(index);
             self.clamp_scroll();
         }
     }
 
     pub fn clear(&mut self) {
         self.items.clear();
+        self.copied.clear();
         self.scroll = 0;
     }
 
@@ -249,24 +286,63 @@ fn rgba_to_dib(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
 
 // ---- Windows clipboard ----
 
-/// Watch for things being copied. Runs on its own thread and only wakes the UI when the clipboard
-/// changes and holds text or a picture.
+/// Where the clipboard watcher sends what it finds, and the clipboard's change counter when it last looked.
+static WATCH: OnceLock<EventLoopProxy<UserEvent>> = OnceLock::new();
+static LAST_SEEN: AtomicU32 = AtomicU32::new(0);
+
+/// How long after the last change notification the clipboard is read. An app often changes it several times
+/// in a row (clear, text, picture), and may still be holding it open for a moment.
+const SETTLE: u32 = 120;
+const SETTLE_TIMER: usize = 1;
+
+/// Watch for things being copied. Windows tells a hidden window when the clipboard changes, so nothing runs
+/// in between; the UI only hears about it when the clipboard holds text or a picture. If that window cannot
+/// be made, the clipboard is looked at a few times a second instead.
 pub fn spawn_watcher(proxy: EventLoopProxy<UserEvent>) {
-    thread::spawn(move || {
-        // Start from the current state, so whatever is already on the clipboard is not captured.
-        let mut last = unsafe { GetClipboardSequenceNumber() };
-        loop {
-            thread::sleep(POLL);
-            let now = unsafe { GetClipboardSequenceNumber() };
-            if now == last {
-                continue;
+    // Start from the current state, so whatever is already on the clipboard is not captured.
+    LAST_SEEN.store(unsafe { GetClipboardSequenceNumber() }, Ordering::Relaxed);
+    if WATCH.set(proxy).is_err() {
+        return;
+    }
+    if !msgwin::spawn(w!("SkyIslandClipboard"), Some(watch_proc), |window| unsafe { AddClipboardFormatListener(window).is_ok() }) {
+        thread::spawn(|| {
+            loop {
+                thread::sleep(POLL);
+                look();
             }
-            last = now;
-            if let Some(content) = read_content() {
-                let _ = proxy.send_event(UserEvent::Clip(content));
+        });
+    }
+}
+
+/// Read the clipboard if it changed since the last look, and pass on what it holds.
+fn look() {
+    let now = unsafe { GetClipboardSequenceNumber() };
+    if LAST_SEEN.swap(now, Ordering::Relaxed) == now {
+        return;
+    }
+    if let Some(content) = read_content()
+        && let Some(proxy) = WATCH.get()
+    {
+        let _ = proxy.send_event(UserEvent::Clip(content));
+    }
+}
+
+unsafe extern "system" fn watch_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe {
+        match message {
+            // Every notification restarts the timer, so a burst of changes is read once, after it.
+            WM_CLIPBOARDUPDATE => {
+                SetTimer(Some(window), SETTLE_TIMER, SETTLE, None);
+                LRESULT(0)
             }
+            WM_TIMER if wparam.0 == SETTLE_TIMER => {
+                let _ = KillTimer(Some(window), SETTLE_TIMER);
+                look();
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(window, message, wparam, lparam),
         }
-    });
+    }
 }
 
 /// Open the clipboard, retrying briefly because another app may be using it.
@@ -304,9 +380,14 @@ fn read_content() -> Option<Content> {
             && read_format(can_include).is_some_and(|flag| is_barred_from_history(&flag));
         if marked(w!("ExcludeClipboardContentFromMonitorProcessing")) || marked(w!("Clipboard Viewer Ignore")) || kept_out_of_history {
             (None, None, None)
+        } else if let Some(text) = read_unicode_text().filter(|t| !t.trim().is_empty()) {
+            // Text wins, so a picture that comes with it (cells copied from a spreadsheet) is not even copied.
+            (Some(text), None, None)
         } else {
-            let png_format = RegisterClipboardFormatW(w!("PNG"));
-            (read_unicode_text(), read_format(png_format), read_format(CF_DIB.0 as u32))
+            let png = read_picture(RegisterClipboardFormatW(w!("PNG")), png_fits);
+            // The bitmap form is the same picture again, so it is only read when there is no PNG.
+            let dib = if png.is_none() { read_picture(CF_DIB.0 as u32, dib_fits) } else { None };
+            (None, png, dib)
         }
     };
     unsafe {
@@ -321,8 +402,56 @@ fn read_content() -> Option<Content> {
     if let Some(image) = png.and_then(image_from_png) {
         return Some(Content::Image(image));
     }
-    let (w, h, rgba) = dib.as_deref().and_then(dib_to_rgba)?;
+    let converted = dib.as_deref().and_then(dib_to_rgba);
+    // The bitmap is as big as the converted pixels: let go of it before the picture is compressed.
+    drop(dib);
+    let (w, h, rgba) = converted?;
     image_from_rgba(w, h, rgba).map(Content::Image)
+}
+
+/// Whether the start of PNG data says it is a PNG with a size worth keeping. The size comes from the header,
+/// so a huge picture is turned away before anything is copied or decoded.
+fn png_fits(head: &[u8]) -> bool {
+    if head.get(..8) != Some(b"\x89PNG\r\n\x1a\n".as_slice()) {
+        return false;
+    }
+    let side = |at: usize| head.get(at..at + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize);
+    matches!((side(16), side(20)), (Some(w), Some(h)) if w > 0 && h > 0 && w.checked_mul(h).is_some_and(|px| px <= MAX_PIXELS))
+}
+
+/// The same for the start of a Windows bitmap.
+fn dib_fits(head: &[u8]) -> bool {
+    let value = |at: usize| head.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    match (value(0), value(4), value(8)) {
+        (Some(header), Some(w), Some(h)) if header >= 40 && w > 0 && h != 0 => {
+            (w as usize).checked_mul(h.unsigned_abs() as usize).is_some_and(|px| px <= MAX_PIXELS)
+        }
+        _ => false,
+    }
+}
+
+/// The bytes of a picture format, copied only if its first bytes say it is a picture that fits (`fits`) and
+/// the whole is not larger than such a picture can be. Must be called with the clipboard open.
+unsafe fn read_picture(format: u32, fits: fn(&[u8]) -> bool) -> Option<Vec<u8>> {
+    if format == 0 {
+        return None;
+    }
+    unsafe {
+        let handle = GetClipboardData(format).ok()?;
+        let hglobal = HGLOBAL(handle.0);
+        let size = GlobalSize(hglobal);
+        if !(64..=MAX_PICTURE_BYTES).contains(&size) {
+            return None;
+        }
+        let ptr = GlobalLock(hglobal) as *const u8;
+        if ptr.is_null() {
+            return None;
+        }
+        let all = std::slice::from_raw_parts(ptr, size);
+        let bytes = fits(&all[..64]).then(|| all.to_vec());
+        let _ = GlobalUnlock(hglobal);
+        bytes
+    }
 }
 
 /// Must be called with the clipboard open.
@@ -449,6 +578,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_picture_is_judged_by_its_header_before_it_is_copied() {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend_from_slice(&1920u32.to_be_bytes());
+        png.extend_from_slice(&1080u32.to_be_bytes());
+        png.resize(64, 0);
+        assert!(png_fits(&png));
+        png[16..20].copy_from_slice(&60_000u32.to_be_bytes());
+        png[20..24].copy_from_slice(&60_000u32.to_be_bytes());
+        assert!(!png_fits(&png), "3.6 billion pixels");
+        assert!(!png_fits(&[0; 64]), "not a PNG");
+
+        let dib = |w: i32, h: i32| {
+            let mut d = vec![0u8; 64];
+            d[..4].copy_from_slice(&40i32.to_le_bytes());
+            d[4..8].copy_from_slice(&w.to_le_bytes());
+            d[8..12].copy_from_slice(&h.to_le_bytes());
+            d
+        };
+        assert!(dib_fits(&dib(3840, 2160)));
+        assert!(dib_fits(&dib(3840, -2160)), "a top-down bitmap has a negative height");
+        assert!(!dib_fits(&dib(40_000, 40_000)));
+        assert!(!dib_fits(&dib(0, 10)));
+        assert!(!dib_fits(&[]));
+    }
+
+    #[test]
     fn only_a_zero_flag_keeps_a_copy_out_of_the_history() {
         assert!(is_barred_from_history(&[0, 0, 0, 0]));
         assert!(!is_barred_from_history(&[1, 0, 0, 0]), "1 means it may be included");
@@ -473,6 +628,34 @@ mod tests {
                 Content::Image(_) => "<image>".to_string(),
             })
             .collect()
+    }
+
+    #[test]
+    fn old_entries_are_forgotten_and_new_ones_stay() {
+        let mut h = History::new();
+        h.add(text("old"));
+        let start = Instant::now();
+        std::thread::sleep(Duration::from_millis(30));
+        h.add(text("new"));
+        assert_eq!(h.items.len(), h.copied.len());
+        let keep = Duration::from_millis(25);
+        // Long enough after the first copy, not yet after the second.
+        assert!(h.expire(start + Duration::from_millis(26), keep), "the first one is old enough");
+        assert_eq!(texts(&h), ["new"]);
+        assert!(!h.expire(start + Duration::from_millis(26), keep), "nothing more to forget");
+        assert!(h.next_expiry(keep).is_some());
+        assert!(h.expire(start + Duration::from_secs(60), keep));
+        assert!(h.items.is_empty() && h.copied.is_empty());
+        assert_eq!(h.next_expiry(keep), None);
+        // Removing, clearing and copying the same thing again keep the two lists in step.
+        h.add(text("a"));
+        h.add(text("b"));
+        h.add(text("a"));
+        assert_eq!((texts(&h), h.copied.len()), (vec!["a".to_string(), "b".to_string()], 2));
+        h.remove(0);
+        assert_eq!((h.items.len(), h.copied.len()), (1, 1));
+        h.clear();
+        assert_eq!((h.items.len(), h.copied.len()), (0, 0));
     }
 
     #[test]
