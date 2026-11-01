@@ -307,6 +307,21 @@ impl App {
         }
     }
 
+    /// Remember the window the user is in, so the keyboard can be handed back to it after typing in the notch.
+    pub(crate) fn remember_foreground(&mut self) {
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+        let front = unsafe { GetForegroundWindow() };
+        self.prev_foreground = (!front.is_invalid()).then_some(front);
+    }
+
+    /// Give the keyboard back to the window remembered, if there is one.
+    pub(crate) fn restore_foreground(&mut self) {
+        use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+        if let Some(window) = self.prev_foreground.take() {
+            let _ = unsafe { SetForegroundWindow(window) };
+        }
+    }
+
     /// Make clicks on the notch not steal focus from the user's current app.
     pub(crate) fn make_non_activating(&self) {
         use windows::Win32::Foundation::HWND;

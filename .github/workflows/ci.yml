@@ -19,7 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # rust-toolchain.toml makes rustup install the stable compiler with clippy on the first cargo call.
-      - uses: Swatinem/rust-cache@v2
+      # Not one of GitHub's own actions, so it is pinned to an exact commit (version 2.9.3): a tag can be moved
+      # to other code, a commit cannot. Dependabot proposes newer ones.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests

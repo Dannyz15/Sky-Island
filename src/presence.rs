@@ -1,7 +1,9 @@
 //! Watches whether the user is at the computer and whether a full-screen app is in front.
 //! Runs on its own thread and only wakes the UI when one of them changes.
 
-use std::thread;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{self, Thread};
 use std::time::Duration;
 
 use windows::Win32::Foundation::{HWND, RECT};
@@ -13,10 +15,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINF
 use windows::Win32::UI::Shell::{
     QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState,
 };
+use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GW_HWNDPREV, GWL_EXSTYLE, GetForegroundWindow, GetShellWindow, GetWindow, GetWindowLongPtrW, GetWindowRect,
-    GetWindowThreadProcessId, HWND_TOPMOST, IsIconic, IsWindowVisible, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SetWindowPos, WS_EX_TOPMOST,
+    DispatchMessageW, EVENT_SYSTEM_FOREGROUND, GW_HWNDPREV, GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetMessageW,
+    GetShellWindow, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, HWND_TOPMOST, IsIconic, IsWindowVisible, MSG,
+    SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, TranslateMessage, WINEVENT_OUTOFCONTEXT,
+    WS_CAPTION, WS_EX_TOPMOST,
 };
 use winit::event_loop::EventLoopProxy;
 
@@ -71,9 +75,15 @@ pub fn classify(idle: Duration) -> Presence {
     }
 }
 
+/// Set when another window came to the front, so the look at full screen is not left to the next tick.
+static FRONT_CHANGED: AtomicBool = AtomicBool::new(false);
+static WATCHER: OnceLock<Thread> = OnceLock::new();
+
 /// `island` is the notch window's handle, which this thread also keeps in front (see `keep_in_front`).
 pub fn spawn(proxy: EventLoopProxy<UserEvent>, island: isize) {
     thread::spawn(move || {
+        let _ = WATCHER.set(thread::current());
+        watch_foreground();
         let mut last = (Presence::Active, Fullscreen::No);
         let mut seen = screens();
         loop {
@@ -88,7 +98,36 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>, island: isize) {
                 seen = now;
                 let _ = proxy.send_event(UserEvent::Screens);
             }
-            thread::sleep(POLL);
+            // A window just came to the front: look again once it has had a moment to settle (a game may
+            // still be changing its size), instead of waiting for the next tick.
+            if FRONT_CHANGED.swap(false, Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(300));
+                continue;
+            }
+            thread::park_timeout(POLL);
+        }
+    });
+}
+
+/// Windows says when another window comes to the front; that wakes the thread above at once, so a full-screen
+/// app hides the notch (and leaving it brings the notch back) without waiting for the next look.
+fn watch_foreground() {
+    unsafe extern "system" fn front_changed(_: HWINEVENTHOOK, _: u32, _: HWND, _: i32, _: i32, _: u32, _: u32) {
+        FRONT_CHANGED.store(true, Ordering::Relaxed);
+        if let Some(thread) = WATCHER.get() {
+            thread.unpark();
+        }
+    }
+    // The hook belongs to the thread that sets it up, which has to keep taking messages.
+    thread::spawn(|| unsafe {
+        let hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(front_changed), 0, 0, WINEVENT_OUTOFCONTEXT);
+        if hook.is_invalid() {
+            return;
+        }
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
         }
     });
 }
@@ -185,6 +224,38 @@ fn idle_time() -> Duration {
     }
 }
 
+/// Whether a window with no title bar covers the whole of a screen (`window` and `screen` are areas).
+fn covers_whole_screen(window: Area, screen: Area, style: u32) -> bool {
+    style & WS_CAPTION.0 != WS_CAPTION.0 && window.0 <= screen.0 && window.1 <= screen.1 && window.2 >= screen.2 && window.3 >= screen.3
+}
+
+/// A game or player in "borderless windowed" mode is a window with no title bar the size of the screen, which
+/// Windows does not always count as full screen. Its screen, if the window in front is one. The desktop, the
+/// shell's own windows and this app's are not an app in full screen.
+fn borderless() -> Option<Area> {
+    unsafe {
+        let front = GetForegroundWindow();
+        if front.0.is_null() || front == GetShellWindow() || !IsWindowVisible(front).as_bool() || IsIconic(front).as_bool() {
+            return None;
+        }
+        let (mut owner, mut shell) = (0u32, 0u32);
+        GetWindowThreadProcessId(front, Some(&mut owner));
+        GetWindowThreadProcessId(GetShellWindow(), Some(&mut shell));
+        if owner == shell || owner == GetCurrentProcessId() {
+            return None;
+        }
+        let mut rect = RECT::default();
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        let monitor = MonitorFromWindow(front, MONITOR_DEFAULTTONULL);
+        if GetWindowRect(front, &mut rect).is_err() || monitor.is_invalid() || !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return None;
+        }
+        let (window, screen) = ((rect.left, rect.top, rect.right, rect.bottom), info.rcMonitor);
+        let screen = (screen.left, screen.top, screen.right, screen.bottom);
+        covers_whole_screen(window, screen, GetWindowLongPtrW(front, GWL_STYLE) as u32).then_some(screen)
+    }
+}
+
 /// Windows decides whether a full-screen app is in front; the monitor of the window in front says which
 /// screen it is on.
 fn fullscreen() -> Fullscreen {
@@ -193,7 +264,7 @@ fn fullscreen() -> Fullscreen {
         Err(_) => false,
     };
     if !busy {
-        return Fullscreen::No;
+        return borderless().map_or(Fullscreen::No, Fullscreen::On);
     }
     unsafe {
         let front = GetForegroundWindow();
@@ -237,6 +308,18 @@ mod tests {
         assert!(!overlaps(notch, (0, 0, 853, 1080)), "touching edges share no pixel");
         assert!(!overlaps(notch, (853, 35, 1068, 400)), "just below it");
         assert!(!overlaps(notch, (1068, 0, 1920, 1080)), "to the right of it");
+    }
+
+    #[test]
+    fn only_a_window_without_a_title_bar_that_fills_the_screen_counts_as_full_screen() {
+        let (screen, bar) = ((0, 0, 1920, 1080), WS_CAPTION.0);
+        assert!(covers_whole_screen((0, 0, 1920, 1080), screen, 0), "a borderless window the size of the screen");
+        assert!(covers_whole_screen((-8, -8, 1928, 1088), screen, 0), "a little larger is still covering it");
+        assert!(!covers_whole_screen((0, 0, 1920, 1080), screen, bar), "a title bar: an ordinary maximised window");
+        assert!(!covers_whole_screen((0, 0, 1920, 1040), screen, 0), "the taskbar still shows");
+        assert!(!covers_whole_screen((100, 100, 900, 700), screen, 0), "a small window");
+        assert!(covers_whole_screen((1920, 0, 3840, 1080), (1920, 0, 3840, 1080), 0), "on a second screen");
+        assert!(!covers_whole_screen((0, 0, 1920, 1080), (1920, 0, 3840, 1080), 0), "that is on another screen");
     }
 
     #[test]

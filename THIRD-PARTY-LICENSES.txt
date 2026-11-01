@@ -45,7 +45,7 @@ image 0.25.10  [MIT OR Apache-2.0]  https://github.com/image-rs/image
 itoa 1.0.18  [MIT OR Apache-2.0]  https://github.com/dtolnay/itoa
 keyboard-types 0.8.3  [MIT OR Apache-2.0]  https://github.com/rust-windowing/keyboard-types
 libm 0.2.16  [MIT]  https://github.com/rust-lang/compiler-builtins
-log 0.4.34  [MIT OR Apache-2.0]  https://github.com/rust-lang/log
+log 0.4.35  [MIT OR Apache-2.0]  https://github.com/rust-lang/log
 memchr 2.8.3  [Unlicense OR MIT]  https://github.com/BurntSushi/memchr
 miniz_oxide 0.8.9  [MIT OR Zlib OR Apache-2.0]  https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 miniz_oxide 0.9.1  [MIT OR Zlib OR Apache-2.0]  https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
@@ -580,7 +580,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-Used by: arrayvec 0.7.8, base64 0.23.1, bitflags 2.13.2, cfg-if 1.0.5, crossbeam-channel 0.5.17, crossbeam-utils 0.8.23, equivalent 1.0.3, flate2 1.1.10, hashbrown 0.15.5, httparse 1.10.1, keyboard-types 0.8.3, log 0.4.34, muda 0.21.2, num-traits 0.2.19, once_cell 1.21.4, percent-encoding 2.3.2, png 0.18.1, rustls 0.23.46, smol_str 0.2.2, tray-icon 0.26.1, ttf-parser 0.25.1, unicode-segmentation 1.13.3
+Used by: arrayvec 0.7.8, base64 0.23.1, bitflags 2.13.2, cfg-if 1.0.5, crossbeam-channel 0.5.17, crossbeam-utils 0.8.23, equivalent 1.0.3, flate2 1.1.10, hashbrown 0.15.5, httparse 1.10.1, keyboard-types 0.8.3, log 0.4.35, muda 0.21.2, num-traits 0.2.19, once_cell 1.21.4, percent-encoding 2.3.2, png 0.18.1, rustls 0.23.46, smol_str 0.2.2, tray-icon 0.26.1, ttf-parser 0.25.1, unicode-segmentation 1.13.3
 ================================================================================
 
 Apache License
@@ -842,7 +842,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ================================================================================
-Used by: bitflags 2.13.2, log 0.4.34, num-traits 0.2.19
+Used by: bitflags 2.13.2, log 0.4.35, num-traits 0.2.19
 ================================================================================
 
 Copyright (c) 2014 The Rust Project Developers

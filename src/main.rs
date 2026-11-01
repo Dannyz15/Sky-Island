@@ -74,6 +74,8 @@ pub enum UserEvent {
     Clip(clipboard::Content),
     /// A screen was plugged in or out, changed its size or position, or the taskbar moved.
     Screens,
+    /// Shelf files that were found missing when the app started.
+    ShelfMissing(Vec<PathBuf>),
     /// A shelf file's icon, loaded off the UI thread; `None` when the shell has none.
     Icon { path: PathBuf, icon: Option<Pixmap> },
     /// The answer to "Check for updates".

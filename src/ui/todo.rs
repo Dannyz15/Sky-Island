@@ -15,9 +15,7 @@ impl App {
     /// Open the editor for a new task, or for the task at `target`. Remember which app had focus,
     /// then take it so key presses reach us.
     pub(crate) fn start_editing(&mut self, target: Option<usize>) {
-        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-        let fg = unsafe { GetForegroundWindow() };
-        self.prev_foreground = (!fg.is_invalid()).then_some(fg);
+        self.remember_foreground();
         let clock = clock_now();
         match target.and_then(|i| self.todo.tasks.get(i).map(|task| (i, task))) {
             Some((i, task)) => {
@@ -40,15 +38,12 @@ impl App {
 
     /// Stop typing and give focus back to the app the user was in.
     pub(crate) fn stop_editing(&mut self) {
-        use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
         if !self.editing {
             return;
         }
         self.editing = false;
         self.last_tick = Instant::now();
-        if let Some(h) = self.prev_foreground.take() {
-            let _ = unsafe { SetForegroundWindow(h) };
-        }
+        self.restore_foreground();
         if let Some(w) = &self.window {
             w.request_redraw();
         }

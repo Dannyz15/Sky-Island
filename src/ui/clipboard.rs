@@ -37,10 +37,7 @@ impl App {
         let clear = CLIP_CLEAR;
         let (x, y, w, h) = clear;
         let hot = self.hot_t(clear, s);
-        let red = [255, 96, 86];
-        gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, h * s / 2.0, [red[0], red[1], red[2], (alpha * pick(80.0, 48.0, hot)) as u8], [red[0], red[1], red[2], (alpha * pick(46.0, 22.0, hot)) as u8], false);
-        gfx::stroke_rounded(pm, x * s + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, h * s / 2.0, s, [red[0], red[1], red[2], (alpha * 90.0) as u8]);
-        draw_text_centered(pm, font, "Clear", (x + w / 2.0) * s, (y + 15.0) * s, 12.0 * s, [255, 130, 120, a], w * s);
+        draw_clear_pill(pm, font, (x * s, y * s, w * s, h * s), s, alpha, hot, 12.0 * s, 15.0 * s);
 
         if !self.settings.clipboard || count == 0 {
             let (title, hint) = if self.settings.clipboard {

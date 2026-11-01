@@ -132,11 +132,7 @@ pub(crate) fn stroke_arc(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, width: f32, 
         }
     }
     if let Some(path) = pb.finish() {
-        let mut paint = Paint::default();
-        {
-            let c = theme::map(c);
-            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
-        }
+        let mut paint = solid(c);
         paint.anti_alias = true;
         let stroke = Stroke { width, line_cap: if frac >= 0.999 { LineCap::Butt } else { LineCap::Round }, ..Default::default() };
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -157,11 +153,7 @@ pub(crate) fn stroke_arc_from(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, width: 
         }
     }
     if let Some(path) = pb.finish() {
-        let mut paint = Paint::default();
-        {
-            let c = theme::map(c);
-            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
-        }
+        let mut paint = solid(c);
         paint.anti_alias = true;
         let stroke = Stroke { width, line_cap: LineCap::Round, ..Default::default() };
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -173,11 +165,7 @@ pub(crate) fn stroke_line(pm: &mut Pixmap, x1: f32, y1: f32, x2: f32, y2: f32, w
     pb.move_to(x1, y1);
     pb.line_to(x2, y2);
     if let Some(path) = pb.finish() {
-        let mut paint = Paint::default();
-        {
-            let c = theme::map(c);
-            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
-        }
+        let mut paint = solid(c);
         paint.anti_alias = true;
         let stroke = Stroke { width, line_cap: LineCap::Round, ..Default::default() };
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -207,11 +195,7 @@ pub(crate) fn stroke_poly(pm: &mut Pixmap, pts: &[(f32, f32)], width: f32, c: [u
         pb.close();
     }
     if let Some(path) = pb.finish() {
-        let mut paint = Paint::default();
-        {
-            let c = theme::map(c);
-            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
-        }
+        let mut paint = solid(c);
         paint.anti_alias = true;
         let stroke = Stroke { width, line_cap: LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -221,16 +205,12 @@ pub(crate) fn stroke_poly(pm: &mut Pixmap, pts: &[(f32, f32)], width: f32, c: [u
 /// Fill a path and/or draw its outline, with the theme's colours.
 pub(crate) fn paint_path(pm: &mut Pixmap, path: &tiny_skia::Path, fill: Option<[u8; 4]>, outline: Option<(f32, [u8; 4])>) {
     if let Some(c) = fill {
-        let c = theme::map(c);
-        let mut paint = Paint::default();
-        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        let mut paint = solid(c);
         paint.anti_alias = true;
         pm.fill_path(path, &paint, FillRule::Winding, Transform::identity(), None);
     }
     if let Some((width, c)) = outline {
-        let c = theme::map(c);
-        let mut paint = Paint::default();
-        paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+        let mut paint = solid(c);
         paint.anti_alias = true;
         let stroke = Stroke { width, line_cap: LineCap::Round, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
         pm.stroke_path(path, &paint, &stroke, Transform::identity(), None);
@@ -256,13 +236,26 @@ pub(crate) fn soft_box(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, 
     gfx::stroke_rounded(pm, x + width / 2.0, y + width / 2.0, w - width, h - width, r, width, c);
 }
 
+/// A paint of one colour, as the theme shows it.
+fn solid(c: [u8; 4]) -> Paint<'static> {
+    let c = theme::map(c);
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+    paint
+}
+
+/// The red "Clear" pill of the shelf and the clipboard: `(x, y, w, h)` in pixels, `hot` how much the mouse is
+/// over it, `size` the text size and `baseline` where the text sits below the top of the pill.
+pub(crate) fn draw_clear_pill(pm: &mut Pixmap, font: &Font, (x, y, w, h): (f32, f32, f32, f32), s: f32, alpha: f32, hot: f32, size: f32, baseline: f32) {
+    let red = [255, 96, 86];
+    gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [red[0], red[1], red[2], (alpha * pick(80.0, 48.0, hot)) as u8], [red[0], red[1], red[2], (alpha * pick(46.0, 22.0, hot)) as u8], false);
+    gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [red[0], red[1], red[2], (alpha * 90.0) as u8]);
+    draw_text_centered(pm, font, "Clear", x + w / 2.0, y + baseline, size, [255, 130, 120, (alpha * 255.0) as u8], w);
+}
+
 pub(crate) fn fill_circle(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, c: [u8; 4]) {
     if let Some(path) = PathBuilder::from_circle(cx, cy, r) {
-        let mut paint = Paint::default();
-        {
-            let c = theme::map(c);
-            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
-        }
+        let mut paint = solid(c);
         paint.anti_alias = true;
         pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
     }
@@ -282,11 +275,7 @@ pub(crate) fn fill_rounded(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f
     pb.quad_to(x, y, x + r, y);
     pb.close();
     if let Some(path) = pb.finish() {
-        let mut paint = Paint::default();
-        {
-            let c = theme::map(c);
-            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
-        }
+        let mut paint = solid(c);
         paint.anti_alias = true;
         pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
     }
@@ -294,11 +283,7 @@ pub(crate) fn fill_rounded(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f
 
 pub(crate) fn fill_rect(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, c: [u8; 4]) {
     let Some(rect) = Rect::from_xywh(x, y, w.max(0.01), h) else { return };
-    let mut paint = Paint::default();
-    {
-            let c = theme::map(c);
-            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
-        }
+    let paint = solid(c);
     pm.fill_rect(rect, &paint, Transform::identity(), None);
 }
 
@@ -310,11 +295,7 @@ pub(crate) fn fill_path(pm: &mut Pixmap, pts: &[(f32, f32)], c: [u8; 4]) {
     }
     pb.close();
     if let Some(path) = pb.finish() {
-        let mut paint = Paint::default();
-        {
-            let c = theme::map(c);
-            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
-        }
+        let mut paint = solid(c);
         paint.anti_alias = true;
         pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
     }

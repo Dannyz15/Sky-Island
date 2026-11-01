@@ -32,19 +32,15 @@ impl App {
     /// Take the keyboard while files are highlighted (the notch never takes focus on its own), so that
     /// Ctrl+A and Esc reach it, and give it back to the app the user was in once nothing is highlighted.
     pub(crate) fn sync_selection_focus(&mut self) {
-        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
         if !self.selected.is_empty() && !self.selecting && !self.editing && self.timer_field.is_none() {
-            let fg = unsafe { GetForegroundWindow() };
-            self.prev_foreground = (!fg.is_invalid()).then_some(fg);
+            self.remember_foreground();
             self.selecting = true;
             if let Some(w) = &self.window {
                 w.focus_window();
             }
         } else if self.selected.is_empty() && self.selecting {
             self.selecting = false;
-            if let Some(h) = self.prev_foreground.take() {
-                let _ = unsafe { SetForegroundWindow(h) };
-            }
+            self.restore_foreground();
         }
     }
 
@@ -107,14 +103,9 @@ impl App {
             return;
         }
         let alpha = alpha * (self.switch_t as f32).clamp(0.0, 1.0);
-        let a = (alpha * 255.0) as u8;
         let r = shelf_clear_rect(pm.height() as f32 / s);
         let hot = self.hot_t((r.0, r.1 + TAB_SHIFT, r.2, r.3), s);
-        let (x, y, w, h) = (r.0 * s, r.1 * s, r.2 * s, r.3 * s);
-        let red = [255, 96, 86];
-        gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [red[0], red[1], red[2], (alpha * pick(80.0, 48.0, hot)) as u8], [red[0], red[1], red[2], (alpha * pick(46.0, 22.0, hot)) as u8], false);
-        gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [red[0], red[1], red[2], (alpha * 90.0) as u8]);
-        draw_text_centered(pm, font, "Clear", x + w / 2.0, y + 11.5 * s, 10.0 * s, [255, 130, 120, a], w);
+        draw_clear_pill(pm, font, (r.0 * s, r.1 * s, r.2 * s, r.3 * s), s, alpha, hot, 10.0 * s, 11.5 * s);
     }
 
     pub(crate) fn draw_shelf(&self, pm: &mut Pixmap, s: f32, alpha: f32) {

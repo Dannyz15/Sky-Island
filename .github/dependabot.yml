@@ -1,0 +1,18 @@
+# Keeps the project's building blocks up to date: GitHub opens a pull request when a Rust crate or a GitHub
+# Action in the CI workflow has a newer version. Each one runs the CI (lint, tests, release build) before it
+# can be merged, so nothing changes by itself.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    # Small updates of the crates come together in one pull request instead of one for each.
+    groups:
+      crates:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

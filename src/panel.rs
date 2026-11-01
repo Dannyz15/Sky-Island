@@ -9,6 +9,7 @@
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use serde_json::{Value, json};
 use softbuffer::{Context, Surface};
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 use winit::dpi::{LogicalSize, PhysicalPosition};
@@ -17,9 +18,11 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Fullscreen, Icon, Window, WindowButtons};
 
+use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsZoomed};
+
 use crate::motion::Glows;
 use crate::settings::{self, ClipKeep, EyeStyle, Motion, NotchSize, Range, Screen, Settings, ThemeMode};
-use crate::{App, View, appicon, gfx, theme};
+use crate::{App, View, appicon, gfx, store, theme};
 
 const WIDTH: f64 = 840.0;
 const HEIGHT: f64 = 700.0;
@@ -115,6 +118,7 @@ enum Slide {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Act {
     OpenFolder,
+    ClearLyrics,
     CheckUpdate,
     Changelog,
     Reset,
@@ -329,6 +333,7 @@ fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Check for updates", "", Button(Act::CheckUpdate), "Check for updates"),
                     ("Changelog", "What changed in each version", Button(Act::Changelog), "View"),
                     ("Open data folder", "Your settings, tasks and shelf live here", Button(Act::OpenFolder), "Open"),
+                    ("Lyrics cache", "Lyrics saved on this PC for the songs you played", Button(Act::ClearLyrics), "Clear"),
                     ("Reset to defaults", "Put every setting back to what a fresh install has", Button(Act::Reset), "Reset"),
                 ],
             ),
@@ -408,6 +413,132 @@ fn backdrop_is_for(cached: &Option<(u32, u32, [u8; 3], bool, Pixmap)>, size: (u3
 /// How far a page can scroll in a window `height` logical pixels tall: 0 when it all fits.
 fn scroll_limit(lay: &Layout, height: f32) -> f32 {
     (lay.bottom() + BOTTOM_PAD - height).max(0.0)
+}
+
+/// A scroll bar: its track is `height` logical pixels tall, from `top`, at `x`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Bar {
+    x: f32,
+    top: f32,
+    height: f32,
+}
+
+impl Bar {
+    /// How long the thumb is for a page that scrolls `max`: the share of the page that shows, but never tiny.
+    fn thumb(&self, max: f32) -> f32 {
+        (self.height * self.height / (self.height + max)).clamp(26.0_f32.min(self.height), self.height)
+    }
+
+    fn thumb_top(&self, scroll: f32, max: f32) -> f32 {
+        self.top + (self.height - self.thumb(max)) * (scroll / max).clamp(0.0, 1.0)
+    }
+
+    /// How far the page is scrolled when the thumb's top is at `thumb_top`.
+    fn scroll_at(&self, thumb_top: f32, max: f32) -> f32 {
+        let room = self.height - self.thumb(max);
+        if room <= 0.0 { 0.0 } else { ((thumb_top - self.top) / room).clamp(0.0, 1.0) * max }
+    }
+
+    /// Whether the mouse is on the bar or close enough to take hold of it.
+    fn grabs(&self, x: f32, y: f32) -> bool {
+        x >= self.x - 8.0 && x <= self.x + 11.0 && y >= self.top && y <= self.top + self.height
+    }
+}
+
+/// The bar of a page in a window `width` x `height` logical pixels.
+fn page_bar(width: f32, height: f32) -> Bar {
+    Bar { x: width - 12.0, top: SCROLL_TOP + 6.0, height: height - SCROLL_TOP - 18.0 }
+}
+
+/// The bar inside the changelog's card.
+fn changelog_bar(frame: Frame, height: f32) -> Bar {
+    let card_h = height - CHANGELOG_TOP - 18.0;
+    Bar { x: frame.x + frame.w - 9.0, top: CHANGELOG_TOP + 14.0, height: card_h - 28.0 }
+}
+
+/// Where a scroll bar is being dragged: which one, and how far below the top of the thumb the mouse took hold.
+#[derive(Clone, Copy)]
+struct BarDrag {
+    changelog: bool,
+    grab: f32,
+}
+
+/// Which keys scroll a page.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ScrollKey {
+    PageUp,
+    PageDown,
+    Home,
+    End,
+}
+
+/// Where a page is scrolled to after a key, when `view` is the height that shows and `max` the furthest it goes.
+/// A page key moves by the view less a few lines, so the line the eye was on stays in sight.
+fn scrolled_by_key(pos: f32, max: f32, view: f32, key: ScrollKey) -> f32 {
+    let page = (view - 40.0).max(40.0);
+    let to = match key {
+        ScrollKey::PageUp => pos - page,
+        ScrollKey::PageDown => pos + page,
+        ScrollKey::Home => 0.0,
+        ScrollKey::End => max,
+    };
+    to.clamp(0.0, max)
+}
+
+/// Where the settings window was when it was closed: its size in the units of the default window (so it
+/// means the same on a screen with another scale) and where its top left corner was on the desktop.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Spot {
+    width: f64,
+    height: f64,
+    x: i32,
+    y: i32,
+}
+
+impl Spot {
+    fn load() -> Option<Spot> {
+        Self::from_json(&store::read_json(&store::path("settings-window.json")?)?)
+    }
+
+    /// The spot a file says, or `None` when it is missing a number or has a silly one. A size a little under the
+    /// smallest window (the window at its smallest, rounded) is fine: `size_on_screen` brings it up to it.
+    fn from_json(v: &Value) -> Option<Spot> {
+        let float = |k: &str| v.get(k).and_then(Value::as_f64).filter(|n| n.is_finite());
+        let int = |k: &str| v.get(k).and_then(Value::as_i64).and_then(|n| i32::try_from(n).ok());
+        let (width, height) = (float("width")?, float("height")?);
+        if !(100.0..=10_000.0).contains(&width) || !(100.0..=10_000.0).contains(&height) {
+            return None;
+        }
+        Some(Spot { width, height, x: int("x")?, y: int("y")? })
+    }
+
+    fn to_json(self) -> Value {
+        json!({ "width": self.width, "height": self.height, "x": self.x, "y": self.y })
+    }
+
+    fn save(self) {
+        if cfg!(test) {
+            return;
+        }
+        if let Some(path) = store::path("settings-window.json") {
+            store::write(&path, &self.to_json().to_string());
+        }
+    }
+}
+
+/// The size to open at, in the units of the default window: the one remembered, but no smaller than the window
+/// can be and no bigger than a screen of `screen_w` x `screen_h` physical pixels at scale `sf` has room for.
+fn size_on_screen(width: f64, height: f64, screen_w: f64, screen_h: f64, sf: f64, fit: f64) -> (f64, f64) {
+    let max_w = (screen_w * 0.96 / sf / fit).max(WIDTH);
+    let max_h = ((screen_h / sf - 130.0) / fit).max(MIN_HEIGHT);
+    (width.clamp(WIDTH, max_w), height.clamp(MIN_HEIGHT, max_h))
+}
+
+/// Whether a window whose top left corner is at (`x`, `y`) has its title bar on one of the screens
+/// (each `(left, top, width, height)`), so it can still be taken hold of.
+fn on_a_screen(x: i32, y: i32, screens: &[(i32, i32, u32, u32)]) -> bool {
+    let (px, py) = (x + 120, y + 16);
+    screens.iter().any(|&(l, t, w, h)| px >= l && px < l + w as i32 && py >= t && py < t + h as i32)
 }
 
 /// Everything on a page, laid out in logical pixels.
@@ -502,6 +633,15 @@ fn fit_to_screen(width: f64, height: f64, sf: f64) -> f64 {
     let room_h = height - 130.0 * sf;
     let room_w = width * 0.96;
     (room_h / (HEIGHT * sf)).min(room_w / (WIDTH * sf)).clamp(0.55, 1.0)
+}
+
+/// The Windows handle of a window.
+fn hwnd_of(window: &Window) -> Option<windows::Win32::Foundation::HWND> {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(windows::Win32::Foundation::HWND(h.hwnd.get() as *mut _)),
+        _ => None,
+    }
 }
 
 /// Ask for a sound file with the standard Windows Open dialog.
@@ -639,11 +779,17 @@ pub(crate) struct Panel {
     scroll: f32,
     scroll_max: f32,
     scroll_shown: f32,
+    /// The scroll bar being dragged.
+    bar_drag: Option<BarDrag>,
+    /// Where the window last was in its ordinary state (not maximised or full screen), as it moves and is resized.
+    spot: Option<Spot>,
     /// The page being shown, and since when (for its fade).
     page: Page,
     page_since: Instant,
     /// "Reset to defaults" was clicked once and waits for a second click until this time.
     pub(crate) reset_armed: Option<Instant>,
+    /// How many saved songs the Clear button just removed, and until when to say so.
+    pub(crate) cleared: Option<(usize, Instant)>,
     last_draw: Instant,
     /// When the window opened, for its entrance.
     opened: Instant,
@@ -678,6 +824,71 @@ impl Panel {
         self.window.request_redraw();
     }
 
+    /// The scroll bar of what is shown, with how far it is scrolled and how far it can go.
+    fn bar(&self) -> (Bar, f32, f32) {
+        let (width, height) = self.logical_size();
+        if self.show_changelog {
+            (changelog_bar(frame_for(width), height), self.changelog_scroll, self.changelog_max)
+        } else {
+            (page_bar(width, height), self.scroll_shown, self.scroll_max)
+        }
+    }
+
+    /// Take hold of the scroll bar if the mouse is on it: the thumb is gripped where it is, and a click on the
+    /// track above or below it brings the thumb under the mouse. Returns whether the mouse was on the bar.
+    fn grab_bar(&mut self) -> bool {
+        let (bar, scroll, max) = self.bar();
+        let (x, y) = self.cursor;
+        if max <= 0.0 || !bar.grabs(x, y) {
+            return false;
+        }
+        let (top, len) = (bar.thumb_top(scroll, max), bar.thumb(max));
+        let grab = if y >= top && y <= top + len { y - top } else { len / 2.0 };
+        self.bar_drag = Some(BarDrag { changelog: self.show_changelog, grab });
+        self.drag_bar_to(y);
+        true
+    }
+
+    /// Move what is scrolled so the thumb follows the mouse at height `y`.
+    fn drag_bar_to(&mut self, y: f32) {
+        let Some(drag) = self.bar_drag else { return };
+        let (bar, _, max) = self.bar();
+        let to = bar.scroll_at(y - drag.grab, max);
+        if drag.changelog {
+            self.changelog_scroll = to;
+        } else {
+            self.scroll = to;
+        }
+        self.redraw();
+    }
+
+    /// PageUp, PageDown, Home or End: scroll the page (or the changelog) shown.
+    fn scroll_key(&mut self, key: ScrollKey) {
+        let height = self.logical_size().1;
+        if self.show_changelog {
+            let view = height - CHANGELOG_TOP - 28.0;
+            self.changelog_scroll = scrolled_by_key(self.changelog_scroll, self.changelog_max, view, key);
+        } else {
+            self.scroll = scrolled_by_key(self.scroll, self.scroll_max, height - SCROLL_TOP, key);
+        }
+        self.redraw();
+    }
+
+    /// Note where the window is, so it can open there next time. Not while it is full screen, maximised or minimised:
+    /// then what was noted last, the window as it was in its ordinary state, stays.
+    fn note_spot(&mut self) {
+        let w = &self.window;
+        // Windows is asked itself: the window's own record of being maximised comes a moment after the first
+        // "moved" event of the change, which would note the maximised rectangle as the ordinary one.
+        let (zoomed, iconic) = hwnd_of(w).map_or((false, false), |h| unsafe { (IsZoomed(h).as_bool(), IsIconic(h).as_bool()) });
+        if w.fullscreen().is_some() || zoomed || iconic || w.is_maximized() || w.is_minimized().unwrap_or(false) {
+            return;
+        }
+        let Ok(pos) = w.outer_position() else { return };
+        let (size, s) = (w.inner_size(), self.scale() as f64);
+        self.spot = Some(Spot { width: size.width as f64 / s, height: size.height as f64 / s, x: pos.x, y: pos.y });
+    }
+
     fn show(&mut self, page: Page) {
         // Choosing a page also leaves the changelog.
         if self.show_changelog {
@@ -691,6 +902,16 @@ impl Panel {
             self.drag = None;
             self.scroll = 0.0;
             self.redraw();
+        }
+    }
+}
+
+impl Drop for Panel {
+    /// However the window goes (closed, Escape, the app quitting), it opens in the same place next time.
+    fn drop(&mut self) {
+        self.note_spot();
+        if let Some(spot) = self.spot {
+            spot.save();
         }
     }
 }
@@ -874,19 +1095,34 @@ impl App {
         }
         let Ok(window) = event_loop.create_window(attrs) else { return };
         let window = Rc::new(window);
+        // Where the window was last time, if that is still on a screen: it goes there first, so the screen it
+        // is on (and its scale) is the one the size below is worked out for.
+        let spot = Spot::load();
+        let screens: Vec<_> = window.available_monitors().map(|m| (m.position().x, m.position().y, m.size().width, m.size().height)).collect();
+        let at = spot.filter(|s| on_a_screen(s.x, s.y, &screens));
+        if let Some(s) = at {
+            window.set_outer_position(PhysicalPosition::new(s.x, s.y));
+        }
         // On a screen too small for the whole window (a laptop at 150 percent), the window and everything
         // in it are shrunk to fit, with room left for the title bar and the taskbar.
-        let fit = window.current_monitor().or_else(|| window.primary_monitor()).map_or(1.0, |m| {
-            let sf = window.scale_factor();
-            fit_to_screen(m.size().width as f64, m.size().height as f64, sf)
-        });
-        if fit < 1.0 {
-            let _ = window.request_inner_size(LogicalSize::new(WIDTH * fit, HEIGHT * fit));
+        let monitor = window.current_monitor().or_else(|| window.primary_monitor());
+        let sf = window.scale_factor();
+        let screen = monitor.as_ref().map(|m| (m.size().width as f64, m.size().height as f64));
+        let fit = screen.map_or(1.0, |(w, h)| fit_to_screen(w, h, sf));
+        // The size it had last time, as far as this screen has room for it.
+        let (width, height) = match (spot, screen) {
+            (Some(s), Some((w, h))) => size_on_screen(s.width, s.height, w, h, sf, fit),
+            _ => (WIDTH, HEIGHT),
+        };
+        if fit < 1.0 || (width, height) != (WIDTH, HEIGHT) {
+            let _ = window.request_inner_size(LogicalSize::new(width * fit, height * fit));
         }
         // It can be made bigger (or full screen) but not smaller than the sidebar and a page need.
         window.set_min_inner_size(Some(LogicalSize::new(WIDTH * fit, MIN_HEIGHT * fit)));
-        // In the middle of the screen the notch is on.
-        if let Some(monitor) = window.current_monitor().or_else(|| window.primary_monitor()) {
+        // Without a place to go back to: in the middle of the screen the notch is on.
+        if at.is_none()
+            && let Some(monitor) = monitor
+        {
             let (pos, size) = (monitor.position(), monitor.size());
             let outer = window.outer_size();
             let x = pos.x + (size.width as i32 - outer.width as i32) / 2;
@@ -909,9 +1145,12 @@ impl App {
             scroll: 0.0,
             scroll_max: 0.0,
             scroll_shown: 0.0,
+            bar_drag: None,
+            spot: None,
             page: Page::General,
             page_since: Instant::now().checked_sub(PAGE_FADE).unwrap_or_else(Instant::now),
             reset_armed: None,
+            cleared: None,
             last_draw: Instant::now(),
             opened: Instant::now(),
             fit,
@@ -967,6 +1206,17 @@ impl App {
                             p.show(step(-1));
                         }
                     }
+                    Key::Named(named @ (NamedKey::PageUp | NamedKey::PageDown | NamedKey::Home | NamedKey::End)) => {
+                        let key = match named {
+                            NamedKey::PageUp => ScrollKey::PageUp,
+                            NamedKey::PageDown => ScrollKey::PageDown,
+                            NamedKey::Home => ScrollKey::Home,
+                            _ => ScrollKey::End,
+                        };
+                        if let Some(p) = &mut self.panel {
+                            p.scroll_key(key);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -974,8 +1224,9 @@ impl App {
                 self.system_light = theme == winit::window::Theme::Light;
                 self.settings_changed();
             }
-            WindowEvent::Resized(_) | WindowEvent::Focused(_) => {
-                if let Some(p) = &self.panel {
+            WindowEvent::Resized(_) | WindowEvent::Moved(_) | WindowEvent::Focused(_) => {
+                if let Some(p) = &mut self.panel {
+                    p.note_spot();
                     p.redraw();
                 }
             }
@@ -996,6 +1247,8 @@ impl App {
                 let s = p.scale();
                 p.cursor = (position.x as f32 / s, position.y as f32 / s);
                 p.over_window = true;
+                let y = p.cursor.1;
+                p.drag_bar_to(y);
                 let (cx, drag, page, frame) = (p.cursor.0, p.drag, p.page, frame_for(p.logical_size().0));
                 p.redraw();
                 if let Some(slide) = drag {
@@ -1007,6 +1260,15 @@ impl App {
                 }
             }
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+                // The scroll bar is taken hold of first, and let go of wherever the mouse is when the button comes up.
+                if let Some(p) = &mut self.panel {
+                    if state == ElementState::Pressed && p.cursor.0 >= SIDEBAR_W && p.grab_bar() {
+                        return;
+                    }
+                    if state == ElementState::Released && p.bar_drag.take().is_some() {
+                        p.redraw();
+                    }
+                }
                 let Some(p) = &self.panel else { return };
                 let (cx, cy) = p.cursor;
                 let frame = frame_for(p.logical_size().0);
@@ -1094,6 +1356,13 @@ impl App {
                             let _ = std::process::Command::new("explorer").arg(dir).spawn();
                         }
                     }
+                    Kind::Button(Act::ClearLyrics) => {
+                        let removed = crate::lyrics::clear_cache();
+                        if let Some(p) = &mut self.panel {
+                            p.cleared = Some((removed, Instant::now() + Duration::from_secs(3)));
+                            p.redraw();
+                        }
+                    }
                     Kind::Button(Act::Changelog) => {
                         if let Some(p) = &mut self.panel {
                             p.show_changelog = true;
@@ -1152,17 +1421,11 @@ impl App {
             WindowEvent::MouseWheel { delta, .. } => {
                 let Some(p) = &mut self.panel else { return };
                 if p.show_changelog {
-                    let dy = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_, y) => y * 54.0,
-                        winit::event::MouseScrollDelta::PixelDelta(d) => d.y as f32,
-                    };
+                    let dy = crate::wheel(&delta, 54.0, 1.0) as f32;
                     p.changelog_scroll = (p.changelog_scroll - dy).clamp(0.0, p.changelog_max);
                     p.redraw();
                 } else {
-                    let dy = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_, y) => y * 54.0,
-                        winit::event::MouseScrollDelta::PixelDelta(d) => d.y as f32,
-                    };
+                    let dy = crate::wheel(&delta, 54.0, 1.0) as f32;
                     p.scroll = (p.scroll - dy).clamp(0.0, p.scroll_max);
                     p.redraw();
                 }
@@ -1298,7 +1561,9 @@ impl App {
         let lay = layout(page, frame);
         panel.scroll_max = scroll_limit(&lay, lh);
         panel.scroll = panel.scroll.clamp(0.0, panel.scroll_max);
-        panel.scroll_shown = panel.glows.follow(KEY_SCROLL, panel.scroll as f64, 40.0, 1.0) as f32;
+        // Dragging the scroll bar moves the page with the mouse, without the gliding of the wheel and the keys.
+        let omega = if panel.bar_drag.is_some() { 400.0 } else { 40.0 };
+        panel.scroll_shown = panel.glows.follow(KEY_SCROLL, panel.scroll as f64, omega, 1.0) as f32;
         let lay = lay.shifted(-panel.scroll_shown);
         if panel.scroll_shown < 0.5 {
             // Not scrolled: nothing reaches under the title, so the rows are drawn straight on.
@@ -1313,7 +1578,9 @@ impl App {
         }
         if panel.scroll_max > 0.0 {
             let accent = [tint[0], tint[1], tint[2], 255];
-            paint_scrollbar(target, fw / s - 12.0, SCROLL_TOP + 6.0, lh - SCROLL_TOP - 18.0, panel.scroll_shown, panel.scroll_max, accent, s);
+            let bar = page_bar(fw / s, lh);
+            let hot = panel.bar_drag.is_some() || bar.grabs(panel.cursor.0, panel.cursor.1);
+            paint_scrollbar(target, bar, panel.scroll_shown, panel.scroll_max, accent, s, hot);
         }
     }
 
@@ -1389,6 +1656,10 @@ impl App {
             let (desc, desc_ink) = match item.kind {
                 Kind::Button(Act::CheckUpdate) => self.update_note(),
                 Kind::Button(Act::Reset) if panel.reset_armed.is_some_and(|t| Instant::now() < t) => ("Click Reset again within 3 seconds to confirm".to_string(), [255, 150, 140, 255]),
+                Kind::Button(Act::ClearLyrics) if panel.cleared.is_some_and(|(_, t)| Instant::now() < t) => {
+                    let n = panel.cleared.map_or(0, |(n, _)| n);
+                    (format!("Removed {n} saved {}", if n == 1 { "song" } else { "songs" }), [120, 220, 150, 255])
+                }
                 _ => (item.desc.to_string(), [146, 146, 160, 255]),
             };
             let text_w = item.ctrl.0 - item.row.0 - 36.0;
@@ -1503,11 +1774,9 @@ impl App {
         }
         // A scroll bar when there is more than fits.
         if panel.changelog_max > 0.0 {
-            let (track_top, track_h) = (top + 6.0, bottom - top - 12.0);
-            let thumb = (track_h * track_h / (track_h + panel.changelog_max)).max(26.0);
-            let at = track_top + (track_h - thumb) * panel.changelog_scroll / panel.changelog_max;
-            crate::fill_rounded(pm, (card.0 + card.2 - 9.0) * s, track_top * s, 3.0 * s, track_h * s, 1.5 * s, [255, 255, 255, 18]);
-            crate::fill_rounded(pm, (card.0 + card.2 - 9.0) * s, at * s, 3.0 * s, thumb * s, 1.5 * s, accent);
+            let bar = changelog_bar(frame, lh);
+            let hot = panel.bar_drag.is_some() || bar.grabs(cx, cy);
+            paint_scrollbar(pm, bar, panel.changelog_scroll, panel.changelog_max, accent, s, hot);
         }
     }
 
@@ -1689,16 +1958,16 @@ impl App {
 }
 
 /// A white shape on the tile, drawn the same in the dark and the light look.
-/// A thin scroll bar: a track from `top` down `height` logical pixels at `x`, and a thumb for how far `scroll` is of `max`.
-#[allow(clippy::too_many_arguments)]
-fn paint_scrollbar(pm: &mut Pixmap, x: f32, top: f32, height: f32, scroll: f32, max: f32, accent: [u8; 4], s: f32) {
-    if max <= 0.0 || height <= 0.0 {
+/// A thin scroll bar: a track and a thumb for how far `scroll` is of `max`. It is wider while the mouse is
+/// on it (`hot`) so it is easy to see that it can be taken hold of.
+fn paint_scrollbar(pm: &mut Pixmap, bar: Bar, scroll: f32, max: f32, accent: [u8; 4], s: f32, hot: bool) {
+    if max <= 0.0 || bar.height <= 0.0 {
         return;
     }
-    let thumb = (height * height / (height + max)).clamp(26.0_f32.min(height), height);
-    let at = top + (height - thumb) * (scroll / max).clamp(0.0, 1.0);
-    crate::fill_rounded(pm, x * s, top * s, 3.0 * s, height * s, 1.5 * s, [255, 255, 255, 18]);
-    crate::fill_rounded(pm, x * s, at * s, 3.0 * s, thumb * s, 1.5 * s, accent);
+    let (width, track_alpha) = if hot { (6.0, 30) } else { (3.0, 18) };
+    let x = bar.x + 3.0 - width;
+    crate::fill_rounded(pm, x * s, bar.top * s, width * s, bar.height * s, width / 2.0 * s, [255, 255, 255, track_alpha]);
+    crate::fill_rounded(pm, x * s, bar.thumb_top(scroll, max) * s, width * s, bar.thumb(max) * s, width / 2.0 * s, accent);
 }
 
 fn fill_poly(pm: &mut Pixmap, points: &[(f32, f32)], c: [u8; 4]) {
@@ -1888,7 +2157,7 @@ mod tests {
             let lay = layout(page, frame_for(WIDTH as f32));
             // Most pages fit the default window; About (a tall card) and Notch (all the notch settings) scroll a little.
             let limit = match page {
-                Page::About => 100.0,
+                Page::About => 190.0,
                 Page::Notch => 440.0,
                 _ => 0.0,
             };
@@ -1909,6 +2178,85 @@ mod tests {
         }
         assert_eq!(plain.hero.map(|h| h.1 - 40.0), moved.hero.map(|h| h.1));
         assert!((plain.bottom() - 40.0 - moved.bottom()).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_scroll_bar_thumb_and_the_scroll_agree() {
+        let bar = page_bar(WIDTH as f32, HEIGHT as f32);
+        let max = 300.0;
+        let thumb = bar.thumb(max);
+        assert!(thumb >= 26.0 && thumb < bar.height, "a thumb that shows the share of the page");
+        assert_eq!(bar.thumb_top(0.0, max), bar.top);
+        assert!((bar.thumb_top(max, max) + thumb - (bar.top + bar.height)).abs() < 0.01, "at the end the thumb reaches the bottom");
+        for scroll in [0.0, 40.0, 150.0, 299.0, 300.0] {
+            let back = bar.scroll_at(bar.thumb_top(scroll, max), max);
+            assert!((back - scroll).abs() < 0.01, "{scroll} came back as {back}");
+        }
+        assert_eq!(bar.scroll_at(bar.top - 500.0, max), 0.0, "dragged above the track");
+        assert_eq!(bar.scroll_at(bar.top + bar.height + 500.0, max), max, "dragged below the track");
+    }
+
+    #[test]
+    fn the_scroll_bar_is_taken_hold_of_on_and_beside_it_only() {
+        let bar = page_bar(WIDTH as f32, HEIGHT as f32);
+        assert!(bar.grabs(bar.x + 1.0, bar.top + 10.0));
+        assert!(bar.grabs(bar.x - 6.0, bar.top + bar.height), "a few pixels to the left still count");
+        assert!(!bar.grabs(bar.x - 20.0, bar.top + 10.0), "the cards are not the bar");
+        assert!(!bar.grabs(bar.x + 1.0, bar.top - 5.0), "above the track");
+        // Nothing a page shows at its widest reaches the bar.
+        let frame = frame_for(WIDTH as f32);
+        assert!(frame.x + frame.w < bar.x - 8.0);
+        let changelog = changelog_bar(frame, HEIGHT as f32);
+        assert!(changelog.top > CHANGELOG_TOP && changelog.top + changelog.height < HEIGHT as f32, "inside the card");
+    }
+
+    #[test]
+    fn page_keys_scroll_by_a_page_and_stop_at_the_ends() {
+        let (max, view) = (440.0, 600.0);
+        assert_eq!(scrolled_by_key(0.0, max, view, ScrollKey::PageDown), 440.0, "a page is longer than what is left");
+        assert_eq!(scrolled_by_key(100.0, 2000.0, view, ScrollKey::PageDown), 660.0, "the view less a few lines");
+        assert_eq!(scrolled_by_key(100.0, 2000.0, view, ScrollKey::PageUp), 0.0);
+        assert_eq!(scrolled_by_key(300.0, 2000.0, view, ScrollKey::Home), 0.0);
+        assert_eq!(scrolled_by_key(0.0, max, view, ScrollKey::End), max);
+        assert_eq!(scrolled_by_key(0.0, 0.0, view, ScrollKey::End), 0.0, "a page that fits does not scroll");
+    }
+
+    #[test]
+    fn the_window_comes_back_where_it_was_left() {
+        let spot = Spot { width: 1000.0, height: 800.0, x: -1500, y: 40 };
+        assert_eq!(Spot::from_json(&spot.to_json()), Some(spot));
+        assert_eq!(Spot::from_json(&json!({})), None, "no file content");
+        assert_eq!(Spot::from_json(&json!({ "width": 50.0, "height": 800.0, "x": 0, "y": 0 })), None, "far too narrow to be a window");
+        let rounded = Spot::from_json(&json!({ "width": 839.9999, "height": 519.9999, "x": 5, "y": 6 }));
+        assert!(rounded.is_some(), "the smallest window, rounded down, still counts");
+        let spot = rounded.unwrap();
+        assert_eq!(size_on_screen(spot.width, spot.height, 1920.0, 1200.0, 1.25, 1.0), (WIDTH, MIN_HEIGHT));
+        assert_eq!(Spot::from_json(&json!({ "width": "wide", "height": 800.0, "x": 0, "y": 0 })), None);
+        assert_eq!(Spot::from_json(&json!({ "width": 900.0, "height": 800.0, "x": 99999999999i64, "y": 0 })), None);
+    }
+
+    #[test]
+    fn a_remembered_size_is_kept_inside_what_the_screen_has_room_for() {
+        // A roomy screen: whatever was left is kept, but never below the smallest window.
+        assert_eq!(size_on_screen(1000.0, 800.0, 2560.0, 1440.0, 1.0, 1.0), (1000.0, 800.0));
+        assert_eq!(size_on_screen(10.0, 10.0, 2560.0, 1440.0, 1.0, 1.0), (WIDTH, MIN_HEIGHT));
+        // A smaller screen than the one it was left on.
+        let (w, h) = size_on_screen(3000.0, 2000.0, 1920.0, 1200.0, 1.25, 1.0);
+        assert!(w <= 1920.0 / 1.25 && h <= 1200.0 / 1.25 - 130.0 + 0.01, "{w} x {h}");
+        // A tiny screen never makes it smaller than the window can be.
+        let (w, h) = size_on_screen(900.0, 700.0, 800.0, 500.0, 1.0, 0.55);
+        assert!(w >= WIDTH && (MIN_HEIGHT..700.0).contains(&h), "{w} x {h}");
+        assert_eq!(size_on_screen(10.0, 10.0, 800.0, 400.0, 1.0, 0.55), (WIDTH, MIN_HEIGHT));
+    }
+
+    #[test]
+    fn a_remembered_place_is_used_only_while_the_title_bar_is_on_a_screen() {
+        let screens = [(0, 0, 1920, 1080), (1920, 0, 1920, 1080)];
+        assert!(on_a_screen(100, 100, &screens));
+        assert!(on_a_screen(2000, 50, &screens), "on the second screen");
+        assert!(!on_a_screen(5000, 100, &screens), "the screen it was on is gone");
+        assert!(!on_a_screen(100, -400, &screens), "title bar above the top");
+        assert!(!on_a_screen(100, 100, &[]), "no screens known");
     }
 
     #[test]

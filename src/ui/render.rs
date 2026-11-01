@@ -60,30 +60,31 @@ impl App {
         1.0 - (1.0 - t).powi(3)
     }
 
+    /// Draw on a layer of its own and paste it back faded to `opacity` and moved by `shift` (pixels): how
+    /// something eases in while a list, a month or a track changes.
+    fn eased_in(&self, pm: &mut Pixmap, opacity: f32, shift: (f32, f32), draw: impl Fn(&mut Pixmap)) {
+        let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return draw(pm) };
+        draw(&mut layer);
+        let paint = PixmapPaint { opacity: opacity.clamp(0.0, 1.0), quality: FilterQuality::Bilinear, ..Default::default() };
+        pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate(shift.0, shift.1), None);
+    }
+
     /// The calendar's month (or week): after the arrows were used it slides in from the side of the arrow.
     pub(crate) fn slide_in(&self, pm: &mut Pixmap, s: f32, draw: impl Fn(&mut Pixmap)) {
         let t = self.cal_t as f32;
         if t >= 0.999 {
-            draw(pm);
-            return;
+            return draw(pm);
         }
-        let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return draw(pm) };
-        draw(&mut layer);
-        let paint = PixmapPaint { opacity: t.clamp(0.0, 1.0), quality: FilterQuality::Bilinear, ..Default::default() };
-        pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate((1.0 - t) * 30.0 * self.cal_dir * s, 0.0), None);
+        self.eased_in(pm, t, ((1.0 - t) * 30.0 * self.cal_dir * s, 0.0), draw);
     }
 
     /// The cover and the name of the track: after a new track began they fade in and slide a little.
     pub(crate) fn fade_in_track(&self, pm: &mut Pixmap, s: f32, draw: impl Fn(&mut Pixmap)) {
         let t = self.track_t as f32;
         if t >= 0.999 {
-            draw(pm);
-            return;
+            return draw(pm);
         }
-        let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return draw(pm) };
-        draw(&mut layer);
-        let paint = PixmapPaint { opacity: t.clamp(0.0, 1.0), quality: FilterQuality::Bilinear, ..Default::default() };
-        pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate((1.0 - t) * 12.0 * s, 0.0), None);
+        self.eased_in(pm, t, ((1.0 - t) * 12.0 * s, 0.0), draw);
     }
 
     /// Draw one row of a list. While the list is changing the row is drawn on a layer of its own, which
@@ -91,13 +92,9 @@ impl App {
     pub(crate) fn animated_row(&self, pm: &mut Pixmap, s: f32, row: usize, rows: usize, draw: impl Fn(&mut Pixmap)) {
         let e = self.row_in(row, rows);
         if e >= 0.999 {
-            draw(pm);
-            return;
+            return draw(pm);
         }
-        let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return draw(pm) };
-        draw(&mut layer);
-        let paint = PixmapPaint { opacity: e, quality: FilterQuality::Bilinear, ..Default::default() };
-        pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate(0.0, (1.0 - e) * 14.0 * self.list_dir * s), None);
+        self.eased_in(pm, e, (0.0, (1.0 - e) * 14.0 * self.list_dir * s), draw);
     }
 
     /// Whether the light look is on: the setting is on and Windows is using its light theme.

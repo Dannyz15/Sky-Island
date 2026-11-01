@@ -176,10 +176,8 @@ impl App {
 
     /// Start typing one of the timer's numbers: take the keyboard, remembering where it came from.
     fn begin_timer_edit(&mut self, field: usize) {
-        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
         if self.timer_field.is_none() && self.prev_foreground.is_none() {
-            let fg = unsafe { GetForegroundWindow() };
-            self.prev_foreground = (!fg.is_invalid()).then_some(fg);
+            self.remember_foreground();
         }
         self.timer_field = Some(field);
         self.timer_input.clear();
@@ -192,16 +190,13 @@ impl App {
 
     /// Stop typing a timer number, keeping what was typed if `keep`, and give the keyboard back.
     pub(crate) fn end_timer_edit(&mut self, keep: bool) {
-        use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
         if keep {
             self.apply_timer_input();
         }
         self.timer_field = None;
         self.timer_input.clear();
         self.last_tick = Instant::now();
-        if let Some(h) = self.prev_foreground.take() {
-            let _ = unsafe { SetForegroundWindow(h) };
-        }
+        self.restore_foreground();
         if let Some(w) = &self.window {
             w.request_redraw();
         }

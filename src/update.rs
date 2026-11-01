@@ -95,7 +95,7 @@ fn releases_from(json: &Value) -> Option<Vec<Release>> {
             .filter_map(|r| {
                 let tag = r.get("tag_name")?.as_str()?;
                 Some(Release {
-                    version: tag.trim_start_matches(['v', 'V']).to_string(),
+                    version: tag_version(tag).to_string(),
                     date: r.get("published_at").and_then(Value::as_str).unwrap_or("").chars().take(10).collect(),
                     body: r.get("body").and_then(Value::as_str).unwrap_or("").to_string(),
                 })
@@ -183,7 +183,7 @@ fn check() -> Status {
 /// Read GitHub's answer for the latest release and compare it with the running version.
 fn judge(release: &Value, current: &str) -> Option<Status> {
     let tag = release.get("tag_name")?.as_str()?;
-    let version = tag.trim_start_matches(['v', 'V']);
+    let version = tag_version(tag);
     if newer(version, current) {
         let page = release.get("html_url").and_then(Value::as_str).filter(|u| u.starts_with(REPO)).unwrap_or("https://github.com/Dannyz15/Sky-Island/releases/latest");
         Some(Status::Available { version: version.to_string(), page: page.to_string(), asset: installer(release) })
@@ -206,6 +206,12 @@ fn installer(release: &Value) -> Option<Asset> {
         let hex = sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit());
         (url.starts_with(&format!("{REPO}releases/download/")) && hex).then(|| Asset { url: url.to_string(), size, sha256 })
     })
+}
+
+/// The version a release tag names: "v1.4.7", "V1.4.7" and "1.4.7" all say 1.4.7, and so does a mistyped
+/// "v.1.4.7" (which stopped the update check for everyone once).
+fn tag_version(tag: &str) -> &str {
+    tag.trim().trim_start_matches(['v', 'V', '.'])
 }
 
 /// "1.2.3" as numbers; `None` if it is not a plain dotted version.
@@ -325,6 +331,16 @@ fn acceptable(got: u64, sha256: &str, asset: &Asset) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_release_tag_is_read_whatever_its_prefix() {
+        for tag in ["v1.4.7", "V1.4.7", "1.4.7", "v.1.4.7", " v1.4.7 "] {
+            assert_eq!(tag_version(tag), "1.4.7", "{tag:?}");
+        }
+        let release = json!({ "tag_name": "v.1.4.7", "html_url": "https://github.com/Dannyz15/Sky-Island/releases/tag/v.1.4.7", "assets": [] });
+        assert!(matches!(judge(&release, "1.4.6"), Some(Status::Available { version, .. }) if version == "1.4.7"));
+        assert!(matches!(judge(&release, "1.4.7"), Some(Status::Latest)));
+    }
 
     #[test]
     fn the_checksum_of_a_known_text_comes_out_as_expected() {

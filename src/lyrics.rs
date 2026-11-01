@@ -87,7 +87,7 @@ fn fetch(title: &str, artist: &str, duration: Duration) -> Looked {
 
     let mut req = agent
         .get(format!("{API}/get"))
-        .header("User-Agent", "Sky-Island/0.1")
+        .header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION")))
         .query("track_name", title)
         .query("artist_name", artist);
     if !duration.is_zero() {
@@ -107,7 +107,7 @@ fn fetch(title: &str, artist: &str, duration: Duration) -> Looked {
     // Titles from browsers are often messy; fall back to a looser search.
     let results = agent
         .get(format!("{API}/search"))
-        .header("User-Agent", "Sky-Island/0.1")
+        .header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION")))
         .query("q", format!("{title} {artist}"))
         .call()
         .and_then(|mut r| r.body_mut().read_json::<Value>());
@@ -121,6 +121,20 @@ fn fetch(title: &str, artist: &str, duration: Duration) -> Looked {
 fn synced(v: &Value) -> Option<String> {
     let s = v.get("syncedLyrics")?.as_str()?;
     (!s.trim().is_empty()).then(|| s.to_string())
+}
+
+/// Delete every saved lyrics file. Returns how many songs that was.
+pub fn clear_cache() -> usize {
+    crate::store::path("lyrics").map_or(0, |dir| clear_dir(&dir))
+}
+
+fn clear_dir(dir: &std::path::Path) -> usize {
+    let Ok(files) = fs::read_dir(dir) else { return 0 };
+    files
+        .flatten()
+        .map(|f| f.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "lrc") && fs::remove_file(p).is_ok())
+        .count()
 }
 
 fn cache_path(key: &str) -> Option<PathBuf> {
@@ -179,6 +193,21 @@ fn parse_stamp(s: &str) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_the_cache_removes_only_lyrics_files() {
+        let dir = std::env::temp_dir().join(format!("sky-island-lyrics-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for name in ["a.lrc", "b.lrc", "c.lrc", "keep.txt"] {
+            fs::write(dir.join(name), "x").unwrap();
+        }
+        assert_eq!(clear_dir(&dir), 3);
+        assert!(dir.join("keep.txt").exists() && !dir.join("a.lrc").exists());
+        assert_eq!(clear_dir(&dir), 0);
+        assert_eq!(clear_dir(&dir.join("missing")), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_site_that_is_down_is_told_apart_from_a_song_that_is_missing() {

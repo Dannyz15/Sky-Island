@@ -5,7 +5,23 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::store;
+use winit::event_loop::EventLoopProxy;
+
+use crate::{UserEvent, store};
+
+/// Look for files that are gone, on a thread of its own: a file on a network drive that cannot be reached can
+/// take a long time to answer, and the app should not wait for it to start. The missing ones come back as
+/// `UserEvent::ShelfMissing`.
+pub fn check_in_background(paths: Vec<PathBuf>, proxy: EventLoopProxy<UserEvent>) {
+    std::thread::spawn(move || {
+        // One at a time, each reported as soon as it is known, so a slow path does not hold back the others.
+        for path in paths {
+            if !path.exists() {
+                let _ = proxy.send_event(UserEvent::ShelfMissing(vec![path]));
+            }
+        }
+    });
+}
 
 const MAX_ITEMS: usize = 50;
 /// Tiles per row and visible rows in the shelf view.
@@ -22,11 +38,7 @@ impl Shelf {
     pub fn new() -> Self {
         let items = Self::path()
             .and_then(|p| store::read_json(&p))
-            .and_then(|v| {
-                v.as_array().map(|a| {
-                    a.iter().filter_map(Value::as_str).map(PathBuf::from).filter(|p| p.exists()).collect()
-                })
-            })
+            .and_then(|v| v.as_array().map(|a| a.iter().filter_map(Value::as_str).map(PathBuf::from).collect()))
             .unwrap_or_default();
         Self { items, scroll: 0 }
     }
@@ -73,6 +85,16 @@ impl Shelf {
         self.items.clear();
         self.scroll = 0;
         self.save();
+    }
+
+    /// Drop the entries a check found missing (see `check_in_background`).
+    pub fn forget(&mut self, missing: &[PathBuf]) {
+        let before = self.items.len();
+        self.items.retain(|p| !missing.contains(p));
+        if self.items.len() != before {
+            self.clamp_scroll();
+            self.save();
+        }
     }
 
     /// Drop entries whose files no longer exist, e.g. after one was moved by a drag.
@@ -124,6 +146,16 @@ mod tests {
 
     fn p(s: &str) -> PathBuf {
         PathBuf::from(s)
+    }
+
+    #[test]
+    fn files_found_missing_leave_the_shelf_and_the_rest_stay() {
+        let mut shelf = Shelf::empty();
+        shelf.items = ["a", "b", "c"].map(PathBuf::from).to_vec();
+        shelf.forget(&[PathBuf::from("b"), PathBuf::from("zzz")]);
+        assert_eq!(shelf.items, ["a", "c"].map(PathBuf::from));
+        shelf.forget(&[]);
+        assert_eq!(shelf.items.len(), 2);
     }
 
     #[test]

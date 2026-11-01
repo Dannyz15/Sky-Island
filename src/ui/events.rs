@@ -7,6 +7,14 @@ const PROGRESS_TICK: Duration = Duration::from_millis(500);
 /// How often the timer's ring is redrawn while it is on screen and running, so it empties smoothly.
 const RING_TICK: Duration = Duration::from_millis(16);
 
+/// How far a wheel turned: one notch of a mouse wheel is worth `per_line`, one pixel of a touchpad `per_pixel`.
+pub(crate) fn wheel(delta: &MouseScrollDelta, per_line: f64, per_pixel: f64) -> f64 {
+    match delta {
+        MouseScrollDelta::LineDelta(_, y) => f64::from(*y) * per_line,
+        MouseScrollDelta::PixelDelta(p) => p.y * per_pixel,
+    }
+}
+
 /// Whether Ctrl is held right now. The notch never has the keyboard focus, so its own key events
 /// cannot be trusted to say.
 pub(crate) fn ctrl_down() -> bool {
@@ -40,6 +48,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.build_tray();
         sys::install_lock_hook(self.proxy.clone());
         presence::spawn(self.proxy.clone(), self.native_handle().unwrap_or(0));
+        shelf::check_in_background(self.shelf.items.clone(), self.proxy.clone());
         clipboard::spawn_watcher(self.proxy.clone());
         self.step();
     }
@@ -81,6 +90,12 @@ impl ApplicationHandler<UserEvent> for App {
                 self.presence = presence;
                 self.fullscreen = fullscreen;
                 self.apply_visibility();
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+            UserEvent::ShelfMissing(missing) => {
+                self.shelf.forget(&missing);
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }
@@ -294,10 +309,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseWheel { delta, .. }
                 if self.progress >= 0.9 && !self.editing && self.timer_field.is_none() && self.wheel_changes_tab() =>
             {
-                let dy = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as f64,
-                    MouseScrollDelta::PixelDelta(p) => p.y,
-                };
+                let dy = wheel(&delta, 1.0, 1.0);
                 // Scrolling down goes to the next tab, up to the one before; one step per flick.
                 if dy != 0.0 && self.last_wheel_tab.elapsed() > Duration::from_millis(220) {
                     let tabs = self.visible_tabs();
@@ -312,10 +324,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } if self.view == View::Timer && !self.editing && self.progress >= 0.9 => {
-                let dy = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as f64,
-                    MouseScrollDelta::PixelDelta(p) => p.y,
-                };
+                let dy = wheel(&delta, 1.0, 1.0);
                 let s = self.ui_scale() as f32;
                 let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
                 let column = TIMER_COLS.iter().position(|x| (cx - x).abs() <= 28.0);
@@ -333,10 +342,7 @@ impl ApplicationHandler<UserEvent> for App {
                     _ => 0,
                 };
                 // Scroll the lyrics by hand: wheel up goes to earlier lines.
-                let step = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as f64,
-                    MouseScrollDelta::PixelDelta(p) => p.y / 24.0,
-                };
+                let step = wheel(&delta, 1.0, 1.0 / 24.0);
                 if lines > 0 && step != 0.0 && cx >= LYRIC_X - 8.0 && (LYRIC_AREA.0..=LYRIC_AREA.1).contains(&cy) {
                     let from = self.lyric_manual.unwrap_or(self.lyric_pos.max(0.0));
                     let to = (from - step).clamp(0.0, lines as f64 - 1.0);
@@ -349,10 +355,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } if self.editing && self.progress >= 0.9 => {
-                let dy = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as f64,
-                    MouseScrollDelta::PixelDelta(p) => p.y,
-                };
+                let dy = wheel(&delta, 1.0, 1.0);
                 let s = self.ui_scale() as f32;
                 let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
                 if dy != 0.0
@@ -364,10 +367,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseWheel { delta, .. }
                 if matches!(self.view, View::Shelf | View::Todo | View::Clipboard) && self.progress >= 0.9 =>
             {
-                let dy = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as f64,
-                    MouseScrollDelta::PixelDelta(p) => p.y,
-                };
+                let dy = wheel(&delta, 1.0, 1.0);
                 if dy != 0.0 {
                     // Wheel up shows earlier rows.
                     let rows = if dy > 0.0 { -1 } else { 1 };
@@ -486,11 +486,18 @@ impl ApplicationHandler<UserEvent> for App {
                 p.reset_armed = None;
                 p.redraw();
             }
+            if p.cleared.is_some_and(|(_, t)| now >= t) {
+                p.cleared = None;
+                p.redraw();
+            }
             if p.busy {
                 p.redraw();
                 panel_wake = Some(now + frame);
             } else if let Some(t) = p.reset_armed {
                 panel_wake = Some(t);
+            }
+            if let Some((_, t)) = p.cleared {
+                panel_wake = Some(panel_wake.map_or(t, |w| w.min(t)));
             }
         }
 

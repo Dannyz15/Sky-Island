@@ -21,11 +21,13 @@ use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Power::{
     GetSystemPowerStatus, RegisterPowerSettingNotification, SYSTEM_POWER_STATUS,
 };
-use windows::Win32::System::SystemServices::{GUID_ACDC_POWER_SOURCE, GUID_BATTERY_PERCENTAGE_REMAINING};
+use windows::Win32::System::SystemServices::{
+    GUID_ACDC_POWER_SOURCE, GUID_BATTERY_PERCENTAGE_REMAINING, GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL, VK_NUMLOCK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, KBDLLHOOKSTRUCT, PBT_POWERSETTINGCHANGE, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN,
-    WM_POWERBROADCAST, WM_SYSKEYDOWN,
+    CallNextHookEx, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DispatchMessageW, GetMessageW, KBDLLHOOKSTRUCT, MSG,
+    PBT_POWERSETTINGCHANGE, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WM_KEYDOWN, WM_POWERBROADCAST, WM_SYSKEYDOWN,
 };
 use windows::core::{PCWSTR, Result, implement, w};
 use winit::event_loop::EventLoopProxy;
@@ -56,8 +58,7 @@ fn send(proxy: &Proxy, notice: Notice) {
     let _ = proxy.send_event(UserEvent::Notice(notice));
 }
 
-/// Start every watcher. The keyboard hook must be installed from a thread that pumps messages,
-/// which the UI thread does, so it is separate.
+/// Start every watcher except the keyboard hook, which has its own start (`install_lock_hook`).
 pub fn spawn_all(proxy: Proxy) {
     let p = proxy.clone();
     thread::spawn(move || audio(p));
@@ -259,60 +260,171 @@ unsafe extern "system" fn power_proc(window: HWND, message: u32, wparam: WPARAM,
 
 // ---- Brightness (laptop panels) ----
 
+/// How often the brightness is read: quickly for a few seconds after a change so a dragged slider is followed,
+/// slowly otherwise (only when Windows cannot tell the app about changes; see `brightness`).
 const BRIGHTNESS_IDLE: Duration = Duration::from_millis(300);
-const BRIGHTNESS_QUICK: Duration = Duration::from_millis(100);
+const BRIGHTNESS_QUICK: Duration = Duration::from_millis(50);
 const BRIGHTNESS_QUICK_FOR: Duration = Duration::from_secs(3);
+/// While a slider is dragged, Windows can report the previous step again for a moment (up to about 0.2 s once
+/// the drag ends). A reading that goes against the way the brightness was just moving is only believed after it
+/// has stayed this long. A change after the brightness has been still for `BRIGHTNESS_STILL` is believed at once.
+const BRIGHTNESS_TURN_HOLD: Duration = Duration::from_millis(250);
+const BRIGHTNESS_STILL: Duration = Duration::from_secs(1);
 
 /// How long to wait before reading the brightness again, given how much of the "quick" period is left.
 fn brightness_interval(quick_left: Duration) -> Duration {
     if quick_left.is_zero() { BRIGHTNESS_IDLE } else { BRIGHTNESS_QUICK }
 }
 
-fn brightness(proxy: Proxy) {
+/// What the brightness has been doing, to tell a real change from a step-old reading.
+struct Seen {
+    last: u32,
+    /// 1 when the last change went up, -1 when it went down, 0 before any.
+    heading: i8,
+    moved: Instant,
+    /// A reading that turned back, and since when it has been seen.
+    held: Option<(u32, Instant)>,
+}
+
+impl Seen {
+    fn new(first: u32, at: Instant) -> Self {
+        Seen { last: first, heading: 0, moved: at, held: None }
+    }
+
+    /// Whether the reading `now`, taken at `at`, is a change worth announcing.
+    fn look(&mut self, now: u32, at: Instant) -> bool {
+        if now == self.last {
+            self.held = None; // the step-old reading went away again
+            return false;
+        }
+        let heading = if now > self.last { 1 } else { -1 };
+        if self.heading != 0 && heading != self.heading && at.duration_since(self.moved) < BRIGHTNESS_STILL {
+            match self.held {
+                Some((value, since)) if value == now => {
+                    if at.duration_since(since) < BRIGHTNESS_TURN_HOLD {
+                        return false;
+                    }
+                }
+                _ => {
+                    self.held = Some((now, at));
+                    return false;
+                }
+            }
+        }
+        self.held = None;
+        self.heading = heading;
+        self.moved = at;
+        self.last = now;
+        true
+    }
+}
+
+/// The built-in panel (its handle as a number, so it can live in a static) and what its brightness has done.
+struct Panel {
+    lcd: usize,
+    seen: Seen,
+}
+
+static PANEL: Mutex<Option<Panel>> = Mutex::new(None);
+static BRIGHTNESS_PROXY: OnceLock<Proxy> = OnceLock::new();
+/// The thread that reads the brightness; Windows' notifications wake it.
+static BRIGHTNESS_READER: OnceLock<thread::Thread> = OnceLock::new();
+
+/// The panel's brightness in percent for the power source in use, or `None` if the driver does not answer.
+fn read_brightness(lcd: HANDLE) -> Option<u32> {
+    let mut out = DISPLAY_BRIGHTNESS::default();
+    let mut returned = 0u32;
     unsafe {
+        DeviceIoControl(
+            lcd,
+            IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS,
+            None,
+            0,
+            Some(&mut out as *mut _ as *mut _),
+            std::mem::size_of::<DISPLAY_BRIGHTNESS>() as u32,
+            Some(&mut returned),
+            None,
+        )
+        .ok()?;
+        let mut st = SYSTEM_POWER_STATUS::default();
+        let _ = GetSystemPowerStatus(&mut st);
+        Some(if st.ACLineStatus == 1 { out.ucACBrightness } else { out.ucDCBrightness } as u32)
+    }
+}
+
+/// Read the brightness now and tell the UI if it changed. `Some(true)` while the brightness is on the move
+/// (changed, or a reading that turned back is being checked), `None` when the panel cannot be read.
+fn look_at_brightness() -> Option<bool> {
+    let mut guard = PANEL.lock().ok()?;
+    let panel = guard.as_mut()?;
+    let now = read_brightness(HANDLE(panel.lcd as *mut _))?;
+    let announce = panel.seen.look(now, Instant::now());
+    if announce
+        && let Some(proxy) = BRIGHTNESS_PROXY.get()
+    {
+        send(proxy, Notice::Brightness { percent: now });
+    }
+    Some(announce || panel.seen.held.is_some())
+}
+
+/// Windows says when the panel's brightness changes (to a hidden window), so nothing runs while it stays
+/// the same. The notification is only a wake-up: Windows sends it a few times a second while a slider is
+/// dragged, with a value that can be a step old, so the brightness is read directly, every 100 ms until it
+/// has been still for a few seconds. The power source is watched too, because the brightness can differ
+/// between the charger and the battery. If that cannot be set up, the brightness is read on a timer instead.
+fn brightness(proxy: Proxy) {
+    let lcd = unsafe {
         let Ok(lcd) = CreateFileW(w!("\\\\.\\LCD"), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, Default::default(), None) else {
             return; // no built-in panel, e.g. a desktop
         };
-        let read = |lcd: HANDLE| -> Option<u32> {
-            let mut out = DISPLAY_BRIGHTNESS::default();
-            let mut returned = 0u32;
-            DeviceIoControl(
-                lcd,
-                IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS,
-                None,
-                0,
-                Some(&mut out as *mut _ as *mut _),
-                std::mem::size_of::<DISPLAY_BRIGHTNESS>() as u32,
-                Some(&mut returned),
-                None,
-            )
-            .ok()?;
-            let mut st = SYSTEM_POWER_STATUS::default();
-            let _ = GetSystemPowerStatus(&mut st);
-            Some(if st.ACLineStatus == 1 { out.ucACBrightness } else { out.ucDCBrightness } as u32)
-        };
-
-        // If the driver doesn't answer the query, give up rather than polling for nothing.
-        let Some(mut last) = read(lcd) else {
-            let _ = CloseHandle(lcd);
-            return;
-        };
-        // Slow while nothing happens, quick for a few seconds after a change so a dragged slider is followed.
-        let mut quick_until = Instant::now();
-        loop {
-            thread::sleep(brightness_interval(quick_until.saturating_duration_since(Instant::now())));
-            match read(lcd) {
-                Some(now) if now != last => {
-                    last = now;
-                    quick_until = Instant::now() + BRIGHTNESS_QUICK_FOR;
-                    send(&proxy, Notice::Brightness { percent: now });
-                }
-                Some(_) => {}
-                None => break,
-            }
-        }
-        let _ = CloseHandle(lcd);
+        lcd
+    };
+    // If the driver doesn't answer the query, give up rather than watching for nothing.
+    let Some(first) = read_brightness(lcd) else {
+        let _ = unsafe { CloseHandle(lcd) };
+        return;
+    };
+    if BRIGHTNESS_PROXY.set(proxy).is_err() || BRIGHTNESS_READER.set(thread::current()).is_err() {
+        return;
     }
+    if let Ok(mut panel) = PANEL.lock() {
+        *panel = Some(Panel { lcd: lcd.0 as usize, seen: Seen::new(first, Instant::now()) });
+    }
+    let listening = msgwin::spawn(w!("SkyIslandBrightness"), Some(brightness_proc), |window| unsafe {
+        let target = HANDLE(window.0);
+        let level = RegisterPowerSettingNotification(target, &GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS, DEVICE_NOTIFY_WINDOW_HANDLE);
+        let source = RegisterPowerSettingNotification(target, &GUID_ACDC_POWER_SOURCE, DEVICE_NOTIFY_WINDOW_HANDLE);
+        level.is_ok() && source.is_ok()
+    });
+    let mut quick_until = Instant::now();
+    loop {
+        let quick_left = quick_until.saturating_duration_since(Instant::now());
+        if listening && quick_left.is_zero() {
+            thread::park(); // until Windows reports a change
+            quick_until = Instant::now() + BRIGHTNESS_QUICK_FOR;
+        } else {
+            thread::sleep(brightness_interval(quick_left));
+        }
+        match look_at_brightness() {
+            Some(true) => quick_until = Instant::now() + BRIGHTNESS_QUICK_FOR,
+            Some(false) => {}
+            None => break,
+        }
+    }
+    if let Ok(mut panel) = PANEL.lock() {
+        *panel = None;
+    }
+    let _ = unsafe { CloseHandle(lcd) };
+}
+
+unsafe extern "system" fn brightness_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if message == WM_POWERBROADCAST && wparam.0 as u32 == PBT_POWERSETTINGCHANGE {
+        if let Some(reader) = BRIGHTNESS_READER.get() {
+            reader.unpark();
+        }
+        return LRESULT(1);
+    }
+    unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
 
 // ---- Network ----
@@ -357,7 +469,9 @@ fn network(proxy: Proxy) {
 
 static PROXY: OnceLock<Proxy> = OnceLock::new();
 
-/// Install the low-level keyboard hook on the calling thread, which must keep pumping messages.
+/// Install the low-level keyboard hook. Windows calls the hook on the thread that installed it and waits for
+/// the answer before the key goes on to any app, and drops a hook that is too slow: so it gets a thread of its
+/// own that does nothing else, and a busy notch cannot make typing wait.
 /// The hook only says a lock key was pressed. The real on/off state is read a moment later on
 /// the UI thread, because at hook time the key hasn't taken effect yet, and counting presses
 /// drifts out of sync if a key-up is ever missed.
@@ -365,9 +479,15 @@ pub fn install_lock_hook(proxy: Proxy) {
     if PROXY.set(proxy).is_err() {
         return;
     }
-    unsafe {
+    thread::spawn(|| unsafe {
         let _ = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0);
-    }
+        // A hook needs its thread to keep taking messages.
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    });
 }
 
 /// Whether a toggle key (Caps Lock, Num Lock) is currently on.
@@ -430,6 +550,51 @@ mod tests {
         let mut charging = watch();
         charging.look(1, 21);
         assert!(charging.look(1, 19).is_empty(), "no warning while the charger is in");
+    }
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn a_dragged_slider_is_followed_step_by_step() {
+        let t = Instant::now();
+        let mut seen = Seen::new(50, t);
+        assert!(seen.look(48, t + ms(60)));
+        assert!(seen.look(44, t + ms(120)));
+        assert!(seen.look(40, t + ms(180)));
+        assert!(!seen.look(40, t + ms(240)), "no change, nothing to announce");
+    }
+
+    #[test]
+    fn a_step_old_reading_that_goes_away_again_is_not_shown() {
+        let t = Instant::now();
+        let mut seen = Seen::new(50, t);
+        assert!(seen.look(40, t + ms(100)));
+        assert!(!seen.look(44, t + ms(150)), "turned back for a moment");
+        assert!(seen.held.is_some(), "still being watched");
+        assert!(!seen.look(40, t + ms(200)), "back to the real value: nothing changed");
+        assert!(seen.held.is_none());
+        assert_eq!(seen.last, 40);
+    }
+
+    #[test]
+    fn turning_back_for_real_is_shown_once_it_stays() {
+        let t = Instant::now();
+        let mut seen = Seen::new(50, t);
+        assert!(seen.look(40, t + ms(100)));
+        assert!(!seen.look(46, t + ms(150)));
+        assert!(!seen.look(46, t + ms(300)), "not long enough yet");
+        assert!(seen.look(46, t + ms(410)), "stayed for 250 ms");
+        assert_eq!(seen.last, 46);
+    }
+
+    #[test]
+    fn a_change_after_the_brightness_was_still_is_shown_at_once() {
+        let t = Instant::now();
+        let mut seen = Seen::new(50, t);
+        assert!(seen.look(40, t + ms(100)));
+        assert!(seen.look(70, t + ms(100) + BRIGHTNESS_STILL + ms(1)), "the opposite way, but a key press after a pause");
     }
 
     #[test]
