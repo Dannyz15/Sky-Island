@@ -1,18 +1,30 @@
 # Keeps the project's building blocks up to date: GitHub opens a pull request when a Rust crate or a GitHub
 # Action in the CI workflow has a newer version. Each one runs the CI (lint, tests, release build) before it
 # can be merged, so nothing changes by itself.
+#
+# A new version is only proposed a week after it came out (cooldown), so a bad release that gets pulled in its
+# first days never reaches a pull request. Security fixes are not delayed by it.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     # Small updates of the crates come together in one pull request instead of one for each.
     groups:
       crates:
         update-types: [minor, patch]
     open-pull-requests-limit: 5
+    ignore:
+      # `windows` and `windows-core` have to stay on the same version (the `implement` macro in the code needs
+      # them to match), and `windows-core` 0.100 came out before `windows` did. They are updated together by hand.
+      - dependency-name: windows
+      - dependency-name: windows-core
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
