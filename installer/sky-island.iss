@@ -2,7 +2,7 @@
 ; Inno Setup compiler after running `cargo build --release`.
 
 #ifndef AppVersion
-  #define AppVersion "1.4.8"
+  #define AppVersion "1.4.9"
 #endif
 #define AppName "Sky Island"
 #define AppExe "sky-island.exe"
@@ -29,7 +29,7 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 LicenseFile=..\LICENSE
 SetupIconFile=..\assets\icon.ico
-; The welcome page is off by default in Inno Setup 6; turn it on so the big picture is shown.
+; The welcome page is off by default in Inno Setup; turn it on so the big picture is shown.
 DisableWelcomePage=no
 WizardImageFile=wizard-large.png
 WizardSmallImageFile=wizard-small.png

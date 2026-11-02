@@ -88,7 +88,6 @@ impl App {
 
     /// What the closed notch shows when nothing else needs it: eyes when idle, otherwise the clock.
     /// One open (or blinking) eye on the closed notch, in the chosen style, centred at `x`, `cy`.
-    #[allow(clippy::too_many_arguments)]
     fn draw_eye(&self, pm: &mut Pixmap, x: f32, cy: f32, s: f32, a: u8, blink: bool, glance: f32) {
         let c = eye_colour(self.settings.eye_style);
         let ink = theme::map([c[0], c[1], c[2], a]);

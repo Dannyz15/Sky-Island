@@ -1,5 +1,5 @@
 # Builds the release exe and packages it into the setup program: dist\Sky-Island-Setup-<version>.exe
-# Needs the free Inno Setup 6 compiler (https://jrsoftware.org/isinfo.php).
+# Needs the free Inno Setup 7 compiler (https://jrsoftware.org/isinfo.php).
 #
 # Run from anywhere:  powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 
@@ -10,13 +10,13 @@ $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').
 Write-Host "Packaging Sky Island $version"
 
 $candidates = @(
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+    "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+    "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+    "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe"
 )
 $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $iscc) {
-    throw 'Inno Setup 6 is not installed. Get it from https://jrsoftware.org/isinfo.php (or: winget install JRSoftware.InnoSetup)'
+    throw 'Inno Setup 7 is not installed. Get it from https://jrsoftware.org/isinfo.php (or: winget install JRSoftware.InnoSetup.7)'
 }
 
 cargo build --release

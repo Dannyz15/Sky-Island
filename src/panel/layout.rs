@@ -1,0 +1,415 @@
+//! What is on each page of the settings window and where it sits: the pages, their rows and controls, and the layout of a page for a window of a given width.
+
+use super::*;
+
+/// Where a page's content sits across the window: it grows with the window up to a limit and stays in the middle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Frame {
+    pub(super) x: f32,
+    pub(super) w: f32,
+}
+
+/// The frame for a window `width` logical pixels wide.
+pub(super) fn frame_for(width: f32) -> Frame {
+    let room = (width - SIDEBAR_W - 60.0).max(MIN_CONTENT_W);
+    let w = room.min(MAX_CONTENT_W);
+    Frame { x: SIDEBAR_W + 30.0 + (room - w) / 2.0, w }
+}
+
+/// The on/off settings.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Toggle {
+    Autostart,
+    HideFullscreen,
+    ShowClock,
+    Clock24,
+    Eyes,
+    IdleEyes,
+    Minimal,
+    EmptyShelf,
+    HudVolume,
+    HudBrightness,
+    HudLock,
+    HudBattery,
+    HudNetwork,
+    HudAudio,
+    Sound,
+    Clipboard,
+    HideIsland,
+    Water,
+    Timer,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Seg {
+    Theme,
+    Motion,
+    Eyes,
+    Size,
+    Open,
+    WeekStart,
+    CalView,
+    ClipKeep,
+    Screen,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Slide {
+    OpenDelay,
+    CloseDelay,
+    Volume,
+    AlarmEvery,
+    AlarmFor,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Act {
+    OpenFolder,
+    ClearLyrics,
+    CheckUpdate,
+    Changelog,
+    Reset,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Kind {
+    Toggle(Toggle),
+    Seg(Seg),
+    Slider(Slide),
+    Button(Act),
+    /// A button that shows the current choice, for the timer's alarm sound.
+    Pick,
+    /// A line with a value on the right; with an address it opens that page when clicked.
+    Link(&'static str),
+}
+
+/// The pages of the window, in the order of the sidebar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Page {
+    General,
+    Notch,
+    Appearance,
+    Tabs,
+    Sounds,
+    Calendar,
+    Shelf,
+    Notices,
+    About,
+}
+
+impl Page {
+    pub(super) const ALL: [Page; 9] =
+        [Page::General, Page::Notch, Page::Appearance, Page::Tabs, Page::Sounds, Page::Calendar, Page::Shelf, Page::Notices, Page::About];
+
+    pub(super) fn index(self) -> usize {
+        Self::ALL.iter().position(|p| *p == self).unwrap_or(0)
+    }
+
+    pub(super) fn title(self) -> &'static str {
+        match self {
+            Page::General => "General",
+            Page::Notch => "Notch",
+            Page::Appearance => "Appearance",
+            Page::Tabs => "Tabs",
+            Page::Sounds => "Sounds",
+            Page::Calendar => "Calendar",
+            Page::Shelf => "Shelf",
+            Page::Notices => "Notices",
+            Page::About => "About",
+        }
+    }
+
+    pub(super) fn subtitle(self) -> &'static str {
+        match self {
+            Page::General => "How Sky Island starts.",
+            Page::Notch => "How the notch opens and hides, how big it is, and what the closed notch shows.",
+            Page::Appearance => "The colours and the motion.",
+            Page::Tabs => "Choose which tabs the notch has.",
+            Page::Sounds => "Chimes and the timer alarm.",
+            Page::Calendar => "How the calendar counts its weeks and what it shows.",
+            Page::Shelf => "What happens to the files on the shelf.",
+            Page::Notices => "Choose which changes pop up on the notch.",
+            Page::About => "This version, updates and your data.",
+        }
+    }
+
+    /// The colour of the page's icon, and of its sliders and choices.
+    pub(super) fn tint(self) -> [u8; 3] {
+        match self {
+            Page::General => [142, 148, 168],
+            Page::Notch => [96, 110, 255],
+            Page::Appearance => [170, 112, 255],
+            Page::Tabs => [255, 176, 64],
+            Page::Sounds => [255, 92, 120],
+            Page::Calendar => [255, 96, 86],
+            Page::Shelf => [255, 140, 56],
+            Page::Notices => [56, 176, 240],
+            Page::About => [70, 190, 210],
+        }
+    }
+}
+
+/// One row of a page: its label, a line under it, what it controls, and the text of a button.
+pub(super) type RowSpec = (&'static str, &'static str, Kind, &'static str);
+
+/// The groups (title and rows) on a page.
+pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
+    use Kind::{Button, Link, Pick, Seg as S, Slider, Toggle as T};
+    match page {
+        Page::General => vec![
+            ("Startup", vec![("Start with Windows", "Open Sky Island when you sign in", T(Toggle::Autostart), "")]),
+        ],
+        Page::Notch => vec![
+            (
+                "Opening",
+                vec![
+                    ("Open the notch", "Hover over it, or click it", S(Seg::Open), ""),
+                    ("Open delay", "How long the mouse rests on the notch before it opens", Slider(Slide::OpenDelay), ""),
+                    ("Close delay", "How long the mouse is away before it closes", Slider(Slide::CloseDelay), ""),
+                ],
+            ),
+            (
+                "Behaviour",
+                vec![
+                    ("Hide in full screen", "Games, videos and slides that fill the screen", T(Toggle::HideFullscreen), ""),
+                    ("Auto-hide notch", "Slide out of view when you are not using it", T(Toggle::HideIsland), ""),
+                ],
+            ),
+            (
+                "Size",
+                vec![
+                    ("Notch size", "Make the whole notch bigger or smaller", S(Seg::Size), ""),
+                    ("Minimal notch", "A smaller pill when nothing is playing", T(Toggle::Minimal), ""),
+                ],
+            ),
+            (
+                "Screen",
+                vec![("Show on", "Which screen the notch is on", S(Seg::Screen), "")],
+            ),
+            (
+                "Closed notch",
+                vec![
+                    ("Show clock", "The time on the closed notch", T(Toggle::ShowClock), ""),
+                    ("24-hour clock", "13:00 instead of 1:00 PM", T(Toggle::Clock24), ""),
+                ],
+            ),
+            (
+                "Eyes",
+                vec![
+                    ("Enable eyes", "Blinking eyes on the closed notch while you work", T(Toggle::Eyes), ""),
+                    ("Idle eyes", "They appear, and doze off, when you stop using the PC", T(Toggle::IdleEyes), ""),
+                    ("Eye style", "How the eyes look", S(Seg::Eyes), ""),
+                ],
+            ),
+        ],
+        Page::Appearance => vec![
+            (
+                "Look",
+                vec![
+                    ("Theme", "Dark, light, or the same as Windows", S(Seg::Theme), ""),
+                    ("Animation", "How lively the movement is", S(Seg::Motion), ""),
+                ],
+            ),
+        ],
+        Page::Tabs => vec![
+            (
+                "Tabs you can add",
+                vec![
+                    ("Water tracker", "A daily glass counter with reminders", T(Toggle::Water), ""),
+                    ("Timer", "A countdown timer with an alarm", T(Toggle::Timer), ""),
+                ],
+            ),
+            (
+                "Clipboard",
+                vec![
+                    ("Clipboard history", "Keep what you copy, text and pictures", T(Toggle::Clipboard), ""),
+                    ("Forget copied items", "Remove them from the history after a while", S(Seg::ClipKeep), ""),
+                ],
+            ),
+        ],
+        Page::Sounds => vec![
+            (
+                "Chimes",
+                vec![
+                    ("Sounds", "Chimes for the timer, to-do and water reminders", T(Toggle::Sound), ""),
+                    ("Volume", "How loud they are", Slider(Slide::Volume), ""),
+                ],
+            ),
+            (
+                "Timer alarm",
+                vec![
+                    ("Repeat every", "How often the alarm sounds again", Slider(Slide::AlarmEvery), ""),
+                    ("Ring for", "How long it rings if nobody stops it", Slider(Slide::AlarmFor), ""),
+                    ("Alarm sound", "Use a sound file of your own", Pick, ""),
+                ],
+            ),
+        ],
+        Page::Calendar => vec![(
+            "Options",
+            vec![
+                ("Week starts on", "The first column of the month", S(Seg::WeekStart), ""),
+                ("Default view", "A month, or just one week", S(Seg::CalView), ""),
+            ],
+        )],
+        Page::Shelf => vec![(
+            "Shelf",
+            vec![("Start with an empty shelf", "Files from your last session are cleared when Sky Island starts", T(Toggle::EmptyShelf), "")],
+        )],
+        Page::Notices => vec![
+            (
+                "Indicators",
+                vec![
+                    ("Volume", "When you change the volume or mute", T(Toggle::HudVolume), ""),
+                    ("Brightness", "On laptop screens", T(Toggle::HudBrightness), ""),
+                    ("Caps Lock and Num Lock", "When you press the lock keys", T(Toggle::HudLock), ""),
+                ],
+            ),
+            (
+                "Popups",
+                vec![
+                    ("Battery", "Charging, unplugged and low battery", T(Toggle::HudBattery), ""),
+                    ("Wi-Fi and internet", "When the connection changes", T(Toggle::HudNetwork), ""),
+                    ("Headphones and speakers", "When an audio device is connected", T(Toggle::HudAudio), ""),
+                ],
+            ),
+        ],
+        Page::About => vec![
+            (
+                "Updates and data",
+                vec![
+                    ("Check for updates", "", Button(Act::CheckUpdate), "Check for updates"),
+                    ("Changelog", "What changed in each version", Button(Act::Changelog), "View"),
+                    ("Open data folder", "Your settings, tasks and shelf live here", Button(Act::OpenFolder), "Open"),
+                    ("Lyrics cache", "Lyrics saved on this PC for the songs you played", Button(Act::ClearLyrics), "Clear"),
+                    ("Reset to defaults", "Put every setting back to what a fresh install has", Button(Act::Reset), "Reset"),
+                ],
+            ),
+            (
+                "Info",
+                vec![
+                    ("Website", "", Link("https://github.com/Dannyz15/Sky-Island"), "github.com/Dannyz15/Sky-Island"),
+                    ("Made by", "", Link(""), "Dannyz15"),
+                ],
+            ),
+            (
+                "Thanks",
+                vec![
+                    ("Synced lyrics", "", Link("https://lrclib.net"), "LRCLIB"),
+                    ("Built with", "", Link("https://github.com/Dannyz15/Sky-Island/blob/main/Cargo.toml"), "Rust and open-source crates"),
+                ],
+            ),
+        ],
+    }
+}
+
+pub(super) struct Item {
+    pub(super) label: &'static str,
+    pub(super) desc: &'static str,
+    pub(super) kind: Kind,
+    /// The text of a button.
+    pub(super) btn: &'static str,
+    pub(super) row: Rect,
+    /// The part of the row that holds the control.
+    pub(super) ctrl: Rect,
+    /// Whether another row of the same card is above it, for the line between them.
+    pub(super) after_row: bool,
+}
+
+pub(super) struct Group {
+    pub(super) title: &'static str,
+    pub(super) rect: Rect,
+}
+
+pub(super) struct Layout {
+    pub(super) groups: Vec<Group>,
+    pub(super) items: Vec<Item>,
+    /// The card at the top of the About page.
+    pub(super) hero: Option<Rect>,
+}
+
+impl Layout {
+    /// Where the last card ends.
+    pub(super) fn bottom(&self) -> f32 {
+        let groups = self.groups.iter().map(|g| g.rect.1 + g.rect.3);
+        groups.chain(self.hero.map(|h| h.1 + h.3)).fold(CONTENT_TOP, f32::max)
+    }
+
+    /// The same layout moved down by `dy` (up when negative), for a scrolled page.
+    pub(super) fn shifted(mut self, dy: f32) -> Layout {
+        for g in &mut self.groups {
+            g.rect.1 += dy;
+        }
+        for item in &mut self.items {
+            item.row.1 += dy;
+            item.ctrl.1 += dy;
+        }
+        if let Some(h) = &mut self.hero {
+            h.1 += dy;
+        }
+        self
+    }
+}
+
+/// Everything on a page, laid out in logical pixels.
+pub(super) fn layout(page: Page, frame: Frame) -> Layout {
+    let (mut groups, mut items) = (Vec::new(), Vec::new());
+    let mut y = CONTENT_TOP;
+    let mut hero = None;
+    if page == Page::About {
+        hero = Some((frame.x, y, frame.w, ABOUT_HERO_H));
+        y += ABOUT_HERO_H + GROUP_GAP;
+    }
+    if page == Page::Calendar {
+        // A preview of the month (or week) with a label above it.
+        y += GROUP_LABEL_H;
+        hero = Some((frame.x, y, frame.w, CAL_PREVIEW_H));
+        y += CAL_PREVIEW_H + GROUP_GAP;
+    }
+    for (title, rows) in page_spec(page) {
+        y += GROUP_LABEL_H;
+        let height: f32 = rows.iter().map(|(_, desc, kind, _)| row_height(desc, *kind)).sum();
+        groups.push(Group { title, rect: (frame.x, y, frame.w, height) });
+        let mut row_y = y;
+        for (i, (label, desc, kind, btn)) in rows.into_iter().enumerate() {
+            let row_h = row_height(desc, kind);
+            let row = (frame.x, row_y, frame.w, row_h);
+            row_y += row_h;
+            let right = row.0 + row.2 - 18.0;
+            let mid = row.1 + row_h / 2.0;
+            let ctrl = match kind {
+                Kind::Toggle(_) => (right - 40.0, mid - 11.25, 40.0, 22.5),
+                Kind::Seg(seg) => (right - seg_width(seg), mid - 14.0, seg_width(seg), 28.0),
+                Kind::Slider(_) => (right - SLIDER_TEXT_W - 12.0 - SLIDER_W, mid - 2.0, SLIDER_W, 4.0),
+                Kind::Pick => (right - 200.0, mid - 14.0, 200.0, 28.0),
+                Kind::Button(_) => {
+                    let w = if btn.len() > 12 { 168.0 } else { 104.0 };
+                    (right - w, mid - 14.0, w, 28.0)
+                }
+                Kind::Link(_) => (right - 260.0, mid - 14.0, 260.0, 28.0),
+            };
+            items.push(Item { label, desc, kind, btn, row, ctrl, after_row: i > 0 });
+        }
+        y += height + GROUP_GAP;
+    }
+    Layout { groups, items, hero }
+}
+
+/// The height of a row: taller when it has a line of text under its label.
+pub(super) fn row_height(desc: &str, kind: Kind) -> f32 {
+    if desc.is_empty() && !matches!(kind, Kind::Button(Act::CheckUpdate)) { 40.0 } else { ROW_H }
+}
+
+/// The height of the calendar preview card.
+pub(super) const CAL_PREVIEW_H: f32 = 232.0;
+
+/// The height of the card at the top of the About page: the logo with three centred lines under it.
+pub(super) const ABOUT_HERO_H: f32 = 152.0;
+
+/// The sidebar row of a page.
+pub(super) fn side_rect(page: Page) -> Rect {
+    (12.0, SIDE_TOP + page.index() as f32 * SIDE_ITEM_H, SIDEBAR_W - 24.0, SIDE_ITEM_H - 4.0)
+}
+
+pub(super) fn inside(r: Rect, x: f32, y: f32) -> bool {
+    x >= r.0 && x <= r.0 + r.2 && y >= r.1 && y <= r.1 + r.3
+}

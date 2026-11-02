@@ -2,30 +2,30 @@
 #![windows_subsystem = "windows"]
 #![allow(clippy::too_many_arguments)]
 
-mod calendar;
-mod editor;
-mod gfx;
-mod lyrics;
-mod media;
-mod shelf;
-mod store;
-mod sound;
-mod presence;
-mod settings;
-mod sys;
-mod todo;
-mod water;
 mod appicon;
+mod calendar;
 mod clipboard;
 mod dragdrop;
-mod theme;
-mod timer;
+mod editor;
+mod gfx;
 mod icon;
+mod lyrics;
+mod media;
 mod motion;
 mod msgwin;
 mod panel;
+mod presence;
+mod settings;
+mod shelf;
+mod sound;
+mod store;
+mod sys;
+mod theme;
+mod timer;
+mod todo;
 mod ui;
 mod update;
+mod water;
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -209,7 +209,7 @@ struct App {
     /// 0.0 = collapsed, 1.0 = expanded. A spring, so it can swing a little past 1.0 when it opens.
     progress: f64,
     progress_v: f64,
-    /// 0.0 = in place, 1.0 = slid up out of view (the "Hide island" setting).
+    /// 0.0 = in place, 1.0 = slid up out of view (the "Auto-hide notch" setting).
     tuck_t: f64,
     tuck_v: f64,
     /// The `tuck_target` the animation is heading for, to restart its clock when that changes.
@@ -463,5 +463,4 @@ mod tests {
         assert_ne!(a, instance_name(r"C:\Users\B\AppData\Roaming"));
         assert!(a.starts_with("Local\\SkyIsland-"));
     }
-
 }

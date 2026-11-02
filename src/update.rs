@@ -40,10 +40,14 @@ pub enum Status {
     Available { version: String, page: String, asset: Option<Asset> },
     /// The installer is coming down.
     Downloading { version: String, percent: u32 },
-    /// The installer is on disk and checked, waiting for the user to press Install.
-    Ready { version: String, path: PathBuf },
+    /// The installer is on disk and checked, waiting for the user to press Install. `asset` is what it was
+    /// checked against, to check it again when it is run.
+    Ready { version: String, path: PathBuf, asset: Asset },
     /// The check did not work, for example because there is no internet.
     Failed,
+    /// The newest release is not named exactly like `v1.2.3` (a stray dot, a space, a capital V, a missing
+    /// number...), so it is not offered as an update.
+    BadName,
     DownloadFailed,
 }
 
@@ -95,7 +99,7 @@ fn releases_from(json: &Value) -> Option<Vec<Release>> {
             .filter_map(|r| {
                 let tag = r.get("tag_name")?.as_str()?;
                 Some(Release {
-                    version: tag_version(tag).to_string(),
+                    version: release_version(tag).unwrap_or(tag.trim()).to_string(),
                     date: r.get("published_at").and_then(Value::as_str).unwrap_or("").chars().take(10).collect(),
                     body: r.get("body").and_then(Value::as_str).unwrap_or("").to_string(),
                 })
@@ -180,38 +184,46 @@ fn check() -> Status {
     json.as_ref().and_then(|v| judge(v, env!("CARGO_PKG_VERSION"))).unwrap_or(Status::Failed)
 }
 
-/// Read GitHub's answer for the latest release and compare it with the running version.
+/// Read GitHub's answer for the latest release and compare it with the running version. A release is only
+/// taken as an update if it is named exactly right: a tag that is not `v` and three numbers, or a setup whose
+/// name and address do not say the same version as the tag, is not offered (see `release_version`, `installer`).
 fn judge(release: &Value, current: &str) -> Option<Status> {
     let tag = release.get("tag_name")?.as_str()?;
-    let version = tag_version(tag);
+    let Some(version) = release_version(tag) else { return Some(Status::BadName) };
     if newer(version, current) {
         let page = release.get("html_url").and_then(Value::as_str).filter(|u| u.starts_with(REPO)).unwrap_or("https://github.com/Dannyz15/Sky-Island/releases/latest");
-        Some(Status::Available { version: version.to_string(), page: page.to_string(), asset: installer(release) })
+        Some(Status::Available { version: version.to_string(), page: page.to_string(), asset: installer(release, version) })
     } else {
-        parse(version).map(|_| Status::Latest)
+        Some(Status::Latest)
     }
 }
 
-/// The setup program among a release's files.
-fn installer(release: &Value) -> Option<Asset> {
+/// The setup program of the release for `version`. It has to be named `Sky-Island-Setup-<version>.exe` and sit at
+/// exactly `<this project>/releases/download/v<version>/Sky-Island-Setup-<version>.exe`, with a size and a SHA-256
+/// to check it by, so a setup of another version attached by mistake is never offered.
+fn installer(release: &Value, version: &str) -> Option<Asset> {
+    let name = format!("Sky-Island-Setup-{version}.exe");
+    let expected = format!("{REPO}releases/download/v{version}/{name}");
     release.get("assets")?.as_array()?.iter().find_map(|a| {
-        let name = a.get("name")?.as_str()?;
-        if !(name.starts_with("Sky-Island-Setup") && name.ends_with(".exe")) {
+        if a.get("name")?.as_str()? != name {
             return None;
         }
-        // Only a file on this project's own release downloads, with a size and a SHA-256 to check it by.
         let url = a.get("browser_download_url")?.as_str()?;
         let size = a.get("size").and_then(Value::as_u64).filter(|s| *s > 0)?;
         let sha256 = a.get("digest").and_then(Value::as_str)?.strip_prefix("sha256:")?.to_lowercase();
         let hex = sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit());
-        (url.starts_with(&format!("{REPO}releases/download/")) && hex).then(|| Asset { url: url.to_string(), size, sha256 })
+        (url == expected && hex).then(|| Asset { url: url.to_string(), size, sha256 })
     })
 }
 
-/// The version a release tag names: "v1.4.7", "V1.4.7" and "1.4.7" all say 1.4.7, and so does a mistyped
-/// "v.1.4.7" (which stopped the update check for everyone once).
-fn tag_version(tag: &str) -> &str {
-    tag.trim().trim_start_matches(['v', 'V', '.'])
+/// The version a release tag names, only if the tag is written exactly right: a lower-case `v`, then three
+/// numbers with dots between them and nothing else ("v1.4.8"). A stray dot ("v.1.4.8"), a space, a capital V, no
+/// V, a fourth number, a suffix like "-beta" or a leading zero all make it not a version, so nothing is offered.
+fn release_version(tag: &str) -> Option<&str> {
+    let version = tag.strip_prefix('v')?;
+    let parts: Vec<&str> = version.split('.').collect();
+    let plain = |p: &str| !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()) && (p == "0" || !p.starts_with('0'));
+    (parts.len() == 3 && parts.iter().all(|p| plain(p))).then_some(version)
 }
 
 /// "1.2.3" as numbers; `None` if it is not a plain dotted version.
@@ -236,7 +248,7 @@ pub fn spawn_download(version: String, asset: Asset, proxy: EventLoopProxy<UserE
             let _ = proxy.send_event(UserEvent::Update(s));
         };
         match download(&version, &asset, |percent| send(Status::Downloading { version: version.clone(), percent })) {
-            Some(path) => send(Status::Ready { version: version.clone(), path }),
+            Some(path) => send(Status::Ready { version: version.clone(), path, asset: asset.clone() }),
             None => send(Status::DownloadFailed),
         }
     });
@@ -286,6 +298,40 @@ fn download(version: &str, asset: &Asset, mut progress: impl FnMut(u32)) -> Opti
     Some(done)
 }
 
+/// Whether `file` holds the installer `asset` describes: the same size and the same SHA-256.
+fn matches(mut file: impl Read, asset: &Asset) -> bool {
+    let (mut hash, mut got, mut buf) = (Sha256::new(), 0u64, vec![0u8; 64 * 1024]);
+    loop {
+        match file.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                hash.update(&buf[..n]);
+                got += n as u64;
+            }
+            Err(_) => return false,
+        }
+    }
+    acceptable(got, &hex_of(&hash.finalize()), asset)
+}
+
+/// Run the downloaded installer, but only if the file is still exactly the one that was checked after the
+/// download: it has been sitting in the temporary folder, where another program could have changed it. The file is
+/// held open (nobody can write to it) from the check until the installer has started. A file that fails the check
+/// is deleted. Returns whether the installer was started.
+pub fn launch(path: &std::path::Path, asset: &Asset) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 1;
+    let Ok(file) = fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(path) else { return false };
+    if !matches(&file, asset) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return false;
+    }
+    let started = std::process::Command::new(path).spawn().is_ok();
+    drop(file);
+    started
+}
+
 /// Delete setup files that "Check for updates" left in the temporary folder once they are no longer
 /// needed: the version they hold is the one running (or older), so the update has been installed, or
 /// the download was cut short. A setup that is still running can't be deleted, so it is tried again
@@ -332,14 +378,92 @@ fn acceptable(got: u64, sha256: &str, asset: &Asset) -> bool {
 mod tests {
     use super::*;
 
+    fn asset_of(bytes: &[u8]) -> Asset {
+        Asset { url: String::new(), size: bytes.len() as u64, sha256: hex_of(&Sha256::digest(bytes)) }
+    }
+
     #[test]
-    fn a_release_tag_is_read_whatever_its_prefix() {
-        for tag in ["v1.4.7", "V1.4.7", "1.4.7", "v.1.4.7", " v1.4.7 "] {
-            assert_eq!(tag_version(tag), "1.4.7", "{tag:?}");
+    fn a_file_matches_its_release_only_with_the_same_size_and_hash() {
+        let bytes = b"the installer".as_slice();
+        assert!(matches(bytes, &asset_of(bytes)));
+        assert!(!matches(b"the installeR".as_slice(), &asset_of(bytes)), "one byte changed");
+        assert!(!matches(b"the installer plus".as_slice(), &asset_of(bytes)), "longer");
+        assert!(!matches(b"".as_slice(), &asset_of(bytes)), "empty");
+    }
+
+    #[test]
+    fn an_installer_is_checked_again_before_it_is_run_and_a_changed_one_is_deleted() {
+        // A real program stands in for the installer: it starts and ends at once.
+        let system = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into());
+        let original = fs::read(system.join("System32").join("whoami.exe")).unwrap();
+        let dir = std::env::temp_dir().join(format!("sky-island-launch-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("Sky-Island-Setup-9.9.9.exe");
+        fs::write(&file, &original).unwrap();
+        let asset = asset_of(&original);
+
+        assert!(launch(&file, &asset), "the file is as it was checked, and it can be started while it is held open");
+        assert!(file.exists(), "a good installer is kept");
+
+        let mut changed = original.clone();
+        *changed.last_mut().unwrap() ^= 1;
+        // The program that was just started keeps its file locked until it ends, which takes a moment.
+        let mut written = false;
+        for _ in 0..100 {
+            written = fs::write(&file, &changed).is_ok();
+            if written {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
         }
-        let release = json!({ "tag_name": "v.1.4.7", "html_url": "https://github.com/Dannyz15/Sky-Island/releases/tag/v.1.4.7", "assets": [] });
-        assert!(matches!(judge(&release, "1.4.6"), Some(Status::Available { version, .. }) if version == "1.4.7"));
-        assert!(matches!(judge(&release, "1.4.7"), Some(Status::Latest)));
+        assert!(written, "the started program ended and let go of its file");
+        assert!(!launch(&file, &asset), "changed after the download: not run");
+        assert!(!file.exists(), "and removed, so the download is offered again");
+        assert!(!launch(&file, &asset), "a missing file is not run either");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_tag_written_exactly_as_v_and_three_numbers_is_a_version() {
+        for good in ["v1.4.8", "v0.0.1", "v10.20.30"] {
+            assert_eq!(release_version(good), Some(&good[1..]), "{good:?}");
+        }
+        for bad in [
+            "", "v", "1.4.8", "V1.4.8", "v.1.4.8", "v1.4.8.", " v1.4.8", "v1.4.8 ", "v 1.4.8", "v1.4", "v1.4.8.1", "v1..8", "v1.4.x",
+            "v1.4.8-beta", "v01.4.8", "v1.04.8", "v1,4,8", "vv1.4.8", "v1.4.8\n", "v1.4.1234567890", "v-1.4.8",
+        ] {
+            assert_eq!(release_version(bad), None, "{bad:?} must not be read as a version");
+        }
+    }
+
+    #[test]
+    fn a_mistyped_tag_is_never_offered_as_an_update() {
+        for tag in ["v.1.4.9", "V1.4.9", "1.4.9", "v1.4.9 ", "v1.4"] {
+            let release = json!({ "tag_name": tag, "html_url": "https://github.com/Dannyz15/Sky-Island/releases/tag/x", "assets": [] });
+            assert_eq!(judge(&release, "1.4.8"), Some(Status::BadName), "{tag:?}");
+        }
+        let right = json!({ "tag_name": "v1.4.9", "html_url": "https://github.com/Dannyz15/Sky-Island/releases/tag/v1.4.9", "assets": [] });
+        assert!(matches!(judge(&right, "1.4.8"), Some(Status::Available { version, .. }) if version == "1.4.9"));
+        assert_eq!(judge(&right, "1.4.9"), Some(Status::Latest));
+    }
+
+    #[test]
+    fn a_setup_of_another_version_attached_to_a_release_is_not_offered() {
+        let attach = |name: &str, url: &str| {
+            json!({
+                "tag_name": "v1.2.0",
+                "html_url": "https://github.com/Dannyz15/Sky-Island/releases/tag/v1.2.0",
+                "assets": [{ "name": name, "browser_download_url": url, "size": 1234, "digest": DIGEST }]
+            })
+        };
+        let base = "https://github.com/Dannyz15/Sky-Island/releases/download";
+        let offered = |r: &Value| matches!(judge(r, "1.1.0"), Some(Status::Available { asset: Some(_), .. }));
+        assert!(offered(&attach("Sky-Island-Setup-1.2.0.exe", &format!("{base}/v1.2.0/Sky-Island-Setup-1.2.0.exe"))));
+        assert!(!offered(&attach("Sky-Island-Setup-1.1.9.exe", &format!("{base}/v1.2.0/Sky-Island-Setup-1.1.9.exe"))), "the setup of an older version");
+        assert!(!offered(&attach("Sky-Island-Setup-1.2.0.exe", &format!("{base}/v1.1.9/Sky-Island-Setup-1.2.0.exe"))), "the address of another release");
+        assert!(!offered(&attach("sky-island-setup-1.2.0.exe", &format!("{base}/v1.2.0/sky-island-setup-1.2.0.exe"))), "another spelling of the name");
+        assert!(!offered(&attach("Sky-Island-Setup.exe", &format!("{base}/v1.2.0/Sky-Island-Setup.exe"))), "no version in the name");
     }
 
     #[test]
@@ -456,12 +580,12 @@ mod tests {
             }
             json!({ "tag_name": "v1.2.0", "html_url": "https://github.com/Dannyz15/Sky-Island/releases/tag/v1.2.0", "assets": [asset] })
         };
-        assert!(installer(&with(SETUP_URL, Some(DIGEST), 1234)).is_some());
-        assert!(installer(&with(SETUP_URL, None, 1234)).is_none(), "no hash: not offered");
-        assert!(installer(&with(SETUP_URL, Some("sha256:abc"), 1234)).is_none(), "not a SHA-256");
-        assert!(installer(&with(SETUP_URL, Some(DIGEST), 0)).is_none(), "no size");
-        assert!(installer(&with("https://example.com/Sky-Island-Setup-1.2.0.exe", Some(DIGEST), 1234)).is_none(), "another site");
-        assert!(installer(&with("https://github.com/Other/Repo/releases/download/v1/Sky-Island-Setup-1.2.0.exe", Some(DIGEST), 1234)).is_none(), "another project");
+        assert!(installer(&with(SETUP_URL, Some(DIGEST), 1234), "1.2.0").is_some());
+        assert!(installer(&with(SETUP_URL, None, 1234), "1.2.0").is_none(), "no hash: not offered");
+        assert!(installer(&with(SETUP_URL, Some("sha256:abc"), 1234), "1.2.0").is_none(), "not a SHA-256");
+        assert!(installer(&with(SETUP_URL, Some(DIGEST), 0), "1.2.0").is_none(), "no size");
+        assert!(installer(&with("https://example.com/Sky-Island-Setup-1.2.0.exe", Some(DIGEST), 1234), "1.2.0").is_none(), "another site");
+        assert!(installer(&with("https://github.com/Other/Repo/releases/download/v1/Sky-Island-Setup-1.2.0.exe", Some(DIGEST), 1234), "1.2.0").is_none(), "another project");
     }
 
     #[test]

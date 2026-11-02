@@ -18,7 +18,7 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EVENT_SYSTEM_FOREGROUND, GW_HWNDPREV, GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetMessageW,
-    GetShellWindow, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, HWND_TOPMOST, IsIconic, IsWindowVisible, MSG,
+    GetShellWindow, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, HWND_TOPMOST, IsIconic, IsWindowVisible, IsZoomed, MSG,
     SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, TranslateMessage, WINEVENT_OUTOFCONTEXT,
     WS_CAPTION, WS_EX_TOPMOST,
 };
@@ -224,9 +224,11 @@ fn idle_time() -> Duration {
     }
 }
 
-/// Whether a window with no title bar covers the whole of a screen (`window` and `screen` are areas).
-fn covers_whole_screen(window: Area, screen: Area, style: u32) -> bool {
-    style & WS_CAPTION.0 != WS_CAPTION.0 && window.0 <= screen.0 && window.1 <= screen.1 && window.2 >= screen.2 && window.3 >= screen.3
+/// Whether a window with no title bar covers the whole of a screen (`window` and `screen` are areas). A window
+/// that has been maximised is not one: that is an ordinary app (one that draws its own title bar has no
+/// title-bar style, but it is still maximised, not full screen).
+fn covers_whole_screen(window: Area, screen: Area, style: u32, maximised: bool) -> bool {
+    !maximised && style & WS_CAPTION.0 != WS_CAPTION.0 && window.0 <= screen.0 && window.1 <= screen.1 && window.2 >= screen.2 && window.3 >= screen.3
 }
 
 /// A game or player in "borderless windowed" mode is a window with no title bar the size of the screen, which
@@ -252,7 +254,7 @@ fn borderless() -> Option<Area> {
         }
         let (window, screen) = ((rect.left, rect.top, rect.right, rect.bottom), info.rcMonitor);
         let screen = (screen.left, screen.top, screen.right, screen.bottom);
-        covers_whole_screen(window, screen, GetWindowLongPtrW(front, GWL_STYLE) as u32).then_some(screen)
+        covers_whole_screen(window, screen, GetWindowLongPtrW(front, GWL_STYLE) as u32, IsZoomed(front).as_bool()).then_some(screen)
     }
 }
 
@@ -313,13 +315,14 @@ mod tests {
     #[test]
     fn only_a_window_without_a_title_bar_that_fills_the_screen_counts_as_full_screen() {
         let (screen, bar) = ((0, 0, 1920, 1080), WS_CAPTION.0);
-        assert!(covers_whole_screen((0, 0, 1920, 1080), screen, 0), "a borderless window the size of the screen");
-        assert!(covers_whole_screen((-8, -8, 1928, 1088), screen, 0), "a little larger is still covering it");
-        assert!(!covers_whole_screen((0, 0, 1920, 1080), screen, bar), "a title bar: an ordinary maximised window");
-        assert!(!covers_whole_screen((0, 0, 1920, 1040), screen, 0), "the taskbar still shows");
-        assert!(!covers_whole_screen((100, 100, 900, 700), screen, 0), "a small window");
-        assert!(covers_whole_screen((1920, 0, 3840, 1080), (1920, 0, 3840, 1080), 0), "on a second screen");
-        assert!(!covers_whole_screen((0, 0, 1920, 1080), (1920, 0, 3840, 1080), 0), "that is on another screen");
+        assert!(covers_whole_screen((0, 0, 1920, 1080), screen, 0, false), "a borderless window the size of the screen");
+        assert!(covers_whole_screen((-8, -8, 1928, 1088), screen, 0, false), "a little larger is still covering it");
+        assert!(!covers_whole_screen((0, 0, 1920, 1080), screen, bar, false), "a title bar: an ordinary maximised window");
+        assert!(!covers_whole_screen((0, 0, 1920, 1040), screen, 0, false), "the taskbar still shows");
+        assert!(!covers_whole_screen((100, 100, 900, 700), screen, 0, false), "a small window");
+        assert!(covers_whole_screen((1920, 0, 3840, 1080), (1920, 0, 3840, 1080), 0, false), "on a second screen");
+        assert!(!covers_whole_screen((0, 0, 1920, 1080), (1920, 0, 3840, 1080), 0, false), "that is on another screen");
+        assert!(!covers_whole_screen((-8, -8, 1928, 1088), screen, 0, true), "maximised, with a title bar of its own drawn inside: not full screen");
     }
 
     #[test]

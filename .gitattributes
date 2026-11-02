@@ -1,0 +1,7 @@
+# Text files are kept with plain LF line endings in the repository and are checked out with LF on every machine,
+# so Git no longer warns about CRLF and a file looks the same wherever it was edited.
+* text=auto eol=lf
+
+# Pictures and icons are never touched by line-ending conversion.
+*.png binary
+*.ico binary

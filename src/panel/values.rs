@@ -1,0 +1,263 @@
+//! The values behind the controls: reading and changing a setting, the names of the choices, the cells of a choice control and the range of a slider.
+
+use super::*;
+
+pub(super) const THEME_NAMES: [&str; 3] = ["Dark", "Light", "Follow System"];
+
+pub(super) const MOTION_NAMES: [&str; 4] = ["Calm", "Normal", "Snappy", "None"];
+
+pub(super) const EYE_NAMES: [&str; 4] = ["Classic", "Dots", "Cat", "Glow"];
+
+pub(super) const SIZE_NAMES: [&str; 5] = ["Auto", "100%", "115%", "130%", "150%"];
+
+pub(super) const OPEN_NAMES: [&str; 2] = ["Hover", "Click"];
+
+pub(super) const WEEK_NAMES: [&str; 2] = ["Sunday", "Monday"];
+
+pub(super) const VIEW_NAMES: [&str; 2] = ["Month", "Week"];
+
+pub(super) const KEEP_NAMES: [&str; 4] = ["Never", "5 min", "30 min", "1 hour"];
+
+pub(super) const SCREEN_NAMES: [&str; 3] = ["Main", "Screen 2", "Screen 3"];
+
+/// How wide a choice is compared with the others in the same row ("Follow System" is the longest).
+pub(super) fn seg_weights(seg: Seg) -> &'static [f32] {
+    match seg {
+        Seg::Theme => &[1.0, 1.0, 2.0],
+        Seg::Motion | Seg::Eyes => &[1.0, 1.0, 1.0, 1.0],
+        Seg::Size => &[1.0, 1.0, 1.0, 1.0, 1.0],
+        Seg::Open | Seg::WeekStart | Seg::CalView => &[1.0, 1.0],
+        Seg::ClipKeep => &[1.0, 1.0, 1.0, 1.0],
+        Seg::Screen => &[1.0, 1.0, 1.0],
+    }
+}
+
+pub(super) fn seg_width(seg: Seg) -> f32 {
+    match seg {
+        Seg::Theme => 260.0,
+        Seg::Motion | Seg::Eyes => 240.0,
+        Seg::Size => 300.0,
+        Seg::Open | Seg::CalView => 170.0,
+        Seg::WeekStart => 190.0,
+        Seg::ClipKeep => 270.0,
+        Seg::Screen => 250.0,
+    }
+}
+
+/// The area of each choice inside a segmented control.
+pub(super) fn seg_cells(seg: Seg, ctrl: Rect) -> Vec<Rect> {
+    let weights = seg_weights(seg);
+    let total: f32 = weights.iter().sum();
+    let mut x = ctrl.0;
+    weights
+        .iter()
+        .map(|w| {
+            let cell = (x, ctrl.1, ctrl.2 * w / total, ctrl.3);
+            x += cell.2;
+            cell
+        })
+        .collect()
+}
+
+pub(super) fn seg_names(seg: Seg) -> &'static [&'static str] {
+    match seg {
+        Seg::Theme => &THEME_NAMES,
+        Seg::Motion => &MOTION_NAMES,
+        Seg::Eyes => &EYE_NAMES,
+        Seg::Size => &SIZE_NAMES,
+        Seg::Open => &OPEN_NAMES,
+        Seg::WeekStart => &WEEK_NAMES,
+        Seg::CalView => &VIEW_NAMES,
+        Seg::ClipKeep => &KEEP_NAMES,
+        Seg::Screen => &SCREEN_NAMES,
+    }
+}
+
+pub(super) fn range_of(slide: Slide) -> Range {
+    match slide {
+        Slide::OpenDelay => settings::OPEN_DELAY,
+        Slide::CloseDelay => settings::CLOSE_DELAY,
+        Slide::Volume => settings::VOLUME,
+        Slide::AlarmEvery => settings::ALARM_EVERY,
+        Slide::AlarmFor => settings::ALARM_FOR,
+    }
+}
+
+pub(super) fn slider_text(slide: Slide, v: u32) -> String {
+    match slide {
+        Slide::OpenDelay if v == 0 => "Instant".to_string(),
+        Slide::OpenDelay | Slide::CloseDelay => format!("{v} ms"),
+        Slide::Volume => format!("{v}%"),
+        Slide::AlarmEvery | Slide::AlarmFor => format!("{v} s"),
+    }
+}
+
+/// The value a slider has when the mouse is at `x`, on a track starting at `track.0`.
+pub(super) fn slider_value(range: Range, track: Rect, x: f32) -> u32 {
+    let t = ((x - track.0) / track.2).clamp(0.0, 1.0);
+    let steps = ((range.max - range.min) / range.step) as f32;
+    range.min + (t * steps).round() as u32 * range.step
+}
+
+impl App {
+    /// Whether an on/off setting is on.
+    pub(super) fn toggle_value(&self, t: Toggle) -> bool {
+        match t {
+            Toggle::Autostart => self.autostart,
+            Toggle::HideFullscreen => self.settings.hide_fullscreen,
+            Toggle::ShowClock => self.settings.show_clock,
+            Toggle::Clock24 => self.settings.clock_24h,
+            Toggle::Eyes => self.settings.eyes,
+            Toggle::IdleEyes => self.settings.idle_eyes,
+            Toggle::Minimal => self.settings.minimal,
+            Toggle::EmptyShelf => self.settings.empty_shelf,
+            Toggle::HudVolume => self.settings.hud_volume,
+            Toggle::HudBrightness => self.settings.hud_brightness,
+            Toggle::HudLock => self.settings.hud_lock,
+            Toggle::HudBattery => self.settings.hud_battery,
+            Toggle::HudNetwork => self.settings.hud_network,
+            Toggle::HudAudio => self.settings.hud_audio,
+            Toggle::Sound => self.settings.sound,
+            Toggle::Clipboard => self.settings.clipboard,
+            Toggle::HideIsland => self.settings.hide_island,
+            Toggle::Water => self.settings.water,
+            Toggle::Timer => self.settings.timer,
+        }
+    }
+
+    /// Flip an on/off setting, with everything that has to follow from it. Used by the notch's Settings
+    /// tab and by this window.
+    pub(crate) fn toggle(&mut self, t: Toggle) {
+        match t {
+            Toggle::Autostart => {
+                let on = !self.autostart;
+                settings::set_autostart(on);
+                self.autostart = settings::autostart_enabled();
+            }
+            Toggle::HideFullscreen => self.settings.hide_fullscreen = !self.settings.hide_fullscreen,
+            Toggle::ShowClock => self.settings.show_clock = !self.settings.show_clock,
+            Toggle::Clock24 => self.settings.clock_24h = !self.settings.clock_24h,
+            Toggle::Eyes => self.settings.eyes = !self.settings.eyes,
+            Toggle::IdleEyes => self.settings.idle_eyes = !self.settings.idle_eyes,
+            Toggle::Minimal => self.settings.minimal = !self.settings.minimal,
+            Toggle::EmptyShelf => self.settings.empty_shelf = !self.settings.empty_shelf,
+            Toggle::HudVolume => self.settings.hud_volume = !self.settings.hud_volume,
+            Toggle::HudBrightness => self.settings.hud_brightness = !self.settings.hud_brightness,
+            Toggle::HudLock => self.settings.hud_lock = !self.settings.hud_lock,
+            Toggle::HudBattery => self.settings.hud_battery = !self.settings.hud_battery,
+            Toggle::HudNetwork => self.settings.hud_network = !self.settings.hud_network,
+            Toggle::HudAudio => self.settings.hud_audio = !self.settings.hud_audio,
+            Toggle::Sound => self.settings.sound = !self.settings.sound,
+            Toggle::Clipboard => self.settings.clipboard = !self.settings.clipboard,
+            Toggle::HideIsland => self.settings.hide_island = !self.settings.hide_island,
+            Toggle::Water => {
+                self.settings.water = !self.settings.water;
+                if self.settings.water {
+                    self.water.restart(Instant::now());
+                } else if self.view == View::Water {
+                    self.view = View::Player;
+                }
+                self.tabs_changed();
+            }
+            Toggle::Timer => {
+                self.settings.timer = !self.settings.timer;
+                if !self.settings.timer {
+                    // Switching it off stops a running timer and puts the tab away.
+                    self.end_timer_edit(false);
+                    self.timer.reset();
+                    if self.view == View::Timer {
+                        self.view = View::Player;
+                    }
+                }
+                self.tabs_changed();
+            }
+        }
+        self.settings_changed();
+    }
+
+    /// The tab bar has one tab more or fewer, so its highlight jumps instead of sliding.
+    pub(super) fn tabs_changed(&mut self) {
+        if let Some(target) = self.tab_target() {
+            self.tab_pos = target;
+            self.tab_vel = 0.0;
+        }
+    }
+
+    /// Save the settings and let the notch (and this window) pick them up.
+    pub(crate) fn settings_changed(&mut self) {
+        self.settings.save();
+        self.apply_visibility();
+        self.last_tick = Instant::now();
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+        if let Some(p) = &self.panel {
+            p.redraw();
+        }
+    }
+
+    pub(super) fn seg_value(&self, seg: Seg) -> usize {
+        match seg {
+            Seg::Theme => ThemeMode::ALL.iter().position(|t| *t == self.settings.theme).unwrap_or(0),
+            Seg::Motion => Motion::ALL.iter().position(|m| *m == self.settings.motion).unwrap_or(1),
+            Seg::Eyes => EyeStyle::ALL.iter().position(|e| *e == self.settings.eye_style).unwrap_or(0),
+            Seg::Size => NotchSize::ALL.iter().position(|z| *z == self.settings.size).unwrap_or(0),
+            Seg::Open => usize::from(self.settings.open_on_click),
+            Seg::WeekStart => usize::from(self.settings.week_monday),
+            Seg::CalView => usize::from(self.settings.calendar_week),
+            Seg::ClipKeep => ClipKeep::ALL.iter().position(|k| *k == self.settings.clip_keep).unwrap_or(0),
+            Seg::Screen => Screen::ALL.iter().position(|s| *s == self.settings.screen).unwrap_or(0),
+        }
+    }
+
+    pub(super) fn set_seg(&mut self, seg: Seg, i: usize) {
+        match seg {
+            Seg::Theme => self.settings.theme = ThemeMode::ALL[i.min(2)],
+            Seg::Motion => self.settings.motion = Motion::ALL[i.min(3)],
+            Seg::Eyes => self.settings.eye_style = EyeStyle::ALL[i.min(3)],
+            Seg::Size => self.settings.size = NotchSize::ALL[i.min(4)],
+            Seg::Open => self.settings.open_on_click = i == 1,
+            Seg::WeekStart => self.settings.week_monday = i == 1,
+            Seg::CalView => self.settings.calendar_week = i == 1,
+            Seg::ClipKeep => self.settings.clip_keep = ClipKeep::ALL[i.min(3)],
+            Seg::Screen => self.settings.screen = Screen::ALL[i.min(2)],
+        }
+        self.settings_changed();
+    }
+
+    pub(super) fn slider_get(&self, slide: Slide) -> u32 {
+        match slide {
+            Slide::OpenDelay => self.settings.open_delay,
+            Slide::CloseDelay => self.settings.close_delay,
+            Slide::Volume => self.settings.volume,
+            Slide::AlarmEvery => self.settings.alarm_every,
+            Slide::AlarmFor => self.settings.alarm_for,
+        }
+    }
+
+    /// Change a slider's value. It takes effect at once; it is saved when the mouse is let go.
+    pub(super) fn slider_set(&mut self, slide: Slide, v: u32) {
+        let v = range_of(slide).clamp(v);
+        match slide {
+            Slide::OpenDelay => self.settings.open_delay = v,
+            Slide::CloseDelay => self.settings.close_delay = v,
+            Slide::Volume => self.settings.volume = v,
+            Slide::AlarmEvery => self.settings.alarm_every = v,
+            Slide::AlarmFor => self.settings.alarm_for = v,
+        }
+    }
+
+    /// Put every setting back to what a fresh install has.
+    pub(super) fn reset_settings(&mut self) {
+        settings::set_autostart(false);
+        self.autostart = false;
+        self.settings = Settings::default();
+        self.end_timer_edit(false);
+        self.timer.reset();
+        if matches!(self.view, View::Water | View::Timer) {
+            self.view = View::Player;
+        }
+        self.tabs_changed();
+        self.settings_changed();
+    }
+}

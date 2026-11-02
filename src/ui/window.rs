@@ -19,7 +19,7 @@ impl App {
         if self.hovered || self.drag_hover || self.editing || self.timer_field.is_some() || self.alert_until.is_some() { 1.0 } else { 0.0 }
     }
 
-    /// With "Hide island" on, the island slides away whenever there is nothing to show or touch.
+    /// With "Auto-hide notch" on, the notch slides away whenever there is nothing to show or touch.
     pub(crate) fn tuck_target(&self) -> f64 {
         let needed = self.hovered
             || self.enter_at.is_some()
