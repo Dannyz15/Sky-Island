@@ -35,6 +35,9 @@ impl App {
             View::Clipboard => self.click_clipboard(cx, cy, &window),
             View::Shelf => self.click_shelf(cx, cy, &window),
             View::Water => self.click_water(cx, cy, &window),
+            View::Weather => self.click_weather(cx, cy),
+            View::Prayer => self.click_prayer(cx, cy),
+            View::Stats => {}
             View::Timer => self.click_timer(cx, cy, &window),
             View::Player | View::Lyrics => self.click_player(cx, cy, &window),
         }

@@ -6,18 +6,23 @@ mod appicon;
 mod calendar;
 mod clipboard;
 mod dragdrop;
+mod edge;
 mod editor;
 mod gfx;
+mod hotkey;
 mod icon;
+mod location;
 mod lyrics;
 mod media;
 mod motion;
 mod msgwin;
 mod panel;
+mod prayer;
 mod presence;
 mod settings;
 mod shelf;
 mod sound;
+mod stats;
 mod store;
 mod sys;
 mod theme;
@@ -26,6 +31,7 @@ mod todo;
 mod ui;
 mod update;
 mod water;
+mod weather;
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -72,6 +78,14 @@ pub enum UserEvent {
     Menu(MenuId),
     /// Text or a picture was copied to the clipboard.
     Clip(clipboard::Content),
+    /// How loud the default output device is (percent, muted), without a notice: for the volume slider.
+    SysVolume { percent: u32, muted: bool },
+    /// With Show on All screens: the mouse touched the top edge of this screen (its number) where the notch would be.
+    FollowTo(u32),
+    /// The global hotkey was pressed.
+    Hotkey,
+    /// Whether the combination chosen for the hotkey could be taken (another program may have it).
+    HotkeyStatus(bool),
     /// A screen was plugged in or out, changed its size or position, or the taskbar moved.
     Screens,
     /// Shelf files that were found missing when the app started.
@@ -80,8 +94,18 @@ pub enum UserEvent {
     Icon { path: PathBuf, icon: Option<Pixmap> },
     /// The answer to "Check for updates".
     Update(update::Status),
+    /// The answer to a check the app made by itself (start, every few hours).
+    AutoUpdate(update::Status),
     /// The releases and their notes, for the changelog in the settings window.
     Changelog(Option<Vec<update::Release>>),
+    /// A forecast for the user's city, or `None` when fetching it did not work.
+    Weather(Option<weather::Report>),
+    /// The prayer times for the user's city, or `None` when fetching them did not work.
+    Prayer(Option<prayer::Table>),
+    /// The city a search in the settings window found.
+    Place(Result<weather::Place, weather::SearchError>),
+    /// The place "Detect my location" found, and how well.
+    Located(location::Found),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -90,6 +114,9 @@ enum View {
     Lyrics,
     Timer,
     Water,
+    Weather,
+    Prayer,
+    Stats,
     Shelf,
     Todo,
     Calendar,
@@ -262,10 +289,38 @@ struct App {
     panel: Option<Panel>,
     /// Open the settings window the next time the event loop is free to (a click cannot create a window).
     panel_wanted: bool,
-    /// Whether the settings window should show the About page when it opens.
-    panel_about: bool,
+    /// The page the settings window should show when it opens.
+    panel_page: Option<panel::Page>,
     /// How the last "Check for updates" in the settings window went.
     update: update::Status,
+    /// The forecast the Weather tab shows, when it was fetched, whether the last fetch is still on its way or failed,
+    /// and the thread that fetches it (told which place to watch; `None` before the window exists).
+    weather: Option<weather::Report>,
+    weather_at: Option<Instant>,
+    weather_loading: bool,
+    weather_failed: bool,
+    weather_tx: Option<std::sync::mpsc::Sender<Option<weather::Place>>>,
+    /// The prayer times the Prayer tab shows, the same bookkeeping as the weather, the prayer a notice was last
+    /// shown for (day and index), and the minute the Prayer view was last drawn.
+    prayer: Option<prayer::Table>,
+    prayer_loading: bool,
+    prayer_failed: bool,
+    prayer_tx: Option<std::sync::mpsc::Sender<Option<prayer::Request>>>,
+    prayer_told: Option<(i64, usize)>,
+    prayer_minute: u32,
+    /// The volume of the default output device and whether it is muted, as last heard, for the Music view's slider;
+    /// and whether that slider is being dragged.
+    sys_volume: Option<(u32, bool)>,
+    volume_drag: bool,
+    /// Whether the hotkey's combination is registered.
+    hotkey_ok: bool,
+    /// The Stats view's numbers and when they were last looked at.
+    stats: stats::Stats,
+    stats_at: Option<Instant>,
+    /// With Show on All screens: the number of the screen the notch last followed the mouse to (none until it has).
+    follow: Option<u32>,
+    /// The version the notch has already told the user about, so the notice comes once per version.
+    update_told: Option<String>,
     /// The changelog of the settings window, loaded from GitHub when it is first opened.
     changelog: update::Changelog,
     /// When the timer's alarm sounds again while it is ringing.
@@ -323,7 +378,11 @@ impl App {
             notice_until: None,
             ov_t: 0.0,
             ov_v: 0.0,
-            clips: History::new(),
+            clips: {
+                let mut clips = History::new();
+                clips.load_pinned(clipboard::read_pinned());
+                clips
+            },
             clip_flash: None,
             enter_at: None,
             leave_at: None,
@@ -390,8 +449,26 @@ impl App {
             system_light: false,
             panel: None,
             panel_wanted: false,
-            panel_about: false,
+            panel_page: None,
             update: update::Status::Idle,
+            update_told: None,
+            follow: None,
+            hotkey_ok: true,
+            stats: stats::Stats::default(),
+            stats_at: None,
+            sys_volume: None,
+            volume_drag: false,
+            weather: None,
+            weather_at: None,
+            weather_loading: false,
+            weather_failed: false,
+            weather_tx: None,
+            prayer: None,
+            prayer_loading: false,
+            prayer_failed: false,
+            prayer_tx: None,
+            prayer_told: None,
+            prayer_minute: 0,
             changelog: update::Changelog::Idle,
             next_chime: None,
             shown_view: View::Player,

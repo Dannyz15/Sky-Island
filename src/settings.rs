@@ -6,6 +6,8 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 use winreg::RegKey;
 use crate::store;
+use crate::{hotkey, prayer};
+use crate::weather::Place;
 use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -192,15 +194,17 @@ pub enum Screen {
     /// The screen Windows calls Display 2 or Display 3 in its settings; the main screen if there is none.
     Display2,
     Display3,
+    /// Every screen: the notch is on the one the mouse last touched the top of.
+    All,
 }
 
 impl Screen {
-    pub const ALL: [Screen; 3] = [Screen::Main, Screen::Display2, Screen::Display3];
+    pub const ALL: [Screen; 4] = [Screen::Main, Screen::Display2, Screen::Display3, Screen::All];
 
-    /// The number Windows gives the screen, or `None` for the main one.
+    /// The number Windows gives the screen, or `None` for the main one (and for All, which has no fixed screen).
     pub fn display_number(self) -> Option<u32> {
         match self {
-            Screen::Main => None,
+            Screen::Main | Screen::All => None,
             Screen::Display2 => Some(2),
             Screen::Display3 => Some(3),
         }
@@ -211,6 +215,7 @@ impl Screen {
             Screen::Main => "main",
             Screen::Display2 => "display2",
             Screen::Display3 => "display3",
+            Screen::All => "all",
         }
     }
 
@@ -271,6 +276,8 @@ pub struct Settings {
     pub hud_battery: bool,
     pub hud_network: bool,
     pub hud_audio: bool,
+    /// Look for a new version at start and every few hours, and say so when there is one.
+    pub hud_update: bool,
     pub sound: bool,
     /// Keep a history of copied text.
     pub clipboard: bool,
@@ -280,10 +287,30 @@ pub struct Settings {
     pub screen: Screen,
     /// Slide the island out of view when idle; hovering the top edge brings it back.
     pub hide_island: bool,
-    /// Show the Water tab and send water reminders. Off until the user turns it on.
+    /// Which tabs the notch has. Water also sends its reminders (when its interval is not Off).
     pub water: bool,
-    /// Show the Timer tab. Off until the user turns it on.
     pub timer: bool,
+    pub weather: bool,
+    /// Temperatures in Fahrenheit (otherwise Celsius).
+    pub fahrenheit: bool,
+    pub prayer: bool,
+    /// Open and close the notch with a key combination (off until the user turns it on) (`hotkey_mods` and `hotkey_vk`: Windows' modifier bits and key code).
+    pub hotkey: bool,
+    pub hotkey_mods: u32,
+    pub hotkey_vk: u32,
+    pub tab_music: bool,
+    pub tab_stats: bool,
+    pub tab_shelf: bool,
+    pub tab_todo: bool,
+    pub tab_calendar: bool,
+    pub tab_clipboard: bool,
+    /// Say so on the notch when a prayer time comes (with the Prayer tab on).
+    pub hud_prayer: bool,
+    /// Aladhan's number for the calculation method (see `prayer::METHODS`), and the Hanafi way of finding Asr.
+    pub prayer_method: u32,
+    pub asr_hanafi: bool,
+    /// The city the weather and the prayer times are for.
+    pub place: Option<Place>,
     pub theme: ThemeMode,
     pub motion: Motion,
     pub open_delay: u32,
@@ -299,7 +326,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self { hide_fullscreen: true, show_clock: true, clock_24h: false, eyes: false, idle_eyes: true, eye_style: EyeStyle::Classic, size: NotchSize::Auto, minimal: false,
             open_on_click: false,
-            week_monday: false,
+            week_monday: true,
             calendar_week: false,
             empty_shelf: false,
             hud_volume: true,
@@ -307,8 +334,26 @@ impl Default for Settings {
             hud_lock: true,
             hud_battery: true,
             hud_network: true,
-            hud_audio: true, sound: true, clipboard: true, clip_keep: ClipKeep::Forever, screen: Screen::Main, hide_island: false, water: false,
-            timer: false,
+            hud_audio: true,
+            hud_update: true,
+            sound: true, clipboard: true, clip_keep: ClipKeep::Forever, screen: Screen::Main, hide_island: false, water: true,
+            timer: true,
+            weather: true,
+            fahrenheit: false,
+            prayer: true,
+            hotkey: false,
+            hotkey_mods: hotkey::DEFAULT_MODS,
+            hotkey_vk: hotkey::DEFAULT_VK,
+            tab_music: true,
+            tab_stats: true,
+            tab_shelf: true,
+            tab_todo: true,
+            tab_calendar: true,
+            tab_clipboard: true,
+            hud_prayer: true,
+            prayer_method: 3,
+            asr_hanafi: false,
+            place: None,
             theme: ThemeMode::Dark,
             motion: Motion::Normal,
             open_delay: 90,
@@ -339,8 +384,9 @@ macro_rules! on_off_settings {
 
 on_off_settings!(
     hide_fullscreen, show_clock, clock_24h, eyes, idle_eyes, minimal, open_on_click, week_monday, calendar_week,
-    empty_shelf, hud_volume, hud_brightness, hud_lock, hud_battery, hud_network, hud_audio, sound, clipboard,
-    hide_island, water, timer,
+    empty_shelf, hud_volume, hud_brightness, hud_lock, hud_battery, hud_network, hud_audio, hud_update, sound, clipboard,
+    hide_island, water, timer, weather, fahrenheit, prayer, hud_prayer, asr_hanafi, hotkey, tab_music, tab_stats, tab_shelf, tab_todo, tab_calendar,
+    tab_clipboard,
 );
 
 impl Settings {
@@ -384,6 +430,14 @@ impl Settings {
         out.alarm_every = num("alarm_every", ALARM_EVERY, out.alarm_every);
         out.alarm_for = num("alarm_for", ALARM_FOR, out.alarm_for);
         out.alarm_sound = v.get("alarm_sound").and_then(Value::as_str).filter(|p| !p.is_empty()).map(PathBuf::from);
+        out.place = v.get("place").and_then(Place::from_json);
+        let number = |k: &str| v.get(k).and_then(Value::as_u64).map(|n| n.min(u64::from(u32::MAX)) as u32);
+        if let (Some(mods), Some(vk)) = (number("hotkey_mods"), number("hotkey_vk"))
+            && hotkey::valid(mods, vk)
+        {
+            (out.hotkey_mods, out.hotkey_vk) = (mods, vk);
+        }
+        out.prayer_method = v.get("prayer_method").and_then(Value::as_u64).map_or(out.prayer_method, |m| prayer::known_method(m.min(u32::MAX as u64) as u32));
         out
     }
 
@@ -407,6 +461,10 @@ impl Settings {
         body.insert("alarm_every".into(), json!(self.alarm_every));
         body.insert("alarm_for".into(), json!(self.alarm_for));
         body.insert("alarm_sound".into(), json!(self.alarm_sound.as_ref().map(|p| p.to_string_lossy().into_owned())));
+        body.insert("prayer_method".into(), json!(self.prayer_method));
+        body.insert("hotkey_mods".into(), json!(self.hotkey_mods));
+        body.insert("hotkey_vk".into(), json!(self.hotkey_vk));
+        body.insert("place".into(), self.place.as_ref().map_or(Value::Null, Place::to_json));
         Value::Object(body)
     }
 
@@ -481,11 +539,11 @@ mod tests {
             idle_eyes: false,
             eye_style: EyeStyle::Cat,
             clip_keep: ClipKeep::Minutes5,
-            screen: Screen::Display2,
+            screen: Screen::All,
             size: NotchSize::X130,
             minimal: true,
             open_on_click: true,
-            week_monday: true,
+            week_monday: false,
             calendar_week: true,
             empty_shelf: true,
             hud_volume: false,
@@ -494,11 +552,28 @@ mod tests {
             hud_battery: false,
             hud_network: false,
             hud_audio: false,
+            hud_update: false,
             sound: false,
             clipboard: false,
             hide_island: true,
-            water: true,
-            timer: true,
+            water: false,
+            timer: false,
+            weather: false,
+            fahrenheit: true,
+            prayer: false,
+            hotkey: true,
+            hotkey_mods: hotkey::WIN | hotkey::SHIFT,
+            hotkey_vk: 0x70,
+            tab_music: false,
+            tab_stats: false,
+            tab_shelf: false,
+            tab_todo: false,
+            tab_calendar: false,
+            tab_clipboard: false,
+            hud_prayer: false,
+            prayer_method: 17,
+            asr_hanafi: true,
+            place: Some(Place { name: "Kuala Lumpur, Malaysia".into(), lat: 3.1412, lon: 101.69, tz: "Asia/Kuala_Lumpur".into(), cc: "MY".into() }),
             theme: ThemeMode::System,
             motion: Motion::Snappy,
             open_delay: 150,

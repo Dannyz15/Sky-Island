@@ -9,8 +9,8 @@ fn every_page_fits_inside_the_window() {
         let lay = layout(page, frame_for(WIDTH as f32));
         for g in &lay.groups {
             assert!(g.rect.0 >= SIDEBAR_W && g.rect.0 + g.rect.2 <= WIDTH as f32, "{} is outside on {}", g.title, page.title());
-            // About and Notch are taller than the default window and scroll; every other page fits.
-            assert!(matches!(page, Page::About | Page::Notch) || g.rect.1 + g.rect.3 <= HEIGHT as f32 - 14.0, "{} runs past the bottom on {}", g.title, page.title());
+            // About, Notch and Tabs are taller than the default window and scroll; every other page fits.
+            assert!(matches!(page, Page::About | Page::Notch | Page::Tabs) || g.rect.1 + g.rect.3 <= HEIGHT as f32 - 14.0, "{} runs past the bottom on {}", g.title, page.title());
         }
         for item in &lay.items {
             assert!(item.row.0 + item.row.2 <= WIDTH as f32, "{} is too wide", item.label);
@@ -54,8 +54,9 @@ fn a_page_scrolls_only_as_far_as_it_is_taller_than_the_window() {
         let lay = layout(page, frame_for(WIDTH as f32));
         // Most pages fit the default window; About (a tall card) and Notch (all the notch settings) scroll a little.
         let limit = match page {
-            Page::About => 190.0,
+            Page::About => 280.0,
             Page::Notch => 440.0,
+            Page::Tabs => 220.0,
             _ => 0.0,
         };
         assert!(scroll_limit(&lay, HEIGHT as f32) <= limit, "{} needs too much scrolling in the default window", page.title());
@@ -192,11 +193,11 @@ fn every_setting_is_on_exactly_one_page() {
             }
         }
     }
-    assert_eq!(toggles.len(), 19, "all nineteen switches: {toggles:?}");
+    assert_eq!(toggles.len(), 30, "all thirty switches: {toggles:?}");
     for (i, a) in toggles.iter().enumerate() {
         assert!(!toggles[i + 1..].contains(a), "{a:?} is on two pages");
     }
-    assert_eq!(segs.len(), 9);
+    assert_eq!(segs.len(), 11);
     assert_eq!(slides.len(), 5);
     assert_eq!(picks, 1);
 }

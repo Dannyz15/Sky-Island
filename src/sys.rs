@@ -43,6 +43,10 @@ pub enum Notice {
     Battery { percent: u32, kind: BatteryKind },
     Network { connected: bool, name: String, wifi: bool },
     Audio { name: String, headphones: bool },
+    /// A newer version of Sky Island exists.
+    Update { version: String },
+    /// A prayer time has come: its name and the minute of the day.
+    Prayer { name: &'static str, minute: u32 },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -73,6 +77,26 @@ pub fn spawn_all(proxy: Proxy) {
 
 enum AudioMsg {
     DefaultChanged,
+    /// The user moved the volume slider in the notch: 0.0 to 1.0.
+    SetVolume(f32),
+    ToggleMute,
+}
+
+/// How the notch's volume slider reaches the audio thread.
+static AUDIO_TX: OnceLock<Sender<AudioMsg>> = OnceLock::new();
+
+/// Set the volume of the default output device (0 to 100 percent). Any volume above zero also unmutes it.
+pub fn set_volume(percent: u32) {
+    if let Some(tx) = AUDIO_TX.get() {
+        let _ = tx.send(AudioMsg::SetVolume(percent.min(100) as f32 / 100.0));
+    }
+}
+
+/// Mute the default output device, or unmute it.
+pub fn toggle_mute() {
+    if let Some(tx) = AUDIO_TX.get() {
+        let _ = tx.send(AudioMsg::ToggleMute);
+    }
 }
 
 #[implement(IAudioEndpointVolumeCallback)]
@@ -145,6 +169,7 @@ fn audio(proxy: Proxy) {
         };
 
         let (tx, rx) = mpsc::channel();
+        let _ = AUDIO_TX.set(tx.clone());
         let client: IMMNotificationClient = DeviceWatch { tx: Mutex::new(tx) }.into();
         let _ = enumerator.RegisterEndpointNotificationCallback(&client);
 
@@ -162,10 +187,39 @@ fn audio(proxy: Proxy) {
             Some(device)
         };
 
+        // Tell the notch how loud the device is, for its volume slider (this is not a notice).
+        let announce = |attached: &Option<(IAudioEndpointVolume, IAudioEndpointVolumeCallback)>| {
+            if let Some((vol, _)) = attached
+                && let (Ok(level), Ok(mute)) = (vol.GetMasterVolumeLevelScalar(), vol.GetMute())
+            {
+                let _ = proxy.send_event(UserEvent::SysVolume { percent: (level * 100.0).round() as u32, muted: mute.as_bool() });
+            }
+        };
         attach(&mut attached);
-        while let Ok(AudioMsg::DefaultChanged) = rx.recv() {
-            if let Some((name, headphones)) = attach(&mut attached).as_ref().and_then(describe) {
-                send(&proxy, Notice::Audio { name, headphones });
+        announce(&attached);
+        while let Ok(msg) = rx.recv() {
+            match msg {
+                AudioMsg::DefaultChanged => {
+                    if let Some((name, headphones)) = attach(&mut attached).as_ref().and_then(describe) {
+                        send(&proxy, Notice::Audio { name, headphones });
+                    }
+                    announce(&attached);
+                }
+                AudioMsg::SetVolume(level) => {
+                    if let Some((vol, _)) = &attached {
+                        let _ = vol.SetMasterVolumeLevelScalar(level.clamp(0.0, 1.0), std::ptr::null());
+                        if level > 0.0 {
+                            let _ = vol.SetMute(false, std::ptr::null());
+                        }
+                    }
+                }
+                AudioMsg::ToggleMute => {
+                    if let Some((vol, _)) = &attached
+                        && let Ok(mute) = vol.GetMute()
+                    {
+                        let _ = vol.SetMute(!mute.as_bool(), std::ptr::null());
+                    }
+                }
             }
         }
     }

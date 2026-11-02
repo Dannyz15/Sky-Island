@@ -185,6 +185,10 @@ impl App {
             draw_page_icon(pm, page, r.0 + 8.0, r.1 + (r.3 - 26.0) / 2.0, s);
             let ink = crate::pick(white, [200, 200, 212, 255], near.max(hot * 0.6));
             crate::draw_text(pm, font, page.title(), (r.0 + 44.0) * s, (r.1 + r.3 / 2.0 + 4.5) * s, 13.0 * s, ink, (r.2 - 52.0) * s);
+            // A dot on About while a new version is waiting.
+            if page == Page::About && matches!(self.update, crate::update::Status::Available { .. } | crate::update::Status::Downloading { .. } | crate::update::Status::Ready { .. }) {
+                crate::fill_circle(pm, (r.0 + r.2 - 16.0) * s, (r.1 + r.3 / 2.0) * s, 4.0 * s, [255, 190, 60, 255]);
+            }
         }
 
         // The version, at the bottom. (Quitting is in the tray menu.)
@@ -228,6 +232,9 @@ impl App {
                     let n = panel.cleared.map_or(0, |(n, _)| n);
                     (format!("Removed {n} saved {}", if n == 1 { "song" } else { "songs" }), [120, 220, 150, 255])
                 }
+                Kind::Text(Field::City) => panel.city.note(),
+                Kind::Text(Field::Hotkey) if panel.capture => ("Press Ctrl, Alt or Win and a key. Esc cancels".to_string(), [146, 146, 160, 255]),
+                Kind::Text(Field::Hotkey) if self.settings.hotkey && !self.hotkey_ok => ("Another program already uses these keys. Choose others".to_string(), [255, 150, 140, 255]),
                 _ => (item.desc.to_string(), [146, 146, 160, 255]),
             };
             let text_w = item.ctrl.0 - item.row.0 - 36.0;

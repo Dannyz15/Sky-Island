@@ -1,5 +1,5 @@
 //! The Sky Island settings window: an ordinary Windows window with a sidebar of pages (General, Notch,
-//! Appearance, Tabs, Sounds, Calendar, Shelf, Notices, About) and the settings of the chosen page on the right,
+//! Appearance, Tabs, Location, Sounds, Calendar, Shelf, Notices, About) and the settings of the chosen page on the right,
 //! grouped in cards.
 //! It holds every setting, including the ones that do not fit in the notch.
 //!
@@ -8,8 +8,9 @@
 //! Everything applies at once and is saved as it changes.
 //!
 //! The code is in this folder: `layout` (what is on each page), `values` (the settings behind the controls),
-//! `window` (opening it, keys and mouse), `paint`, `controls` and `changelog` (drawing), `scroll` (scroll bars and
-//! keys) and `spot` (where it opens). This file holds the window itself, `Panel`.
+//! `window` (opening it, keys and mouse), `city` and `keys` (the two boxes that take typing and key presses),
+//! `paint`, `controls` and `changelog` (drawing), `scroll` (scroll bars and keys) and `spot` (where it opens).
+//! This file holds the window itself, `Panel`.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -30,7 +31,9 @@ use crate::settings::{self, ClipKeep, EyeStyle, Motion, NotchSize, Range, Screen
 use crate::{App, View, appicon, gfx, store, theme};
 
 mod changelog;
+mod city;
 mod controls;
+mod keys;
 mod layout;
 mod paint;
 mod scroll;
@@ -40,7 +43,10 @@ mod tests;
 mod values;
 mod window;
 
+pub(crate) use layout::Page;
+
 use changelog::*;
+use city::*;
 use controls::*;
 use layout::*;
 use scroll::*;
@@ -87,6 +93,11 @@ pub(crate) struct Panel {
     over_window: bool,
     /// The slider being dragged.
     drag: Option<Slide>,
+    /// The city being typed, and how the last search went.
+    city: CityField,
+    /// The hotkey's combination is being taken from the keys pressed, and the modifier keys held right now.
+    capture: bool,
+    mods: winit::keyboard::ModifiersState,
     /// The changelog is shown in place of the page, scrolled this many logical pixels, and no further than `changelog_max`.
     show_changelog: bool,
     changelog_scroll: f32,
@@ -216,6 +227,8 @@ impl Panel {
             self.page = page;
             self.page_since = Instant::now();
             self.drag = None;
+            self.city.typing = None;
+            self.capture = false;
             self.scroll = 0.0;
             self.redraw();
         }

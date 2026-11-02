@@ -124,6 +124,24 @@ pub(crate) struct PlayerGeo {
     ctrl_x: [f32; 4],     // lyrics, previous, play/pause, next
 }
 
+/// The volume control at the right end of the row of controls: a speaker (press it to mute) and, when there is room,
+/// a slider beside it. In logical pixels: the speaker's middle, and the slider's left edge and width (0 when
+/// there is no room for it, as while the lyrics are open).
+pub(crate) struct VolumeGeo {
+    pub(crate) icon_x: f32,
+    pub(crate) track_x: f32,
+    pub(crate) track_w: f32,
+}
+
+impl PlayerGeo {
+    pub(crate) fn volume(&self) -> VolumeGeo {
+        let icon_x = self.ctrl_x[2] + 100.0;
+        let track_x = icon_x + 16.0;
+        let room = self.right - track_x;
+        VolumeGeo { icon_x, track_x, track_w: if room >= 36.0 { room } else { 0.0 } }
+    }
+}
+
 pub(crate) fn player_geo(t: f32) -> PlayerGeo {
     let right = 396.0 + (264.0 - 396.0) * t;
     let mid = (24.0 + right) / 2.0;
@@ -164,6 +182,33 @@ impl App {
     }
 
     /// The song position under a cursor x (logical pixels), clamped to the ends of the bar.
+    /// Whether the mouse is over the volume control (the speaker or its slider), in the Music view.
+    pub(crate) fn over_volume(&self) -> bool {
+        if !matches!(self.view, View::Player | View::Lyrics) {
+            return false;
+        }
+        let s = self.ui_scale() as f32;
+        let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
+        let vol = self.geo().volume();
+        let right = if vol.track_w > 0.0 { vol.track_x + vol.track_w + 6.0 } else { vol.icon_x + CTRL_R };
+        cx >= vol.icon_x - CTRL_R && cx <= right && (cy - CTRL_Y).abs() <= 16.0
+    }
+
+    /// Set the volume from where the mouse is on the slider (`cx` in the view's coordinates).
+    pub(crate) fn set_volume_at(&mut self, cx: f32) {
+        let vol = self.geo().volume();
+        if vol.track_w <= 0.0 {
+            return;
+        }
+        let percent = (((cx - vol.track_x) / vol.track_w).clamp(0.0, 1.0) * 100.0).round() as u32;
+        // The slider follows the mouse at once; Windows' own report comes after.
+        self.sys_volume = Some((percent, false));
+        sys::set_volume(percent);
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
     pub(crate) fn scrub_at(&self, cx: f32) -> Duration {
         let (bx, _, bw) = self.geo().bar;
         let frac = ((cx - bx) / bw).clamp(0.0, 1.0);
@@ -418,6 +463,23 @@ impl App {
             fill_circle(pm, lyrics_x * s, py, 16.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * open * 70.0) as u8]);
         }
         draw_lyrics_icon(pm, lyrics_x * s, py, s, gfx::mix(grey, white, open));
+        // The volume of the speakers: a speaker that mutes, and a slider.
+        let vol = geo.volume();
+        let (percent, muted) = self.sys_volume.unwrap_or((0, false));
+        let icon_hot = self.hot_t((vol.icon_x - 18.0, CTRL_Y - 18.0, 36.0, 36.0), s);
+        if icon_hot > 0.01 {
+            fill_circle(pm, vol.icon_x * s, py, 18.0 * s, [255, 255, 255, (alpha * 24.0 * icon_hot) as u8]);
+        }
+        let speaker = if muted || self.sys_volume.is_none() { grey } else { gfx::mix(grey, white, 0.5 + 0.5 * icon_hot) };
+        draw_speaker(pm, vol.icon_x * s, py, s * 0.8, speaker, muted);
+        if vol.track_w > 0.0 {
+            let shown = if muted { 0.0 } else { percent as f32 / 100.0 };
+            let over = self.hot_t((vol.track_x - 4.0, CTRL_Y - 12.0, vol.track_w + 8.0, 24.0), s);
+            draw_bar(pm, vol.track_x * s, py, vol.track_w * s, shown, accent, s * (0.8 + 0.2 * over), a);
+            if over > 0.01 || self.volume_drag {
+                fill_circle(pm, (vol.track_x + vol.track_w * shown) * s, py, 4.5 * s, white);
+            }
+        }
         let dim = [90, 90, 98, a];
         draw_prev(pm, prev_x * s, py, s, white);
         draw_next(pm, next_x * s, py, s, if self.media.next_enabled { white } else { dim });
@@ -442,6 +504,19 @@ impl App {
         {
             self.scrub = Some(self.scrub_at(cx));
             window.request_redraw();
+            return;
+        }
+        // The volume: the speaker mutes, and the slider is pressed and dragged to set the level.
+        let vol = geo.volume();
+        if (cx - vol.icon_x).hypot(cy - CTRL_Y) <= CTRL_R {
+            if self.sys_volume.is_some() {
+                sys::toggle_mute();
+            }
+            return;
+        }
+        if vol.track_w > 0.0 && cx >= vol.track_x - 6.0 && cx <= vol.track_x + vol.track_w + 6.0 && (cy - CTRL_Y).abs() <= 12.0 {
+            self.volume_drag = true;
+            self.set_volume_at(cx);
             return;
         }
         // The speech-bubble button opens and closes the lyrics.

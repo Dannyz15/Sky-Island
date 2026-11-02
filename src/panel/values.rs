@@ -18,7 +18,11 @@ pub(super) const VIEW_NAMES: [&str; 2] = ["Month", "Week"];
 
 pub(super) const KEEP_NAMES: [&str; 4] = ["Never", "5 min", "30 min", "1 hour"];
 
-pub(super) const SCREEN_NAMES: [&str; 3] = ["Main", "Screen 2", "Screen 3"];
+pub(super) const SCREEN_NAMES: [&str; 4] = ["Main", "Screen 2", "Screen 3", "All"];
+
+pub(super) const ASR_NAMES: [&str; 2] = ["Standard", "Hanafi"];
+
+pub(super) const UNITS_NAMES: [&str; 2] = ["\u{00B0}C", "\u{00B0}F"];
 
 /// How wide a choice is compared with the others in the same row ("Follow System" is the longest).
 pub(super) fn seg_weights(seg: Seg) -> &'static [f32] {
@@ -26,9 +30,9 @@ pub(super) fn seg_weights(seg: Seg) -> &'static [f32] {
         Seg::Theme => &[1.0, 1.0, 2.0],
         Seg::Motion | Seg::Eyes => &[1.0, 1.0, 1.0, 1.0],
         Seg::Size => &[1.0, 1.0, 1.0, 1.0, 1.0],
-        Seg::Open | Seg::WeekStart | Seg::CalView => &[1.0, 1.0],
+        Seg::Open | Seg::WeekStart | Seg::CalView | Seg::Units | Seg::Asr => &[1.0, 1.0],
         Seg::ClipKeep => &[1.0, 1.0, 1.0, 1.0],
-        Seg::Screen => &[1.0, 1.0, 1.0],
+        Seg::Screen => &[1.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -40,7 +44,9 @@ pub(super) fn seg_width(seg: Seg) -> f32 {
         Seg::Open | Seg::CalView => 170.0,
         Seg::WeekStart => 190.0,
         Seg::ClipKeep => 270.0,
-        Seg::Screen => 250.0,
+        Seg::Screen => 300.0,
+        Seg::Units => 130.0,
+        Seg::Asr => 190.0,
     }
 }
 
@@ -70,6 +76,8 @@ pub(super) fn seg_names(seg: Seg) -> &'static [&'static str] {
         Seg::CalView => &VIEW_NAMES,
         Seg::ClipKeep => &KEEP_NAMES,
         Seg::Screen => &SCREEN_NAMES,
+        Seg::Units => &UNITS_NAMES,
+        Seg::Asr => &ASR_NAMES,
     }
 }
 
@@ -117,11 +125,22 @@ impl App {
             Toggle::HudBattery => self.settings.hud_battery,
             Toggle::HudNetwork => self.settings.hud_network,
             Toggle::HudAudio => self.settings.hud_audio,
+            Toggle::HudUpdate => self.settings.hud_update,
             Toggle::Sound => self.settings.sound,
             Toggle::Clipboard => self.settings.clipboard,
             Toggle::HideIsland => self.settings.hide_island,
             Toggle::Water => self.settings.water,
             Toggle::Timer => self.settings.timer,
+            Toggle::Weather => self.settings.weather,
+            Toggle::Prayer => self.settings.prayer,
+            Toggle::HudPrayer => self.settings.hud_prayer,
+            Toggle::Hotkey => self.settings.hotkey,
+            Toggle::TabMusic => self.settings.tab_music,
+            Toggle::TabStats => self.settings.tab_stats,
+            Toggle::TabShelf => self.settings.tab_shelf,
+            Toggle::TabTodo => self.settings.tab_todo,
+            Toggle::TabCalendar => self.settings.tab_calendar,
+            Toggle::TabClipboard => self.settings.tab_clipboard,
         }
     }
 
@@ -147,29 +166,65 @@ impl App {
             Toggle::HudBattery => self.settings.hud_battery = !self.settings.hud_battery,
             Toggle::HudNetwork => self.settings.hud_network = !self.settings.hud_network,
             Toggle::HudAudio => self.settings.hud_audio = !self.settings.hud_audio,
+            Toggle::HudUpdate => {
+                self.settings.hud_update = !self.settings.hud_update;
+                crate::update::set_auto(self.settings.hud_update, &self.proxy);
+            }
             Toggle::Sound => self.settings.sound = !self.settings.sound,
             Toggle::Clipboard => self.settings.clipboard = !self.settings.clipboard,
             Toggle::HideIsland => self.settings.hide_island = !self.settings.hide_island,
             Toggle::Water => {
-                self.settings.water = !self.settings.water;
+                if !self.set_tab(View::Water, !self.settings.water) {
+                    return;
+                }
                 if self.settings.water {
                     self.water.restart(Instant::now());
-                } else if self.view == View::Water {
-                    self.view = View::Player;
                 }
                 self.tabs_changed();
             }
             Toggle::Timer => {
-                self.settings.timer = !self.settings.timer;
+                if !self.set_tab(View::Timer, !self.settings.timer) {
+                    return;
+                }
                 if !self.settings.timer {
                     // Switching it off stops a running timer and puts the tab away.
                     self.end_timer_edit(false);
                     self.timer.reset();
-                    if self.view == View::Timer {
-                        self.view = View::Player;
-                    }
                 }
                 self.tabs_changed();
+            }
+            Toggle::Weather => {
+                if !self.set_tab(View::Weather, !self.settings.weather) {
+                    return;
+                }
+                self.tabs_changed();
+                self.sync_weather();
+            }
+            Toggle::Prayer => {
+                if !self.set_tab(View::Prayer, !self.settings.prayer) {
+                    return;
+                }
+                self.tabs_changed();
+                self.sync_prayer();
+            }
+            Toggle::TabMusic | Toggle::TabStats | Toggle::TabShelf | Toggle::TabTodo | Toggle::TabCalendar | Toggle::TabClipboard => {
+                let view = match t {
+                    Toggle::TabMusic => View::Player,
+                    Toggle::TabStats => View::Stats,
+                    Toggle::TabShelf => View::Shelf,
+                    Toggle::TabTodo => View::Todo,
+                    Toggle::TabCalendar => View::Calendar,
+                    _ => View::Clipboard,
+                };
+                if !self.set_tab(view, !self.tab_enabled(view)) {
+                    return;
+                }
+                self.tabs_changed();
+            }
+            Toggle::HudPrayer => self.settings.hud_prayer = !self.settings.hud_prayer,
+            Toggle::Hotkey => {
+                self.settings.hotkey = !self.settings.hotkey;
+                self.apply_hotkey();
             }
         }
         self.settings_changed();
@@ -186,6 +241,7 @@ impl App {
     /// Save the settings and let the notch (and this window) pick them up.
     pub(crate) fn settings_changed(&mut self) {
         self.settings.save();
+        self.refresh_edges();
         self.apply_visibility();
         self.last_tick = Instant::now();
         if let Some(w) = &self.window {
@@ -207,6 +263,8 @@ impl App {
             Seg::CalView => usize::from(self.settings.calendar_week),
             Seg::ClipKeep => ClipKeep::ALL.iter().position(|k| *k == self.settings.clip_keep).unwrap_or(0),
             Seg::Screen => Screen::ALL.iter().position(|s| *s == self.settings.screen).unwrap_or(0),
+            Seg::Units => usize::from(self.settings.fahrenheit),
+            Seg::Asr => usize::from(self.settings.asr_hanafi),
         }
     }
 
@@ -220,9 +278,23 @@ impl App {
             Seg::WeekStart => self.settings.week_monday = i == 1,
             Seg::CalView => self.settings.calendar_week = i == 1,
             Seg::ClipKeep => self.settings.clip_keep = ClipKeep::ALL[i.min(3)],
-            Seg::Screen => self.settings.screen = Screen::ALL[i.min(2)],
+            Seg::Screen => self.settings.screen = Screen::ALL[i.min(3)],
+            Seg::Units => self.settings.fahrenheit = i == 1,
+            Seg::Asr => self.settings.asr_hanafi = i == 1,
         }
         self.settings_changed();
+        if seg == Seg::Asr {
+            self.sync_prayer();
+        }
+    }
+
+    /// Step the calculation method to the one before (`-1`) or after (`1`) in the list.
+    pub(super) fn step_method(&mut self, delta: isize) {
+        let n = crate::prayer::METHODS.len() as isize;
+        let i = (crate::prayer::method_index(self.settings.prayer_method) as isize + delta).rem_euclid(n) as usize;
+        self.settings.prayer_method = crate::prayer::METHODS[i].0;
+        self.settings_changed();
+        self.sync_prayer();
     }
 
     pub(super) fn slider_get(&self, slide: Slide) -> u32 {
@@ -252,11 +324,13 @@ impl App {
         settings::set_autostart(false);
         self.autostart = false;
         self.settings = Settings::default();
+        crate::update::set_auto(self.settings.hud_update, &self.proxy);
         self.end_timer_edit(false);
         self.timer.reset();
-        if matches!(self.view, View::Water | View::Timer) {
-            self.view = View::Player;
-        }
+        self.apply_hotkey();
+        self.ensure_view();
+        self.sync_weather();
+        self.sync_prayer();
         self.tabs_changed();
         self.settings_changed();
     }

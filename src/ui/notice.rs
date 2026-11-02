@@ -6,6 +6,8 @@ use crate::*;
 pub(crate) const OVERLAY: (f64, f64) = (240.0, 42.0);
 
 const NOTICE_TIME: Duration = Duration::from_millis(2200);
+/// The news of an update or a prayer time stays a little longer: it is read, not glanced at.
+const LONG_NOTICE_TIME: Duration = Duration::from_millis(4500);
 
 impl App {
     pub(crate) fn show_notice(&mut self, notice: sys::Notice) {
@@ -17,13 +19,15 @@ impl App {
             Notice::Battery { .. } => self.settings.hud_battery,
             Notice::Network { .. } => self.settings.hud_network,
             Notice::Audio { .. } => self.settings.hud_audio,
+            Notice::Update { .. } => self.settings.hud_update,
+            Notice::Prayer { .. } => self.settings.hud_prayer,
         };
         if !wanted {
             return;
         }
         let now = Instant::now();
         self.notice = Some(notice);
-        self.notice_until = Some(now + NOTICE_TIME);
+        self.notice_until = Some(now + if matches!(self.notice, Some(Notice::Update { .. } | Notice::Prayer { .. })) { LONG_NOTICE_TIME } else { NOTICE_TIME });
         self.last_tick = now;
         if let Some(w) = &self.window {
             w.request_redraw();
@@ -100,6 +104,16 @@ impl App {
                 draw_headphones(pm, icon_x, cy, s, white);
                 draw_text(pm, font, name, text_x, cy + 5.0 * s, 14.0 * s, white, 120.0 * s);
                 right_text(pm, if *headphones { "Headphones" } else { "Output" }, grey);
+            }
+            Notice::Update { version } => {
+                draw_update_icon(pm, icon_x, cy, s, blue);
+                draw_text(pm, font, "Update available", text_x, cy + 5.0 * s, 14.0 * s, white, 110.0 * s);
+                right_text(pm, version, blue);
+            }
+            Notice::Prayer { name, minute } => {
+                draw_moon(pm, icon_x, cy, 9.0 * s, [236, 236, 210, a]);
+                draw_text(pm, font, &format!("Time for {name}"), text_x, cy + 5.0 * s, 14.0 * s, white, 110.0 * s);
+                right_text(pm, &fmt_clock(minute / 60, minute % 60, self.settings.clock_24h), grey);
             }
         }
     }

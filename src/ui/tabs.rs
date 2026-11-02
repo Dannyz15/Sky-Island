@@ -3,17 +3,20 @@
 use crate::*;
 
 /// Tab bar entries, left to right.
-const TABS: [(&str, View); 7] = [
+const TABS: [(&str, View); 10] = [
     ("Music", View::Player),
     ("Timer", View::Timer),
     ("Water", View::Water),
+    ("Weather", View::Weather),
+    ("Prayer", View::Prayer),
+    ("Stats", View::Stats),
     ("Shelf", View::Shelf),
     ("To-do", View::Todo),
     ("Calendar", View::Calendar),
     ("Clipboard", View::Clipboard),
 ];
 
-const TAB_W: f32 = 28.0;
+const TAB_W: f32 = 26.0;
 
 const TAB_GAP: f32 = 2.0;
 
@@ -50,16 +53,58 @@ impl App {
         ((LYRICS_W - EXPANDED.0) * self.view_t.clamp(0.0, 1.0) / 2.0) as f32
     }
 
-    /// The tabs in the bar: all of them, except Water and Timer while they are switched off.
+    /// The tabs in the bar: the ones that are switched on in the settings.
     pub(crate) fn visible_tabs(&self) -> Vec<(&'static str, View)> {
-        TABS.iter()
-            .copied()
-            .filter(|(_, v)| match v {
-                View::Water => self.settings.water,
-                View::Timer => self.settings.timer,
-                _ => true,
-            })
-            .collect()
+        TABS.iter().copied().filter(|(_, v)| self.tab_enabled(*v)).collect()
+    }
+
+    /// Whether a tab is switched on. The lyrics belong to the Music tab.
+    pub(crate) fn tab_enabled(&self, view: View) -> bool {
+        let s = &self.settings;
+        match view {
+            View::Player | View::Lyrics => s.tab_music,
+            View::Timer => s.timer,
+            View::Water => s.water,
+            View::Weather => s.weather,
+            View::Prayer => s.prayer,
+            View::Stats => s.tab_stats,
+            View::Shelf => s.tab_shelf,
+            View::Todo => s.tab_todo,
+            View::Calendar => s.tab_calendar,
+            View::Clipboard => s.tab_clipboard,
+        }
+    }
+
+    /// Switch a tab on or off. The notch always keeps at least one tab, so the last one cannot be switched
+    /// off: false when that is why nothing changed. If the tab that is showing goes away, the first one shows.
+    pub(crate) fn set_tab(&mut self, view: View, on: bool) -> bool {
+        if !on && self.tab_enabled(view) && self.visible_tabs().len() <= 1 {
+            return false;
+        }
+        let s = &mut self.settings;
+        *match view {
+            View::Player | View::Lyrics => &mut s.tab_music,
+            View::Timer => &mut s.timer,
+            View::Water => &mut s.water,
+            View::Weather => &mut s.weather,
+            View::Prayer => &mut s.prayer,
+            View::Stats => &mut s.tab_stats,
+            View::Shelf => &mut s.tab_shelf,
+            View::Todo => &mut s.tab_todo,
+            View::Calendar => &mut s.tab_calendar,
+            View::Clipboard => &mut s.tab_clipboard,
+        } = on;
+        self.ensure_view();
+        true
+    }
+
+    /// Show the first tab if the one that is showing is switched off.
+    pub(crate) fn ensure_view(&mut self) {
+        if !self.tab_enabled(self.view)
+            && let Some((_, first)) = self.visible_tabs().first().copied()
+        {
+            self.view = first;
+        }
     }
 
     /// Switch to a tab, from a click on it or from the mouse wheel.
@@ -72,6 +117,12 @@ impl App {
         if view == View::Calendar {
             self.cal = calendar::Calendar::new(today_day());
         }
+        if view == View::Weather {
+            self.weather_opened();
+        }
+        if view == View::Prayer {
+            self.prayer_opened();
+        }
         self.last_tick = Instant::now();
         if let Some(w) = &self.window {
             w.request_redraw();
@@ -82,7 +133,7 @@ impl App {
     /// the tabs whose content has no scrolling of its own.
     pub(crate) fn wheel_changes_tab(&self) -> bool {
         let over_bar = self.cursor.1 as f32 / self.ui_scale() as f32 >= self.window_h() - TAB_BOTTOM - 4.0;
-        over_bar || matches!(self.view, View::Player | View::Water | View::Calendar)
+        over_bar || matches!(self.view, View::Player | View::Water | View::Weather | View::Prayer | View::Stats | View::Calendar)
     }
 
     /// The tab bar: a dark pill with a round button for each tab. A light circle slides to the open tab,

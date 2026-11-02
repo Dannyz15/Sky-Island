@@ -82,9 +82,64 @@ impl App {
     /// The screen the island is on: the one the Screen setting names, if it is connected, otherwise the main
     /// screen.
     fn island_monitor(&self, window: &Window) -> Option<winit::monitor::MonitorHandle> {
-        let wanted = self.settings.screen.display_number();
+        // With All, the notch is on the screen the mouse last touched the top of (the main one until then).
+        let wanted = if self.settings.screen == settings::Screen::All { self.follow } else { self.settings.screen.display_number() };
         let chosen = wanted.and_then(|n| window.available_monitors().find(|m| m.name().and_then(|name| display_number(&name)) == Some(n)));
         chosen.or_else(|| window.primary_monitor()).or_else(|| window.current_monitor())
+    }
+
+    /// The hotkey: open the notch, or close it if it is open. (Opened this way it stays open until the key is pressed
+    /// again or the mouse has been over it and left.) Nothing happens while a full-screen app hides the notch.
+    pub(crate) fn toggle_by_key(&mut self) {
+        if self.hidden || self.window.is_none() {
+            return;
+        }
+        let open = self.hovered || self.progress > 0.5;
+        self.hovered = !open;
+        self.enter_at = None;
+        self.leave_at = None;
+        self.last_tick = Instant::now();
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Tell the hotkey thread what combination the settings want.
+    pub(crate) fn apply_hotkey(&mut self) {
+        hotkey::set(self.settings.hotkey.then_some((self.settings.hotkey_mods, self.settings.hotkey_vk)));
+    }
+
+    /// Set up what "All" needs: while it is the Show on setting and there is another screen, the mouse is watched for
+    /// touching that screen's top edge (`edge.rs`); otherwise nothing is watched. Run when the setting or the screens
+    /// change and when the notch has moved.
+    pub(crate) fn refresh_edges(&mut self) {
+        let Some(window) = self.window.clone() else { return };
+        if self.settings.screen != settings::Screen::All {
+            self.follow = None;
+            edge::disable();
+            return;
+        }
+        let screens: Vec<edge::Screen> = window
+            .available_monitors()
+            .enumerate()
+            .map(|(i, m)| edge::Screen {
+                number: m.name().and_then(|n| display_number(&n)).unwrap_or(i as u32 + 1),
+                x: m.position().x,
+                y: m.position().y,
+                width: m.size().width as i32,
+                bar: top_inset(&m),
+                scale: m.scale_factor() * self.ui_k,
+            })
+            .collect();
+        let here = self.island_monitor(&window).map(|m| m.position());
+        let current = here.and_then(|p| screens.iter().find(|s| (s.x, s.y) == (p.x, p.y))).map_or(0, |s| s.number);
+        let zones = edge::zones_for(&screens, current, COLLAPSED.0 + 2.0 * EAR);
+        if zones.is_empty() {
+            edge::disable();
+        } else {
+            edge::enable(self.proxy.clone());
+            edge::set_zones(zones);
+        }
     }
 
     /// When the next frame of a running animation is due: the next step of the screen's rhythm after `now`,

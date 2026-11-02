@@ -89,6 +89,9 @@ impl App {
             cursor: (-1.0, -1.0),
             over_window: false,
             drag: None,
+            city: CityField::default(),
+            capture: false,
+            mods: winit::keyboard::ModifiersState::empty(),
             show_changelog: false,
             changelog_scroll: 0.0,
             changelog_max: 0.0,
@@ -110,11 +113,18 @@ impl App {
         });
     }
 
-    /// Switch the open settings window to its About page.
-    pub(crate) fn show_about_page(&mut self) {
+    /// Switch the open settings window to a page.
+    pub(crate) fn show_page(&mut self, page: Page) {
         if let Some(p) = &mut self.panel {
-            p.show(Page::About);
+            p.show(page);
         }
+    }
+
+    /// Open the settings window (or bring it forward) on a page; done when the event loop is next free to.
+    pub(crate) fn open_settings_at(&mut self, page: Page) {
+        self.panel_wanted = true;
+        self.panel_page = Some(page);
+        self.last_tick = Instant::now();
     }
 
     /// The page the settings window shows.
@@ -127,6 +137,10 @@ impl App {
         match event {
             WindowEvent::CloseRequested => self.panel = None,
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                // While a city is being typed, the keys are its own.
+                if self.city_key(&event) || self.hotkey_key(&event) {
+                    return;
+                }
                 let page = self.page();
                 let step = |delta: isize| Page::ALL[(page.index() as isize + delta).clamp(0, Page::ALL.len() as isize - 1) as usize];
                 match event.logical_key {
@@ -168,6 +182,11 @@ impl App {
                         }
                     }
                     _ => {}
+                }
+            }
+            WindowEvent::ModifiersChanged(m) => {
+                if let Some(p) = &mut self.panel {
+                    p.mods = m.state();
                 }
             }
             WindowEvent::ThemeChanged(theme) => {
@@ -219,6 +238,13 @@ impl App {
                         p.redraw();
                     }
                 }
+                // A click anywhere stops the typing (a click on the box starts it again below).
+                if state == ElementState::Pressed
+                    && let Some(p) = &mut self.panel
+                    && (p.city.typing.take().is_some() | std::mem::take(&mut p.capture))
+                {
+                    p.redraw();
+                }
                 let Some(p) = &self.panel else { return };
                 let (cx, cy) = p.cursor;
                 let frame = frame_for(p.logical_size().0);
@@ -259,7 +285,7 @@ impl App {
                 let lay = layout(page, frame);
                 let Some(item) = lay.items.iter().find(|i| match i.kind {
                     Kind::Slider(_) => inside((i.ctrl.0 - 8.0, i.row.1, SLIDER_W + 16.0, i.row.3), cx, cy),
-                    Kind::Seg(_) | Kind::Pick | Kind::Button(_) => inside(i.ctrl, cx, cy),
+                    Kind::Seg(_) | Kind::Pick | Kind::Text(_) | Kind::Cycle(_) | Kind::Button(_) => inside(i.ctrl, cx, cy),
                     Kind::Link(url) => !url.is_empty() && inside(i.row, cx, cy),
                     Kind::Toggle(_) => inside(i.row, cx, cy),
                 }) else {
@@ -270,6 +296,23 @@ impl App {
                         let _ = std::process::Command::new("explorer").arg(url).spawn();
                     }
                     Kind::Toggle(t) => self.toggle(t),
+                    Kind::Cycle(Stepper::Method) => {
+                        // The left third steps back; the rest steps forward.
+                        self.step_method(if cx < item.ctrl.0 + item.ctrl.2 / 3.0 { -1 } else { 1 });
+                    }
+                    Kind::Text(Field::Hotkey) => {
+                        if let Some(p) = &mut self.panel {
+                            p.capture = true;
+                            p.redraw();
+                        }
+                    }
+                    Kind::Text(Field::City) => {
+                        if let Some(p) = &mut self.panel {
+                            p.city.typing = Some(String::new());
+                            p.city.status = CityStatus::Idle;
+                            p.redraw();
+                        }
+                    }
                     Kind::Seg(seg) => {
                         let cells = seg_cells(seg, item.ctrl);
                         let i = cells.iter().position(|c| cx < c.0 + c.2).unwrap_or(cells.len() - 1);
@@ -300,6 +343,8 @@ impl App {
                             p.redraw();
                         }
                     }
+                    Kind::Button(Act::DetectCity) => self.detect_city(),
+                    Kind::Button(Act::ClearCity) => self.clear_city(),
                     Kind::Button(Act::OpenFolder) => {
                         if let Some(dir) = std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join("Sky-Island")) {
                             let _ = std::fs::create_dir_all(&dir);

@@ -94,6 +94,14 @@ pub(super) fn draw_page_icon(pm: &mut Pixmap, page: Page, x: f32, y: f32, s: f32
                 crate::fill_rounded(pm, cx + dx * 3.5 * u - 3.0 * u, cy + dy * 3.5 * u - 3.0 * u, 6.0 * u, 6.0 * u, 1.6 * u, w);
             }
         }
+        Page::Location => {
+            // A map pin: a drop with a hole.
+            let top = cy - 2.6 * u;
+            let mut pts = arc_points(cx, top, 5.6 * u, 150.0, 390.0, 20);
+            pts.push((cx, cy + 8.0 * u));
+            fill_poly(pm, &pts, w);
+            crate::fill_circle(pm, cx, top, 2.2 * u, gfx::mix(from, to, 0.5));
+        }
         Page::Sounds => {
             // A speaker with two waves.
             fill_poly(pm, &[(cx - 7.5 * u, cy - 2.4 * u), (cx - 4.0 * u, cy - 2.4 * u), (cx + 0.6 * u, cy - 6.4 * u), (cx + 0.6 * u, cy + 6.4 * u), (cx - 4.0 * u, cy + 2.4 * u), (cx - 7.5 * u, cy + 2.4 * u)], w);
@@ -288,6 +296,61 @@ impl App {
                     let hot_x = panel.glows.fade(key + 10, cx >= item.ctrl.0 + item.ctrl.2 - 30.0 && inside(item.ctrl, cx, cy));
                     crate::fill_circle(pm, bx, by, 9.0 * s, [255, 96, 86, (70.0 * hot_x) as u8]);
                     crate::draw_text_centered(pm, font, "\u{00D7}", bx, by + 5.0 * s, 15.0 * s, crate::pick(white, grey, hot_x), 14.0 * s);
+                }
+            }
+            Kind::Cycle(Stepper::Method) => {
+                let (x, y, w, h) = (item.ctrl.0 * s, item.ctrl.1 * s, item.ctrl.2 * s, item.ctrl.3 * s);
+                let over = panel.glows.fade(key + 9, inside(item.ctrl, cx, cy));
+                gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], crate::pick(110.0, 64.0, over) as u8], [accent[0], accent[1], accent[2], crate::pick(66.0, 32.0, over) as u8], false);
+                gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], 130]);
+                let name = crate::prayer::METHODS[crate::prayer::method_index(self.settings.prayer_method)].1;
+                crate::draw_text_centered(pm, heading, name, (item.ctrl.0 + item.ctrl.2 / 2.0) * s, (item.ctrl.1 + 18.5) * s, 12.0 * s, white, (item.ctrl.2 - 56.0) * s);
+                // The arrows at the two ends.
+                let hot_left = over > 0.01 && cx < item.ctrl.0 + item.ctrl.2 / 3.0;
+                for (bx, glyph) in [(item.ctrl.0 + 16.0, "\u{2039}"), (item.ctrl.0 + item.ctrl.2 - 16.0, "\u{203A}")] {
+                    let ink = if hot_left == (glyph == "\u{2039}") && over > 0.01 { white } else { grey };
+                    crate::draw_text_centered(pm, heading, glyph, bx * s, (item.ctrl.1 + 19.0) * s, 17.0 * s, ink, 16.0 * s);
+                }
+            }
+            Kind::Text(Field::Hotkey) => {
+                let (x, y, w, h) = (item.ctrl.0 * s, item.ctrl.1 * s, item.ctrl.2 * s, item.ctrl.3 * s);
+                let over = panel.glows.fade(key + 9, inside(item.ctrl, cx, cy));
+                let centre = (item.ctrl.0 + item.ctrl.2 / 2.0) * s;
+                if panel.capture {
+                    crate::fill_rounded(pm, x, y, w, h, h / 2.0, [0, 0, 0, 90]);
+                    gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], 210]);
+                    crate::draw_text_centered(pm, font, "Press the keys...", centre, (item.ctrl.1 + 18.5) * s, 12.0 * s, grey, item.ctrl.2 * s);
+                } else {
+                    let strength = if self.settings.hotkey { 1.0 } else { 0.45 };
+                    gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], (crate::pick(110.0, 64.0, over) * strength) as u8], [accent[0], accent[1], accent[2], (crate::pick(66.0, 32.0, over) * strength) as u8], false);
+                    gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], (130.0 * strength) as u8]);
+                    let name = crate::hotkey::name(self.settings.hotkey_mods, self.settings.hotkey_vk);
+                    crate::draw_text_centered(pm, heading, &name, centre, (item.ctrl.1 + 18.5) * s, 12.0 * s, if self.settings.hotkey { white } else { grey }, (item.ctrl.2 - 20.0) * s);
+                }
+            }
+            Kind::Text(Field::City) => {
+                let (x, y, w, h) = (item.ctrl.0 * s, item.ctrl.1 * s, item.ctrl.2 * s, item.ctrl.3 * s);
+                let over = panel.glows.fade(key + 9, inside(item.ctrl, cx, cy));
+                let inner = (item.ctrl.2 - 24.0) * s;
+                if let Some(typed) = &panel.city.typing {
+                    // The box while typing: dark, ringed in the page's colour, with the text and a caret.
+                    crate::fill_rounded(pm, x, y, w, h, h / 2.0, [0, 0, 0, 90]);
+                    gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], 210]);
+                    let mut shown = typed.as_str();
+                    while crate::text_width(font, shown, 12.5 * s) > inner - 4.0 * s && !shown.is_empty() {
+                        shown = &shown[shown.chars().next().map_or(1, char::len_utf8)..];
+                    }
+                    crate::draw_text(pm, font, shown, x + 12.0 * s, (item.ctrl.1 + 18.5) * s, 12.5 * s, white, inner);
+                    let caret_x = x + 12.0 * s + crate::text_width(font, shown, 12.5 * s) + 1.5 * s;
+                    crate::fill_rect(pm, caret_x, y + 7.0 * s, 1.4 * s, h - 14.0 * s, white);
+                } else {
+                    gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], crate::pick(110.0, 64.0, over) as u8], [accent[0], accent[1], accent[2], crate::pick(66.0, 32.0, over) as u8], false);
+                    gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], 130]);
+                    let (name, ink) = match &self.settings.place {
+                        Some(p) => (p.name.as_str(), white),
+                        None => ("Not set", grey),
+                    };
+                    crate::draw_text_centered(pm, heading, name, (item.ctrl.0 + item.ctrl.2 / 2.0) * s, (item.ctrl.1 + 18.5) * s, 12.0 * s, ink, inner);
                 }
             }
             Kind::Button(act) => {

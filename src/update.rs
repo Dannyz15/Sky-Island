@@ -1,10 +1,12 @@
-//! Checking whether a newer version has been released on GitHub, and downloading its installer. Both
-//! only happen when the user presses the button in the settings window. Nothing is installed until
-//! the user presses Install.
+//! Checking whether a newer version has been released on GitHub, and downloading its installer. The check
+//! runs when the user presses the button in the settings window, and by itself at start and every few hours
+//! unless the New version notice is switched off; the download only starts when the user asks for it. Nothing
+//! is installed until the user presses Install.
 
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -167,6 +169,48 @@ pub fn spawn_check(proxy: EventLoopProxy<UserEvent>) {
     thread::spawn(move || {
         let _ = proxy.send_event(UserEvent::Update(check()));
     });
+}
+
+/// Whether the checks that nobody asked for are wanted (the New version notice is on).
+static AUTO: AtomicBool = AtomicBool::new(false);
+/// A little after start, so the first check does not compete with everything else that starts.
+const AUTO_FIRST: Duration = Duration::from_secs(20);
+const AUTO_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Start looking for a new version by itself: once soon after start, then every few hours, while `on`. The
+/// answers arrive as `UserEvent::AutoUpdate`. (Call once.)
+pub fn spawn_auto(on: bool, proxy: EventLoopProxy<UserEvent>) {
+    AUTO.store(on, Ordering::Relaxed);
+    thread::spawn(move || {
+        thread::sleep(AUTO_FIRST);
+        loop {
+            if AUTO.load(Ordering::Relaxed) {
+                let _ = proxy.send_event(UserEvent::AutoUpdate(check()));
+            }
+            thread::sleep(AUTO_EVERY);
+        }
+    });
+}
+
+/// The notice was switched on or off. Switching it off stops the checks; switching it on looks at once.
+pub fn set_auto(on: bool, proxy: &EventLoopProxy<UserEvent>) {
+    if AUTO.swap(on, Ordering::Relaxed) == on || !on {
+        return;
+    }
+    let proxy = proxy.clone();
+    thread::spawn(move || {
+        let _ = proxy.send_event(UserEvent::AutoUpdate(check()));
+    });
+}
+
+/// What an answer to a check nobody asked for changes. It never disturbs a check or a download the user
+/// started, and a failed check (no internet, a wrong name) is kept quiet: it changes nothing. Only a newer
+/// version, or the news that this one is the newest, is taken.
+pub fn take_auto(current: &Status, found: Status) -> Option<Status> {
+    if matches!(current, Status::Checking | Status::Downloading { .. } | Status::Ready { .. }) {
+        return None;
+    }
+    matches!(found, Status::Available { .. } | Status::Latest).then_some(found)
 }
 
 fn agent(seconds: u64) -> ureq::Agent {
@@ -586,6 +630,32 @@ mod tests {
         assert!(installer(&with(SETUP_URL, Some(DIGEST), 0), "1.2.0").is_none(), "no size");
         assert!(installer(&with("https://example.com/Sky-Island-Setup-1.2.0.exe", Some(DIGEST), 1234), "1.2.0").is_none(), "another site");
         assert!(installer(&with("https://github.com/Other/Repo/releases/download/v1/Sky-Island-Setup-1.2.0.exe", Some(DIGEST), 1234), "1.2.0").is_none(), "another project");
+    }
+
+    fn available(version: &str) -> Status {
+        Status::Available { version: version.to_string(), page: String::new(), asset: None }
+    }
+
+    #[test]
+    fn a_check_by_itself_does_not_disturb_what_the_user_started() {
+        let downloading = Status::Downloading { version: "1.2.0".into(), percent: 40 };
+        assert_eq!(take_auto(&Status::Checking, available("1.2.0")), None);
+        assert_eq!(take_auto(&downloading, available("1.3.0")), None);
+        assert_eq!(take_auto(&downloading, Status::Latest), None);
+    }
+
+    #[test]
+    fn a_check_by_itself_keeps_quiet_when_it_fails() {
+        assert_eq!(take_auto(&Status::Idle, Status::Failed), None);
+        assert_eq!(take_auto(&Status::Latest, Status::BadName), None);
+        assert_eq!(take_auto(&available("1.2.0"), Status::Failed), None, "a known update stays known");
+    }
+
+    #[test]
+    fn a_check_by_itself_takes_news_of_a_new_version() {
+        assert_eq!(take_auto(&Status::Idle, available("1.2.0")), Some(available("1.2.0")));
+        assert_eq!(take_auto(&Status::Latest, available("1.3.0")), Some(available("1.3.0")));
+        assert_eq!(take_auto(&Status::Idle, Status::Latest), Some(Status::Latest));
     }
 
     #[test]

@@ -50,12 +50,44 @@ impl ApplicationHandler<UserEvent> for App {
         presence::spawn(self.proxy.clone(), self.native_handle().unwrap_or(0));
         shelf::check_in_background(self.shelf.items.clone(), self.proxy.clone());
         clipboard::spawn_watcher(self.proxy.clone());
+        update::spawn_auto(self.settings.hud_update, self.proxy.clone());
+        self.weather_tx = Some(weather::spawn(self.proxy.clone()));
+        self.sync_weather();
+        self.prayer_tx = Some(prayer::spawn(self.proxy.clone()));
+        self.sync_prayer();
+        self.refresh_edges();
+        hotkey::start(self.proxy.clone(), self.settings.hotkey.then_some((self.settings.hotkey_mods, self.settings.hotkey_vk)));
         self.step();
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::Notice(notice) => self.show_notice(notice),
+            UserEvent::Notice(notice) => {
+                if let sys::Notice::Volume { percent, muted } = &notice {
+                    self.sys_volume = Some((*percent, *muted));
+                    // The open notch has its own volume slider: no popup for a change made there.
+                    if self.progress > 0.5 {
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                        return;
+                    }
+                }
+                self.show_notice(notice)
+            }
+            UserEvent::Hotkey => self.toggle_by_key(),
+            UserEvent::HotkeyStatus(ok) => {
+                self.hotkey_ok = ok;
+                if let Some(p) = &self.panel {
+                    p.redraw();
+                }
+            }
+            UserEvent::SysVolume { percent, muted } => {
+                self.sys_volume = Some((percent, muted));
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
             UserEvent::Clip(content) => {
                 if self.settings.clipboard
                     && self.clips.add(content)
@@ -71,7 +103,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.quit = true;
                 } else if Some(&id) == self.tray_about_id.as_ref() {
                     self.panel_wanted = true;
-                    self.panel_about = true;
+                    self.panel_page = Some(panel::Page::About);
                     self.last_tick = now;
                 } else if Some(&id) == self.tray_settings_id.as_ref() {
                     self.panel_wanted = true;
@@ -105,7 +137,19 @@ impl ApplicationHandler<UserEvent> for App {
                 self.rate_read = None;
                 self.monitor_area = None;
                 self.last_tick = Instant::now();
+                self.refresh_edges();
                 self.step();
+            }
+            UserEvent::FollowTo(screen) => {
+                if self.settings.screen == settings::Screen::All && self.follow != Some(screen) {
+                    // The notch moves to the screen the mouse touched the top of, and the other screens are watched instead.
+                    self.follow = Some(screen);
+                    self.rate_read = None;
+                    self.monitor_area = None;
+                    self.last_tick = Instant::now();
+                    self.refresh_edges();
+                    self.step();
+                }
             }
             UserEvent::Icon { path, icon } => {
                 // Only for a file still on the shelf: it may have been removed while the icon was loading.
@@ -119,6 +163,13 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
+            UserEvent::Weather(report) => self.weather_arrived(report),
+            UserEvent::Place(found) => self.place_found(found, crate::location::How::Exact),
+            UserEvent::Located(found) => match found {
+                Ok((place, how)) => self.place_found(Ok(place), how),
+                Err(e) => self.place_found(Err(e), crate::location::How::Exact),
+            },
+            UserEvent::Prayer(table) => self.prayer_arrived(table),
             UserEvent::Changelog(releases) => {
                 self.changelog = match releases {
                     Some(list) => update::Changelog::Ready(list),
@@ -132,6 +183,20 @@ impl ApplicationHandler<UserEvent> for App {
                 self.update = status;
                 if let Some(p) = &self.panel {
                     p.redraw();
+                }
+            }
+            UserEvent::AutoUpdate(found) => {
+                if let Some(status) = update::take_auto(&self.update, found) {
+                    if let update::Status::Available { version, .. } = &status
+                        && self.update_told.as_ref() != Some(version)
+                    {
+                        self.update_told = Some(version.clone());
+                        self.show_notice(sys::Notice::Update { version: version.clone() });
+                    }
+                    self.update = status;
+                    if let Some(p) = &self.panel {
+                        p.redraw();
+                    }
                 }
             }
             UserEvent::LockKey { name, vk } => {
@@ -242,6 +307,10 @@ impl ApplicationHandler<UserEvent> for App {
                     let s = self.ui_scale();
                     self.scrub = Some(self.scrub_at((position.x / s) as f32));
                 }
+                if self.volume_drag {
+                    let s = self.ui_scale();
+                    self.set_volume_at((position.x / s) as f32);
+                }
                 // Hover highlights follow the mouse.
                 if self.progress >= 0.9
                     && let Some(w) = &self.window {
@@ -268,6 +337,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
+                self.volume_drag = false;
                 if let Some(at) = self.scrub.take() {
                     if let Some(handle) = &self.media_handle {
                         handle.send(Command::Seek(at));
@@ -304,6 +374,19 @@ impl ApplicationHandler<UserEvent> for App {
                 self.sync_selection_focus();
                 if let Some(w) = &self.window {
                     w.request_redraw();
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } if self.progress >= 0.9 && self.over_volume() => {
+                // The wheel over the volume control changes the volume, five percent a notch.
+                let dy = wheel(&delta, 1.0, 1.0);
+                if dy != 0.0 {
+                    let now = self.sys_volume.map_or(0, |(p, _)| p) as i32;
+                    let next = (now + if dy > 0.0 { 5 } else { -5 }).clamp(0, 100) as u32;
+                    self.sys_volume = Some((next, false));
+                    sys::set_volume(next);
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
                 }
             }
             WindowEvent::MouseWheel { delta, .. }
@@ -474,8 +557,8 @@ impl ApplicationHandler<UserEvent> for App {
         if self.panel_wanted {
             self.panel_wanted = false;
             self.open_panel(event_loop);
-            if std::mem::take(&mut self.panel_about) {
-                self.show_about_page();
+            if let Some(page) = self.panel_page.take() {
+                self.show_page(page);
             }
         }
         // The settings window asks for frames while its controls are moving.
@@ -549,6 +632,7 @@ impl ApplicationHandler<UserEvent> for App {
         {
             w.request_redraw();
         }
+        self.check_prayer();
         self.water.roll(today());
         if self.settings.water && self.water.due(now) {
             self.alert_msg = "Time to drink some water!".into();
@@ -634,6 +718,15 @@ impl ApplicationHandler<UserEvent> for App {
             } else {
                 at(due);
             }
+        }
+        if let Some(wait) = self.prayer_minute_tick() {
+            at(now + wait);
+        }
+        if let Some(t) = self.prayer_wake(now) {
+            at(t);
+        }
+        if let Some(t) = self.stats_tick(now) {
+            at(t);
         }
         // Wake exactly when the next lyric line starts, so the glide begins on time.
         if expanded && self.view == View::Lyrics && self.media.playing

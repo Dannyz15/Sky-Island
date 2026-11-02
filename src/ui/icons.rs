@@ -74,6 +74,49 @@ pub(crate) fn draw_headphones(pm: &mut Pixmap, cx: f32, cy: f32, s: f32, c: [u8;
     fill_rounded(pm, cx + 6.0 * s, cy + 1.0 * s, 5.0 * s, 9.0 * s, 2.0 * s, c);
 }
 
+/// The outline of a small cloud about 15 units wide, as a polygon: three round bumps on a flat bottom.
+fn cloud_outline(cx: f32, cy: f32, k: f32) -> Vec<(f32, f32)> {
+    let bumps = [(-4.2, 0.6, 3.2), (0.0, -2.4, 4.4), (4.6, 0.4, 3.4)];
+    let floor = 3.8;
+    let mut pts = Vec::new();
+    for (i, &(bx, by, r)) in bumps.iter().enumerate() {
+        for step in 0..36 {
+            let a = step as f32 * std::f32::consts::TAU / 36.0;
+            let (x, y) = (bx + r * a.cos(), by + r * a.sin());
+            let inside_other = bumps.iter().enumerate().any(|(j, &(ox, oy, or))| j != i && (x - ox).hypot(y - oy) < or - 0.01);
+            if !inside_other && y <= floor {
+                pts.push((x, y));
+            }
+        }
+    }
+    for i in 0..=8 {
+        pts.push((-7.4 + i as f32 * 1.9, floor));
+    }
+    let centre = (0.2, 0.2);
+    pts.sort_by(|a, b| (a.1 - centre.1).atan2(a.0 - centre.0).total_cmp(&(b.1 - centre.1).atan2(b.0 - centre.0)));
+    pts.into_iter().map(|(x, y)| (cx + x * k, cy + y * k)).collect()
+}
+
+/// A push-pin, about 14 units tall: filled when the item is pinned, an outline otherwise.
+pub(crate) fn draw_pin(pm: &mut Pixmap, cx: f32, cy: f32, s: f32, c: [u8; 4], filled: bool) {
+    let p = |dx: f32, dy: f32| (cx + dx * s, cy + dy * s);
+    let head = [p(-2.6, -6.0), p(2.6, -6.0), p(2.2, -1.0), p(4.2, 1.2), p(-4.2, 1.2), p(-2.2, -1.0)];
+    if filled {
+        fill_path(pm, &head, c);
+    } else {
+        stroke_poly(pm, &head, 1.3 * s, c, true);
+    }
+    stroke_line(pm, cx, cy + 1.2 * s, cx, cy + 6.5 * s, 1.3 * s, c);
+}
+
+/// An arrow pointing down into a tray: a download.
+pub(crate) fn draw_update_icon(pm: &mut Pixmap, cx: f32, cy: f32, s: f32, c: [u8; 4]) {
+    let p = |dx: f32, dy: f32| (cx + dx * s, cy + dy * s);
+    stroke_line(pm, cx, cy - 8.0 * s, cx, cy + 3.0 * s, 2.0 * s, c);
+    stroke_poly(pm, &[p(-5.0, -2.0), p(0.0, 4.0), p(5.0, -2.0)], 2.0 * s, c, false);
+    stroke_poly(pm, &[p(-8.0, 5.0), p(-8.0, 9.0), p(8.0, 9.0), p(8.0, 5.0)], 1.8 * s, c, false);
+}
+
 /// The small icon that stands in for a tab's name, about 14 px across. Each is drawn in two tones: the
 /// body in a soft wash of the colour, and the details and the outline in the colour itself.
 pub(crate) fn draw_tab_icon(pm: &mut Pixmap, view: View, cx: f32, cy: f32, s: f32, c: [u8; 4]) {
@@ -111,6 +154,27 @@ pub(crate) fn draw_tab_icon(pm: &mut Pixmap, view: View, cx: f32, cy: f32, s: f3
                 paint_path(pm, &path, Some(soft), Some((w, c)));
             }
             stroke_poly(pm, &[p(-3.0, 2.4), p(-2.8, 4.4), p(-1.4, 5.6)], 1.2 * s, c, false);
+        }
+        View::Weather => {
+            // A cloud with the sun's rays above it on the right.
+            shape(pm, &cloud_outline(cx - 1.0 * s, cy + 1.6 * s, s), soft, w, c);
+            for (dx, dy) in [(0.0, -1.0), (0.71, -0.71), (1.0, 0.0)] {
+                let (sx, sy) = (cx + 3.6 * s, cy - 2.2 * s);
+                stroke_line(pm, sx + dx * 3.6 * s, sy + dy * 3.6 * s, sx + dx * 5.6 * s, sy + dy * 5.6 * s, w, c);
+            }
+        }
+        View::Stats => {
+            // Three bars of different heights on a line.
+            for (i, h) in [5.0, 9.0, 6.5].into_iter().enumerate() {
+                let x = cx + (i as f32 - 1.0) * 5.0 * s;
+                fill_rounded(pm, x - 1.8 * s, cy + 6.0 * s - h * s, 3.6 * s, h * s, 1.2 * s, c);
+            }
+            stroke_line(pm, cx - 8.0 * s, cy + 7.2 * s, cx + 8.0 * s, cy + 7.2 * s, w, c);
+        }
+        View::Prayer => {
+            // A crescent moon with a star.
+            draw_moon(pm, cx - 1.0 * s, cy + 0.6 * s, 7.0 * s, c);
+            fill_circle(pm, cx + 5.0 * s, cy - 4.4 * s, 1.2 * s, c);
         }
         View::Shelf => {
             // An inbox tray with a slot.

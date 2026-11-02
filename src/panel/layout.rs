@@ -33,11 +33,22 @@ pub(crate) enum Toggle {
     HudBattery,
     HudNetwork,
     HudAudio,
+    HudUpdate,
     Sound,
     Clipboard,
     HideIsland,
     Water,
     Timer,
+    Weather,
+    Prayer,
+    HudPrayer,
+    Hotkey,
+    TabMusic,
+    TabStats,
+    TabShelf,
+    TabTodo,
+    TabCalendar,
+    TabClipboard,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -51,6 +62,8 @@ pub(super) enum Seg {
     CalView,
     ClipKeep,
     Screen,
+    Units,
+    Asr,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -69,6 +82,22 @@ pub(super) enum Act {
     CheckUpdate,
     Changelog,
     Reset,
+    DetectCity,
+    ClearCity,
+}
+
+/// The controls that step through a long list of choices.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Stepper {
+    Method,
+}
+
+/// The boxes the user types in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Field {
+    City,
+    /// The key combination for the hotkey, which is taken by pressing the keys.
+    Hotkey,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -79,6 +108,10 @@ pub(super) enum Kind {
     Button(Act),
     /// A button that shows the current choice, for the timer's alarm sound.
     Pick,
+    /// A box to type in.
+    Text(Field),
+    /// The current choice of a long list, with arrows to step to the one before and the one after.
+    Cycle(Stepper),
     /// A line with a value on the right; with an address it opens that page when clicked.
     Link(&'static str),
 }
@@ -90,6 +123,7 @@ pub(crate) enum Page {
     Notch,
     Appearance,
     Tabs,
+    Location,
     Sounds,
     Calendar,
     Shelf,
@@ -98,8 +132,18 @@ pub(crate) enum Page {
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 9] =
-        [Page::General, Page::Notch, Page::Appearance, Page::Tabs, Page::Sounds, Page::Calendar, Page::Shelf, Page::Notices, Page::About];
+    pub(super) const ALL: [Page; 10] = [
+        Page::General,
+        Page::Notch,
+        Page::Appearance,
+        Page::Tabs,
+        Page::Location,
+        Page::Sounds,
+        Page::Calendar,
+        Page::Shelf,
+        Page::Notices,
+        Page::About,
+    ];
 
     pub(super) fn index(self) -> usize {
         Self::ALL.iter().position(|p| *p == self).unwrap_or(0)
@@ -111,6 +155,7 @@ impl Page {
             Page::Notch => "Notch",
             Page::Appearance => "Appearance",
             Page::Tabs => "Tabs",
+            Page::Location => "Location",
             Page::Sounds => "Sounds",
             Page::Calendar => "Calendar",
             Page::Shelf => "Shelf",
@@ -121,10 +166,11 @@ impl Page {
 
     pub(super) fn subtitle(self) -> &'static str {
         match self {
-            Page::General => "How Sky Island starts.",
+            Page::General => "How Sky Island starts, and the key that opens it.",
             Page::Notch => "How the notch opens and hides, how big it is, and what the closed notch shows.",
             Page::Appearance => "The colours and the motion.",
-            Page::Tabs => "Choose which tabs the notch has.",
+            Page::Tabs => "Choose which tabs the notch has. It always keeps at least one.",
+            Page::Location => "Where you are, for the weather and the prayer times.",
             Page::Sounds => "Chimes and the timer alarm.",
             Page::Calendar => "How the calendar counts its weeks and what it shows.",
             Page::Shelf => "What happens to the files on the shelf.",
@@ -140,6 +186,7 @@ impl Page {
             Page::Notch => [96, 110, 255],
             Page::Appearance => [170, 112, 255],
             Page::Tabs => [255, 176, 64],
+            Page::Location => [64, 196, 124],
             Page::Sounds => [255, 92, 120],
             Page::Calendar => [255, 96, 86],
             Page::Shelf => [255, 140, 56],
@@ -154,10 +201,17 @@ pub(super) type RowSpec = (&'static str, &'static str, Kind, &'static str);
 
 /// The groups (title and rows) on a page.
 pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
-    use Kind::{Button, Link, Pick, Seg as S, Slider, Toggle as T};
+    use Kind::{Button, Cycle, Link, Pick, Seg as S, Slider, Text, Toggle as T};
     match page {
         Page::General => vec![
             ("Startup", vec![("Start with Windows", "Open Sky Island when you sign in", T(Toggle::Autostart), "")]),
+            (
+                "Hotkey",
+                vec![
+                    ("Open with a key", "Press it anywhere to open the notch, and again to close it", T(Toggle::Hotkey), ""),
+                    ("Key combination", "Click, then press the keys you want", Text(Field::Hotkey), ""),
+                ],
+            ),
         ],
         Page::Notch => vec![
             (
@@ -184,7 +238,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
             ),
             (
                 "Screen",
-                vec![("Show on", "Which screen the notch is on", S(Seg::Screen), "")],
+                vec![("Show on", "Which screen the notch is on; All follows your mouse to the screen you touch the top of", S(Seg::Screen), "")],
             ),
             (
                 "Closed notch",
@@ -213,10 +267,18 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
         ],
         Page::Tabs => vec![
             (
-                "Tabs you can add",
+                "Tabs",
                 vec![
-                    ("Water tracker", "A daily glass counter with reminders", T(Toggle::Water), ""),
+                    ("Music", "What is playing, its controls and the lyrics", T(Toggle::TabMusic), ""),
                     ("Timer", "A countdown timer with an alarm", T(Toggle::Timer), ""),
+                    ("Water tracker", "A daily glass counter with reminders", T(Toggle::Water), ""),
+                    ("Weather", "The weather now and the days ahead for your city", T(Toggle::Weather), ""),
+                    ("Prayer times", "Today's prayers and the next one for your city", T(Toggle::Prayer), ""),
+                    ("System stats", "Processor, memory, disk and network while the notch is open", T(Toggle::TabStats), ""),
+                    ("Shelf", "A place to park files", T(Toggle::TabShelf), ""),
+                    ("To-do", "Tasks with reminders", T(Toggle::TabTodo), ""),
+                    ("Calendar", "A month or a week with your tasks", T(Toggle::TabCalendar), ""),
+                    ("Clipboard", "The history of what you copy", T(Toggle::TabClipboard), ""),
                 ],
             ),
             (
@@ -224,6 +286,24 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 vec![
                     ("Clipboard history", "Keep what you copy, text and pictures", T(Toggle::Clipboard), ""),
                     ("Forget copied items", "Remove them from the history after a while", S(Seg::ClipKeep), ""),
+                ],
+            ),
+        ],
+        Page::Location => vec![
+            (
+                "Your city",
+                vec![
+                    ("City", "Type a city and press Enter", Text(Field::City), ""),
+                    ("Detect my location", "Uses Windows Location; if it is off, your internet connection", Button(Act::DetectCity), "Detect"),
+                    ("Clear location", "Forget the city; Weather and Prayer wait for a new one", Button(Act::ClearCity), "Clear"),
+                ],
+            ),
+            ("Weather", vec![("Temperature", "Celsius or Fahrenheit", S(Seg::Units), "")]),
+            (
+                "Prayer times",
+                vec![
+                    ("Method", "How the times are worked out", Cycle(Stepper::Method), ""),
+                    ("Asr", "How the length of the shadow is counted", S(Seg::Asr), ""),
                 ],
             ),
         ],
@@ -270,7 +350,12 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Battery", "Charging, unplugged and low battery", T(Toggle::HudBattery), ""),
                     ("Wi-Fi and internet", "When the connection changes", T(Toggle::HudNetwork), ""),
                     ("Headphones and speakers", "When an audio device is connected", T(Toggle::HudAudio), ""),
+                    ("Prayer time", "When a prayer time comes, with the Prayer tab on", T(Toggle::HudPrayer), ""),
                 ],
+            ),
+            (
+                "Updates",
+                vec![("New version", "Looks on GitHub at start and every 6 hours, and tells you when there is one", T(Toggle::HudUpdate), "")],
             ),
         ],
         Page::About => vec![
@@ -295,6 +380,8 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 "Thanks",
                 vec![
                     ("Synced lyrics", "", Link("https://lrclib.net"), "LRCLIB"),
+                    ("Weather", "", Link("https://open-meteo.com"), "Open-Meteo"),
+                    ("Prayer times", "", Link("https://aladhan.com"), "Aladhan"),
                     ("Built with", "", Link("https://github.com/Dannyz15/Sky-Island/blob/main/Cargo.toml"), "Rust and open-source crates"),
                 ],
             ),
@@ -381,6 +468,7 @@ pub(super) fn layout(page: Page, frame: Frame) -> Layout {
                 Kind::Seg(seg) => (right - seg_width(seg), mid - 14.0, seg_width(seg), 28.0),
                 Kind::Slider(_) => (right - SLIDER_TEXT_W - 12.0 - SLIDER_W, mid - 2.0, SLIDER_W, 4.0),
                 Kind::Pick => (right - 200.0, mid - 14.0, 200.0, 28.0),
+                Kind::Text(_) | Kind::Cycle(_) => (right - 260.0, mid - 14.0, 260.0, 28.0),
                 Kind::Button(_) => {
                     let w = if btn.len() > 12 { 168.0 } else { 104.0 };
                     (right - w, mid - 14.0, w, 28.0)

@@ -11,6 +11,8 @@ use crate::store;
 /// Reminder choices shown in the UI, in minutes. `None` turns reminders off.
 pub const INTERVALS: [Option<u32>; 4] = [Some(30), Some(60), Some(120), None];
 const DEFAULT_GOAL: u32 = 8;
+/// Reminders start Off: the Water tab is on from the start, and nobody asked to be reminded yet.
+const DEFAULT_INTERVAL: usize = 3;
 const GOAL_RANGE: (u32, u32) = (1, 20);
 
 pub struct Water {
@@ -32,7 +34,7 @@ impl Water {
         let mut w = Self::with(
             today,
             get("goal").filter(|g| (GOAL_RANGE.0..=GOAL_RANGE.1).contains(g)).unwrap_or(DEFAULT_GOAL),
-            get("interval").map_or(1, |i| (i as usize).min(INTERVALS.len() - 1)),
+            get("interval").map_or(DEFAULT_INTERVAL, |i| (i as usize).min(INTERVALS.len() - 1)),
             now,
         );
         if get("day") == Some(today) {
