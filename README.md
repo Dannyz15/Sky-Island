@@ -32,6 +32,7 @@
 
 ---
 
+<div align="center">
 <table>
   <tr>
     <td align="center"><img src="assets/screenshots/closed.png" alt="The closed notch showing the clock" width="215"><br><sub>Closed</sub></td>
@@ -46,6 +47,7 @@
     <td align="center"><img src="assets/screenshots/clipboard.png" alt="The Clipboard tab" width="320"><br><sub>Clipboard</sub></td>
   </tr>
 </table>
+</div>
 
 ## Tabs
 
