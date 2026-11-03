@@ -5,11 +5,8 @@
 <h1 align="center">Sky Island</h1>
 
 <p align="center">
-  <b>A notch for the top of your Windows screen.</b>
-</p>
-
-<p align="center">
-  <a href="https://github.com/Dannyz15/Sky-Island/releases/latest"><b>⬇ Download the latest version</b></a>
+  <b>A notch for the top of your Windows screen.</b><br>
+  Like the Dynamic Island on the iPhone, but for Windows.
 </p>
 
 <p align="center">
@@ -18,6 +15,10 @@
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6" alt="Windows 10 and 11">
   <img src="https://img.shields.io/badge/built%20with-Rust-DEA584" alt="Built with Rust">
   <img src="https://img.shields.io/badge/license-MIT-3D5FE0" alt="MIT license">
+</p>
+
+<p align="center">
+  <a href="https://github.com/Dannyz15/Sky-Island/releases/latest"><b>⬇ Download the latest version</b></a>
 </p>
 
 <p align="center">
@@ -31,12 +32,11 @@
 
 ---
 
-<p align="center">
-  <img src="assets/screenshots/closed.png" alt="The closed notch showing the clock" width="215"><br>
-  <img src="assets/screenshots/music.png" alt="The Music tab" width="440">
-</p>
-
 <table>
+  <tr>
+    <td align="center"><img src="assets/screenshots/closed.png" alt="The closed notch showing the clock" width="215"><br><sub>Closed</sub></td>
+    <td align="center"><img src="assets/screenshots/music.png" alt="The Music tab" width="320"><br><sub>Music</sub></td>
+  </tr>
   <tr>
     <td align="center"><img src="assets/screenshots/stats.png" alt="The Stats tab" width="320"><br><sub>Stats</sub></td>
     <td align="center"><img src="assets/screenshots/timer.png" alt="The Timer tab" width="320"><br><sub>Timer</sub></td>
