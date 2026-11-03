@@ -18,16 +18,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Dannyz15/Sky-Island/releases/latest"><b>⬇ Download the latest version</b></a>
-</p>
-
-<p align="center">
   <a href="#tabs">Tabs</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#using-it">Using it</a> ·
   <a href="#questions">Questions</a> ·
   <a href="#privacy">Privacy</a> ·
   <a href="#known-limitations">Limitations</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Dannyz15/Sky-Island/releases/latest"><b>⬇ Download the latest version</b></a>
 </p>
 
 ---
