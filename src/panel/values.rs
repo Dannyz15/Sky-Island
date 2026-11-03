@@ -6,7 +6,6 @@ pub(super) const THEME_NAMES: [&str; 3] = ["Dark", "Light", "Follow System"];
 
 pub(super) const MOTION_NAMES: [&str; 4] = ["Calm", "Normal", "Snappy", "None"];
 
-pub(super) const EYE_NAMES: [&str; 4] = ["Classic", "Dots", "Cat", "Glow"];
 
 pub(super) const SIZE_NAMES: [&str; 5] = ["Auto", "100%", "115%", "130%", "150%"];
 
@@ -28,7 +27,7 @@ pub(super) const UNITS_NAMES: [&str; 2] = ["\u{00B0}C", "\u{00B0}F"];
 pub(super) fn seg_weights(seg: Seg) -> &'static [f32] {
     match seg {
         Seg::Theme => &[1.0, 1.0, 2.0],
-        Seg::Motion | Seg::Eyes => &[1.0, 1.0, 1.0, 1.0],
+        Seg::Motion => &[1.0, 1.0, 1.0, 1.0],
         Seg::Size => &[1.0, 1.0, 1.0, 1.0, 1.0],
         Seg::Open | Seg::WeekStart | Seg::CalView | Seg::Units | Seg::Asr => &[1.0, 1.0],
         Seg::ClipKeep => &[1.0, 1.0, 1.0, 1.0],
@@ -39,7 +38,7 @@ pub(super) fn seg_weights(seg: Seg) -> &'static [f32] {
 pub(super) fn seg_width(seg: Seg) -> f32 {
     match seg {
         Seg::Theme => 260.0,
-        Seg::Motion | Seg::Eyes => 240.0,
+        Seg::Motion => 240.0,
         Seg::Size => 300.0,
         Seg::Open | Seg::CalView => 170.0,
         Seg::WeekStart => 190.0,
@@ -69,7 +68,6 @@ pub(super) fn seg_names(seg: Seg) -> &'static [&'static str] {
     match seg {
         Seg::Theme => &THEME_NAMES,
         Seg::Motion => &MOTION_NAMES,
-        Seg::Eyes => &EYE_NAMES,
         Seg::Size => &SIZE_NAMES,
         Seg::Open => &OPEN_NAMES,
         Seg::WeekStart => &WEEK_NAMES,
@@ -118,6 +116,10 @@ impl App {
             Toggle::Eyes => self.settings.eyes,
             Toggle::IdleEyes => self.settings.idle_eyes,
             Toggle::Minimal => self.settings.minimal,
+            Toggle::ClosedMusic => self.settings.closed_music,
+            Toggle::ClosedBars => self.settings.closed_bars,
+            Toggle::ClosedSpin => self.settings.closed_spin,
+            Toggle::ClosedEdge => self.settings.closed_edge,
             Toggle::EmptyShelf => self.settings.empty_shelf,
             Toggle::HudVolume => self.settings.hud_volume,
             Toggle::HudBrightness => self.settings.hud_brightness,
@@ -159,6 +161,10 @@ impl App {
             Toggle::Eyes => self.settings.eyes = !self.settings.eyes,
             Toggle::IdleEyes => self.settings.idle_eyes = !self.settings.idle_eyes,
             Toggle::Minimal => self.settings.minimal = !self.settings.minimal,
+            Toggle::ClosedMusic => self.settings.closed_music = !self.settings.closed_music,
+            Toggle::ClosedBars => self.settings.closed_bars = !self.settings.closed_bars,
+            Toggle::ClosedSpin => self.settings.closed_spin = !self.settings.closed_spin,
+            Toggle::ClosedEdge => self.settings.closed_edge = !self.settings.closed_edge,
             Toggle::EmptyShelf => self.settings.empty_shelf = !self.settings.empty_shelf,
             Toggle::HudVolume => self.settings.hud_volume = !self.settings.hud_volume,
             Toggle::HudBrightness => self.settings.hud_brightness = !self.settings.hud_brightness,
@@ -256,7 +262,6 @@ impl App {
         match seg {
             Seg::Theme => ThemeMode::ALL.iter().position(|t| *t == self.settings.theme).unwrap_or(0),
             Seg::Motion => Motion::ALL.iter().position(|m| *m == self.settings.motion).unwrap_or(1),
-            Seg::Eyes => EyeStyle::ALL.iter().position(|e| *e == self.settings.eye_style).unwrap_or(0),
             Seg::Size => NotchSize::ALL.iter().position(|z| *z == self.settings.size).unwrap_or(0),
             Seg::Open => usize::from(self.settings.open_on_click),
             Seg::WeekStart => usize::from(self.settings.week_monday),
@@ -272,7 +277,6 @@ impl App {
         match seg {
             Seg::Theme => self.settings.theme = ThemeMode::ALL[i.min(2)],
             Seg::Motion => self.settings.motion = Motion::ALL[i.min(3)],
-            Seg::Eyes => self.settings.eye_style = EyeStyle::ALL[i.min(3)],
             Seg::Size => self.settings.size = NotchSize::ALL[i.min(4)],
             Seg::Open => self.settings.open_on_click = i == 1,
             Seg::WeekStart => self.settings.week_monday = i == 1,
@@ -286,6 +290,13 @@ impl App {
         if seg == Seg::Asr {
             self.sync_prayer();
         }
+    }
+
+    /// Choose an Eye style from the picker: save it and show it on the closed notch for a moment.
+    pub(super) fn set_eye_style(&mut self, i: usize) {
+        self.settings.eye_style = EyeStyle::ALL[i.min(EyeStyle::ALL.len() - 1)];
+        self.settings_changed();
+        self.preview_eyes();
     }
 
     /// Step the calculation method to the one before (`-1`) or after (`1`) in the list.

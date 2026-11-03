@@ -264,6 +264,28 @@ impl App {
                     crate::draw_text_centered(pm, font, name, (cell.0 + cell.2 / 2.0) * s, (cell.1 + 18.5) * s, 12.0 * s, ink, (cell.2 - 6.0) * s);
                 }
             }
+            Kind::EyeGrid => {
+                // A tile for each style with a pair of eyes in it, drawn the way the closed notch draws them; the chosen
+                // one is lit in the page's colour, and the tile under the mouse brightens.
+                for (i, style) in EyeStyle::ALL.iter().enumerate() {
+                    let tile = eye_tile(item.ctrl, i);
+                    let (x, y, w, h) = (tile.0 * s, tile.1 * s, tile.2 * s, tile.3 * s);
+                    let over = panel.glows.fade(key + 20 + i as u64, inside(tile, cx, cy));
+                    let lit = panel.glows.follow(key + 40 + i as u64, if *style == self.settings.eye_style { 1.0 } else { 0.0 }, 30.0, 0.8) as f32;
+                    crate::fill_rounded(pm, x, y, w, h, 10.0 * s, [255, 255, 255, (14.0 + 20.0 * over) as u8]);
+                    if lit > 0.01 {
+                        gfx::gradient_rounded(pm, x, y, w, h, 10.0 * s, [accent[0], accent[1], accent[2], (140.0 * lit) as u8], [accent[0], accent[1], accent[2], (86.0 * lit) as u8], false);
+                        gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, 10.0 * s, s, [accent[0], accent[1], accent[2], (170.0 * lit) as u8]);
+                    }
+                    // The eyes are drawn on a picture of the tile's own size, so their glow stays inside the tile.
+                    if let Some(mut face) = Pixmap::new(w.ceil() as u32, h.ceil() as u32) {
+                        for dx in [-13.0, 13.0] {
+                            crate::ui::eyes::draw_eye(&mut face, *style, w / 2.0 + dx * s, h / 2.0, s, 255, crate::ui::eyes::Pose::REST);
+                        }
+                        pm.draw_pixmap(x.round() as i32, y.round() as i32, face.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+                    }
+                }
+            }
             Kind::Slider(slide) => {
                 let range = range_of(slide);
                 let v = self.slider_get(slide);

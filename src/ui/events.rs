@@ -719,6 +719,19 @@ impl ApplicationHandler<UserEvent> for App {
                 at(due);
             }
         }
+        // The bars on the closed notch move a few times a second while a song plays.
+        if self.bars_running() {
+            let (tick, due) = (self.music_tick(), self.bars_at + self.music_tick());
+            if now >= due {
+                self.bars_at = now;
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                at(now + tick);
+            } else {
+                at(due);
+            }
+        }
         if let Some(wait) = self.prayer_minute_tick() {
             at(now + wait);
         }

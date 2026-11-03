@@ -4,11 +4,14 @@ use crate::*;
 
 const KEY_CPU: u64 = 0x4000_0000_0000_0010;
 const KEY_MEM: u64 = 0x4000_0000_0000_0011;
-const KEY_DISK: u64 = 0x4000_0000_0000_0012;
+const KEY_DISK: u64 = 0x4000_0000_0000_0100; // plus the number of the drive
 
 /// The ring for the processor: its middle and size.
 const RING: (f32, f32, f32) = (70.0, 90.0, 34.0);
 const RING_W: f32 = 7.0;
+
+/// Each drive beyond the first needs this much more room, and the notch grows by it.
+const ROW: f32 = 34.0;
 
 /// The right-hand column.
 const COL_X: f32 = 136.0;
@@ -27,13 +30,27 @@ fn load_color(frac: f32, a: u8) -> [u8; 4] {
 }
 
 impl App {
+    /// How many bars the disks take: one per drive, and one ("not available") if none were found.
+    fn disk_rows(&self) -> usize {
+        self.stats.last.disks.len().clamp(1, stats::MAX_DRIVES)
+    }
+
+    /// How much taller than normal the notch is while the Stats view is open, to fit one bar for each drive.
+    pub(crate) fn stats_extra(&self) -> f64 {
+        if self.view == View::Stats { (ROW * (self.disk_rows() - 1) as f32) as f64 } else { 0.0 }
+    }
+
     /// While the Stats view is open, look at the numbers (the first two looks come quickly, then once a second) and
     /// say when to wake for the next one. Nothing is looked at while it is closed; its numbers are forgotten, so
     /// that it starts afresh next time.
     pub(crate) fn stats_tick(&mut self, now: Instant) -> Option<Instant> {
         if self.progress < 1.0 || self.view != View::Stats {
             if self.stats.started {
+                // The drives stay, so the view keeps its shape while it slides out and opens at the right height.
+                let disks = std::mem::take(&mut self.stats.last.disks);
                 self.stats = stats::Stats::default();
+                self.stats.disks_known = !disks.is_empty();
+                self.stats.last.disks = disks;
                 self.stats_at = None;
             }
             return None;
@@ -58,9 +75,12 @@ impl App {
         let (white, grey) = ([255, 255, 255, a], [165, 165, 175, a]);
         let rgb = self.accent(View::Stats);
         let last = &self.stats.last;
+        let rows = self.disk_rows();
+        let more = ROW * (rows - 1) as f32;
 
-        // The processor: a ring that fills with the load, and the number in it.
+        // The processor: a ring that fills with the load, and the number in it. With more drives it stays in the middle.
         let (rx, ry, rr) = RING;
+        let ry = ry + more / 2.0;
         let cpu = last.cpu.unwrap_or(0.0);
         let shown = self.glows.follow(KEY_CPU, cpu as f64, 14.0, 0.9).clamp(0.0, 1.0) as f32;
         gfx::glow(pm, rx * s, ry * s, (rr + 26.0) * s, [rgb[0], rgb[1], rgb[2], (alpha * 28.0) as u8], None);
@@ -85,18 +105,22 @@ impl App {
             draw_bar(pm, COL_X * s, (y + 9.0) * s, COL_W * s, shown, load_color(shown, a), s * 0.8, a);
         };
         bar(pm, 50.0, "Memory", last.memory, KEY_MEM);
-        let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
-        bar(pm, 84.0, &format!("Disk {drive}"), last.disk, KEY_DISK);
+        if last.disks.is_empty() && self.stats.disks_known {
+            bar(pm, 84.0, "Disk", None, KEY_DISK);
+        }
+        for (i, d) in last.disks.iter().enumerate() {
+            bar(pm, 84.0 + ROW * i as f32, &format!("Disk {}:", d.letter), Some((d.used, d.total)), KEY_DISK + i as u64);
+        }
 
         // The network.
-        draw_text(pm, font, "Network", COL_X * s, 118.0 * s, 11.5 * s, white, 100.0 * s);
+        draw_text(pm, font, "Network", COL_X * s, (118.0 + more) * s, 11.5 * s, white, 100.0 * s);
         let (down, up) = last.network.map_or(("...".to_string(), "...".to_string()), |(d, u)| (stats::speed(d), stats::speed(u)));
         let words = format!("\u{2193} {down}    \u{2191} {up}");
         let w = text_width(font, &words, 11.0 * s);
-        draw_text(pm, font, &words, (COL_X + COL_W) * s - w, 118.0 * s, 11.0 * s, grey, 190.0 * s);
+        draw_text(pm, font, &words, (COL_X + COL_W) * s - w, (118.0 + more) * s, 11.0 * s, grey, 190.0 * s);
 
         // The processor over the last minute, as a line.
-        let (gx, gy, gw, gh) = (COL_X, 128.0, COL_W, 28.0);
+        let (gx, gy, gw, gh) = (COL_X, 128.0 + more, COL_W, 28.0);
         fill_rounded(pm, gx * s, gy * s, gw * s, gh * s, 6.0 * s, [255, 255, 255, (alpha * 9.0) as u8]);
         let n = self.stats.history.len();
         if n >= 2 {
@@ -118,6 +142,19 @@ mod tests {
         let (low, mid, high) = (load_color(0.1, 255), load_color(0.7, 255), load_color(1.0, 255));
         assert!(low[1] > low[0] && high[0] > high[1], "green when empty, red when full");
         assert!(mid[0] > low[0] && mid[1] > high[1], "amber in between");
+    }
+
+    #[test]
+    fn each_drive_makes_the_notch_taller_by_one_row() {
+        let mut stats = stats::Stats::default();
+        let drive = |letter| stats::Drive { letter, used: 1, total: 2 };
+        let rows = |n: usize| (ROW * (n.clamp(1, stats::MAX_DRIVES) - 1) as f32) as f64;
+        stats.last.disks = vec![drive('C')];
+        assert_eq!(rows(stats.last.disks.len()), 0.0, "one drive fits the normal height");
+        stats.last.disks = vec![drive('C'), drive('D'), drive('E')];
+        assert_eq!(rows(stats.last.disks.len()), 2.0 * ROW as f64);
+        assert_eq!(rows(40), rows(stats::MAX_DRIVES), "there is a limit");
+        assert_eq!(rows(0), 0.0, "no drive found still shows one row");
     }
 
     #[test]

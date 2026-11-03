@@ -4,8 +4,10 @@
 mod calendar;
 mod clipboard;
 mod clock;
+mod closed_music;
 mod companion;
 mod events;
+pub(crate) mod eyes;
 mod icons;
 mod input;
 mod notice;

@@ -55,7 +55,7 @@ fn a_page_scrolls_only_as_far_as_it_is_taller_than_the_window() {
         // Most pages fit the default window; About (a tall card) and Notch (all the notch settings) scroll a little.
         let limit = match page {
             Page::About => 280.0,
-            Page::Notch => 440.0,
+            Page::Notch => 700.0,
             Page::Tabs => 220.0,
             _ => 0.0,
         };
@@ -193,11 +193,11 @@ fn every_setting_is_on_exactly_one_page() {
             }
         }
     }
-    assert_eq!(toggles.len(), 30, "all thirty switches: {toggles:?}");
+    assert_eq!(toggles.len(), 34, "all thirty-four switches: {toggles:?}");
     for (i, a) in toggles.iter().enumerate() {
         assert!(!toggles[i + 1..].contains(a), "{a:?} is on two pages");
     }
-    assert_eq!(segs.len(), 11);
+    assert_eq!(segs.len(), 10);
     assert_eq!(slides.len(), 5);
     assert_eq!(picks, 1);
 }
@@ -255,13 +255,30 @@ fn the_choice_lists_match_the_settings() {
     assert_eq!(MOTION_NAMES.len(), Motion::ALL.len());
     assert_eq!(seg_weights(Seg::Theme).len(), THEME_NAMES.len());
     assert_eq!(seg_weights(Seg::Motion).len(), MOTION_NAMES.len());
-    assert_eq!(seg_weights(Seg::Eyes).len(), EYE_NAMES.len());
-    assert_eq!(EYE_NAMES.len(), EyeStyle::ALL.len());
     assert_eq!(seg_weights(Seg::Size).len(), SIZE_NAMES.len());
     assert_eq!(SIZE_NAMES.len(), NotchSize::ALL.len());
     for seg in [Seg::Open, Seg::WeekStart, Seg::CalView] {
         assert_eq!(seg_weights(seg).len(), seg_names(seg).len());
     }
+}
+
+#[test]
+fn the_eye_picker_has_a_tile_for_every_style_and_they_fit_its_control() {
+    let ctrl = (400.0, 20.0, EYE_GRID.0, EYE_GRID.1);
+    for i in 0..EyeStyle::ALL.len() {
+        let t = eye_tile(ctrl, i);
+        assert!(t.0 >= ctrl.0 && t.0 + t.2 <= ctrl.0 + ctrl.2 + 0.01 && t.1 >= ctrl.1 && t.1 + t.3 <= ctrl.1 + ctrl.3 + 0.01, "tile {i} is inside");
+        assert_eq!(eye_tile_at(ctrl, t.0 + t.2 / 2.0, t.1 + t.3 / 2.0), Some(i), "its middle is that tile");
+        for j in 0..i {
+            let o = eye_tile(ctrl, j);
+            assert!(t.0 >= o.0 + o.2 || o.0 >= t.0 + t.2 || t.1 >= o.1 + o.3 || o.1 >= t.1 + t.3, "tiles {i} and {j} do not overlap");
+        }
+    }
+    assert_eq!(eye_tile_at(ctrl, ctrl.0 - 5.0, ctrl.1 - 5.0), None);
+    // The row is tall enough for the picker, and the picker is on the Notch page, once.
+    assert!(row_height("x", Kind::EyeGrid) > EYE_GRID.1);
+    let on_notch = layout(Page::Notch, frame_for(WIDTH as f32)).items.iter().filter(|i| matches!(i.kind, Kind::EyeGrid)).count();
+    assert_eq!(on_notch, 1);
 }
 
 #[test]

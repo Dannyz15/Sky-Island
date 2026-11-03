@@ -36,6 +36,10 @@
 <table>
   <tr>
     <td align="center"><img src="assets/screenshots/closed.png" alt="The closed notch showing the clock" width="215"><br><sub>Closed</sub></td>
+    <td align="center"><img src="assets/screenshots/closed-playing.png" alt="The closed notch while a song plays: a spinning record, the clock and moving bars" width="215"><br><sub>A song playing</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/closed-eyes.png" alt="The closed notch with glowing eyes" width="215"><br><sub>Eyes</sub></td>
     <td align="center"><img src="assets/screenshots/music.png" alt="The Music tab" width="320"><br><sub>Music</sub></td>
   </tr>
   <tr>
@@ -58,7 +62,7 @@
 | 💧 **Water** | Daily glass counter with optional reminders. |
 | 🌤️ **Weather** | Now and the next five days for your city. |
 | 🕌 **Prayer** | Today's prayer times, a countdown and the Hijri date. |
-| 📊 **Stats** | Processor, memory, disk and network. |
+| 📊 **Stats** | Processor, memory, every drive and network. |
 | 📂 **Shelf** | Park files by dragging them in; drag them out later. |
 | ✅ **To-do** | Tasks with reminders. |
 | 📅 **Calendar** | Month or week view with your tasks. |
@@ -79,6 +83,8 @@ To update, run a newer setup, or use **Check for updates** in Settings > About. 
 ## Using it
 
 Hover over the notch at the top edge of your screen to open it. Move away and it closes. It also pops up briefly when something changes on your PC, such as the volume or the battery.
+
+Closed, the notch shows the clock, or a pair of blinking eyes in one of ten styles. While a song plays it also shows the album cover as a spinning record, with a ring that fills as the song goes on, and moving bars. Choose the look in Settings > Notch.
 
 ## Questions
 
@@ -104,6 +110,12 @@ Open Settings > Location, type your city and press Enter, or press **Detect my l
 <summary>I want the notch on another screen.</summary>
 
 Settings > Notch > **Show on**: pick Screen 2 or Screen 3, or **All** to have it follow the mouse to the top edge of whichever screen you use.
+</details>
+
+<details>
+<summary>How do I change the eyes, or turn off the record and the bars?</summary>
+
+Settings > Notch. **Eye style** is a grid of ten styles; pick one to see it on the notch. Under **Closed notch**, **Show music** turns the record and the bars off, or you can keep it and switch off **Moving bars**, **Spinning record** or **Edge glow** one by one.
 </details>
 
 <details>
@@ -139,6 +151,7 @@ To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whet
 - Windows only.
 - Brightness notices work only on laptop screens whose driver reports the brightness.
 - Lyrics depend on what LRCLIB has.
+- The moving bars on the closed notch are an animation; they do not follow the real sound.
 - Weather and prayer times need an internet connection to refresh; the last ones are kept for offline use.
 
 ## License

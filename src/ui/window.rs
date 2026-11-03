@@ -28,6 +28,7 @@ impl App {
             || self.timer_field.is_some()
             || self.alert_until.is_some()
             || self.notice_until.is_some()
+            || self.previewing()
             || self.progress > 0.0;
         if self.settings.hide_island && !needed { 1.0 } else { 0.0 }
     }
@@ -47,8 +48,12 @@ impl App {
             || self.tab_target().is_some_and(|t| (t - self.tab_pos).abs() > f32::EPSILON)
             || (self.tuck_t - self.tuck_target()).abs() > f64::EPSILON
             || (self.view_t - self.view_target()).abs() > f64::EPSILON
+            || (self.grow_t - self.stats_extra()).abs() > f64::EPSILON
             || (self.ov_t - self.ov_target()).abs() > f64::EPSILON
             || self.glows.busy()
+            || self.eyes_moving()
+            || (self.music_k - self.music_target()).abs() > 1e-4
+            || (self.music_w - self.music_extra_goal()).abs() > 1e-3
             || (self.closed_k - self.closed_target()).abs() > 1e-4
             || (self.target_k() - self.ui_k).abs() > 1e-3
             || (self.view == View::Lyrics
@@ -159,6 +164,7 @@ impl App {
         // The Animation setting makes the springs slower or quicker, and can take the bounce out.
         let (speed, bounce) = (self.settings.motion.speed(), self.settings.motion.bounce());
         let tune = |omega: f64, zeta: f64| (omega * speed, if bounce { zeta } else { 1.0 });
+        self.eyes_step(dt, speed, bounce);
 
         // Everything is pulled towards its goal by a spring. Opening swings out a little past the goal and
         // settles; closing and hiding glide in without bouncing.
@@ -219,6 +225,11 @@ impl App {
         let (omega, zeta) = if vt > 0.5 { tune(24.0, 0.85) } else { tune(28.0, 1.0) };
         spring(&mut self.view_t, &mut self.view_v, vt, dt, omega, zeta);
 
+        // The notch grows taller when what is in the open view needs more room (many drives in the Stats view).
+        let grow = self.stats_extra();
+        let (omega, zeta) = if grow > self.grow_t { tune(24.0, 0.85) } else { tune(28.0, 1.0) };
+        spring(&mut self.grow_t, &mut self.grow_v, grow, dt, omega, zeta);
+
         // The lyrics glide to the line being sung, or to wherever they were scrolled.
         if self.view == View::Lyrics && matches!(self.lyrics, LyricsState::Found(_)) {
             let goal = self.lyric_target();
@@ -227,6 +238,12 @@ impl App {
 
         let closed_goal = self.closed_target();
         spring(&mut self.closed_k, &mut self.closed_v, closed_goal, dt, 24.0 * speed, 1.0);
+        // The closed notch widens for the album cover and the bars while a song plays, and goes back when it stops.
+        let (omega, zeta) = tune(22.0, 0.85);
+        let music_goal = self.music_target();
+        spring(&mut self.music_k, &mut self.music_v, music_goal, dt, omega, zeta);
+        let extra_goal = self.music_extra_goal();
+        spring(&mut self.music_w, &mut self.music_wv, extra_goal, dt, omega, zeta);
         self.ui_k = self.target_k();
         let k = self.ui_k;
 
@@ -234,7 +251,7 @@ impl App {
         // The size may swing a little past its goal while the notch opens.
         let t = self.progress.max(0.0);
         let wide = self.view_t.clamp(0.0, 1.0);
-        let full_h = lerp(EXPANDED.1, LYRICS_H, wide);
+        let full_h = lerp(EXPANDED.1, LYRICS_H, wide) + self.grow_t.max(0.0);
         // The closed notch grows to the compact notice size while a notice is showing.
         let ov = self.ov_t.clamp(0.0, 1.0);
         let closed = self.closed_size();
@@ -306,7 +323,7 @@ impl App {
 
     /// The closed notch, in logical pixels.
     pub(crate) fn closed_size(&self) -> (f64, f64) {
-        (COLLAPSED.0 * self.closed_k, COLLAPSED.1 * self.closed_k)
+        (COLLAPSED.0 * self.closed_k + self.music_w.max(0.0), COLLAPSED.1 * self.closed_k)
     }
 
     /// The height of the window in logical pixels, which the tab bar is measured from.

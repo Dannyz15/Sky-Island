@@ -179,6 +179,7 @@ impl App {
             } else {
                 self.draw_companion(&mut pixmap, s, collapsed_alpha, fw);
             }
+            self.draw_closed_music(&mut pixmap, s, collapsed_alpha, fw);
         }
 
         // System notice (volume, battery...) in the compact notch.

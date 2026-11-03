@@ -26,6 +26,10 @@ pub(crate) enum Toggle {
     Eyes,
     IdleEyes,
     Minimal,
+    ClosedMusic,
+    ClosedBars,
+    ClosedSpin,
+    ClosedEdge,
     EmptyShelf,
     HudVolume,
     HudBrightness,
@@ -55,7 +59,6 @@ pub(crate) enum Toggle {
 pub(super) enum Seg {
     Theme,
     Motion,
-    Eyes,
     Size,
     Open,
     WeekStart,
@@ -114,6 +117,8 @@ pub(super) enum Kind {
     Cycle(Stepper),
     /// A line with a value on the right; with an address it opens that page when clicked.
     Link(&'static str),
+    /// The eye picker: a tile for each style, each showing a pair of eyes drawn the way the closed notch draws them.
+    EyeGrid,
 }
 
 /// The pages of the window, in the order of the sidebar.
@@ -201,7 +206,7 @@ pub(super) type RowSpec = (&'static str, &'static str, Kind, &'static str);
 
 /// The groups (title and rows) on a page.
 pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
-    use Kind::{Button, Cycle, Link, Pick, Seg as S, Slider, Text, Toggle as T};
+    use Kind::{Button, Cycle, EyeGrid, Link, Pick, Seg as S, Slider, Text, Toggle as T};
     match page {
         Page::General => vec![
             ("Startup", vec![("Start with Windows", "Open Sky Island when you sign in", T(Toggle::Autostart), "")]),
@@ -245,6 +250,10 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 vec![
                     ("Show clock", "The time on the closed notch", T(Toggle::ShowClock), ""),
                     ("24-hour clock", "13:00 instead of 1:00 PM", T(Toggle::Clock24), ""),
+                    ("Show music", "The album cover and moving bars on the closed notch while a song plays", T(Toggle::ClosedMusic), ""),
+                    ("Moving bars", "Five bars that rise and fall beside the clock (with Show music)", T(Toggle::ClosedBars), ""),
+                    ("Spinning record", "The cover turns like a record; off keeps it still (with Show music)", T(Toggle::ClosedSpin), ""),
+                    ("Edge glow", "A thin line along the notch in the cover's colour that breathes (with Show music)", T(Toggle::ClosedEdge), ""),
                 ],
             ),
             (
@@ -252,7 +261,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 vec![
                     ("Enable eyes", "Blinking eyes on the closed notch while you work", T(Toggle::Eyes), ""),
                     ("Idle eyes", "They appear, and doze off, when you stop using the PC", T(Toggle::IdleEyes), ""),
-                    ("Eye style", "How the eyes look", S(Seg::Eyes), ""),
+                    ("Eye style", "Pick one to see it on the closed notch", EyeGrid, ""),
                 ],
             ),
         ],
@@ -474,6 +483,7 @@ pub(super) fn layout(page: Page, frame: Frame) -> Layout {
                     (right - w, mid - 14.0, w, 28.0)
                 }
                 Kind::Link(_) => (right - 260.0, mid - 14.0, 260.0, 28.0),
+                Kind::EyeGrid => (right - EYE_GRID.0, mid - EYE_GRID.1 / 2.0, EYE_GRID.0, EYE_GRID.1),
             };
             items.push(Item { label, desc, kind, btn, row, ctrl, after_row: i > 0 });
         }
@@ -484,7 +494,27 @@ pub(super) fn layout(page: Page, frame: Frame) -> Layout {
 
 /// The height of a row: taller when it has a line of text under its label.
 pub(super) fn row_height(desc: &str, kind: Kind) -> f32 {
+    if matches!(kind, Kind::EyeGrid) {
+        return EYE_GRID.1 + 28.0;
+    }
     if desc.is_empty() && !matches!(kind, Kind::Button(Act::CheckUpdate)) { 40.0 } else { ROW_H }
+}
+
+/// The eye picker: five tiles across and two down, each showing a pair of eyes.
+const EYE_TILE: (f32, f32) = (50.0, 34.0);
+const EYE_GAP: f32 = 6.0;
+const EYE_COLS: usize = 5;
+pub(super) const EYE_GRID: (f32, f32) = (EYE_COLS as f32 * EYE_TILE.0 + (EYE_COLS - 1) as f32 * EYE_GAP, 2.0 * EYE_TILE.1 + EYE_GAP);
+
+/// Tile `i` of the eye picker whose control is `ctrl`.
+pub(super) fn eye_tile(ctrl: Rect, i: usize) -> Rect {
+    let (col, row) = ((i % EYE_COLS) as f32, (i / EYE_COLS) as f32);
+    (ctrl.0 + col * (EYE_TILE.0 + EYE_GAP), ctrl.1 + row * (EYE_TILE.1 + EYE_GAP), EYE_TILE.0, EYE_TILE.1)
+}
+
+/// The tile under (`x`, `y`), if any.
+pub(super) fn eye_tile_at(ctrl: Rect, x: f32, y: f32) -> Option<usize> {
+    (0..EyeStyle::ALL.len()).find(|&i| inside(eye_tile(ctrl, i), x, y))
 }
 
 /// The height of the calendar preview card.

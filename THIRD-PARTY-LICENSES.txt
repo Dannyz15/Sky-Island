@@ -24,7 +24,7 @@ cfg-if 1.0.5  [MIT OR Apache-2.0]  https://github.com/rust-lang/cfg-if
 const-oid 0.10.2  [Apache-2.0 OR MIT]  https://github.com/RustCrypto/formats
 core_maths 0.1.1  [MIT]  https://github.com/robertbastian/core_maths
 cpufeatures 0.3.1  [MIT OR Apache-2.0]  https://github.com/RustCrypto/utils
-crc32fast 1.5.3  [MIT OR Apache-2.0]  https://github.com/srijs/rust-crc32fast
+crc32fast 1.5.4  [MIT OR Apache-2.0]  https://github.com/srijs/rust-crc32fast
 crossbeam-channel 0.5.17  [MIT OR Apache-2.0]  https://github.com/crossbeam-rs/crossbeam
 crossbeam-utils 0.8.23  [MIT OR Apache-2.0]  https://github.com/crossbeam-rs/crossbeam
 crypto-common 0.2.2  [MIT OR Apache-2.0]  https://github.com/RustCrypto/traits
@@ -87,8 +87,8 @@ typenum 1.20.1  [MIT OR Apache-2.0]  https://github.com/paholg/typenum
 unicode-ident 1.0.27  [(MIT OR Apache-2.0) AND Unicode-3.0]  https://github.com/dtolnay/unicode-ident
 unicode-segmentation 1.13.3  [MIT OR Apache-2.0]  https://github.com/unicode-rs/unicode-segmentation
 untrusted 0.9.0  [ISC]  https://github.com/briansmith/untrusted
-ureq 3.5.0  [MIT OR Apache-2.0]  https://github.com/algesten/ureq
-ureq-proto 0.6.5  [MIT OR Apache-2.0]  https://github.com/algesten/ureq-proto
+ureq 3.5.1  [MIT OR Apache-2.0]  https://github.com/algesten/ureq
+ureq-proto 0.7.1  [MIT OR Apache-2.0]  https://github.com/algesten/ureq-proto
 utf8-zero 0.8.1  [MIT OR Apache-2.0]  https://github.com/algesten/utf8-zero
 webpki-roots 1.0.11  [CDLA-Permissive-2.0]  https://github.com/rustls/webpki-roots
 windows 0.62.2  [MIT OR Apache-2.0]  https://github.com/microsoft/windows-rs
@@ -1375,7 +1375,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-Used by: crc32fast 1.5.3, dpi 0.1.2, winit 0.30.13
+Used by: crc32fast 1.5.4, dpi 0.1.2, winit 0.30.13
 ================================================================================
 
 Apache License
@@ -1581,7 +1581,7 @@ Apache License
    limitations under the License.
 
 ================================================================================
-Used by: crc32fast 1.5.3
+Used by: crc32fast 1.5.4
 ================================================================================
 
 MIT License
@@ -5674,7 +5674,7 @@ Used by: untrusted 0.9.0
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ================================================================================
-Used by: ureq 3.5.0, ureq-proto 0.6.5, zeroize 1.9.1, zune-core 0.5.3, zune-jpeg 0.5.15
+Used by: ureq 3.5.1, ureq-proto 0.7.1, zeroize 1.9.1, zune-core 0.5.3, zune-jpeg 0.5.15
 ================================================================================
 
 Apache License
@@ -5880,7 +5880,7 @@ Apache License
    limitations under the License.
 
 ================================================================================
-Used by: ureq 3.5.0
+Used by: ureq 3.5.1
 ================================================================================
 
 MIT License
@@ -5906,7 +5906,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-Used by: ureq-proto 0.6.5
+Used by: ureq-proto 0.7.1
 ================================================================================
 
 Copyright 2022 Martin Algesten

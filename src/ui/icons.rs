@@ -263,8 +263,11 @@ pub(crate) fn draw_ears(pm: &mut Pixmap, ear: f32) {
 /// The colour of the eyes (and of their sleepy and happy faces) in a style.
 pub(crate) fn eye_colour(style: EyeStyle) -> [u8; 3] {
     match style {
-        EyeStyle::Classic | EyeStyle::Dots => [255, 255, 255],
+        EyeStyle::Classic | EyeStyle::Dots | EyeStyle::Sleepy | EyeStyle::Happy | EyeStyle::Anime => [255, 255, 255],
         EyeStyle::Cat => [255, 196, 80],
         EyeStyle::Glow => [110, 175, 255],
+        EyeStyle::Heart => [255, 110, 150],
+        EyeStyle::Sparkle => [255, 226, 120],
+        EyeStyle::Robot => [100, 255, 160],
     }
 }

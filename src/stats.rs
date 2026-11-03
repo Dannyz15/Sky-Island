@@ -3,11 +3,13 @@
 //! nothing runs while it is closed.
 
 use std::collections::VecDeque;
+use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::FILETIME;
 use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
-use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives};
+use windows::Win32::System::Diagnostics::Debug::{SEM_FAILCRITICALERRORS, SetThreadErrorMode};
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows::Win32::System::Threading::GetSystemTimes;
 use windows::core::PCWSTR;
@@ -18,18 +20,32 @@ pub const EVERY: Duration = Duration::from_secs(1);
 pub const FIRST_AGAIN: Duration = Duration::from_millis(400);
 /// How many seconds of the processor's history are kept for the graph.
 pub const HISTORY: usize = 60;
-/// The disk is looked at this often (it hardly changes).
+/// The disks are looked at this often (they hardly change; a drive plugged in shows up within this time).
 const DISK_EVERY: Duration = Duration::from_secs(15);
+/// The most drives that are listed, so the notch does not grow without end.
+pub const MAX_DRIVES: usize = 6;
+
+/// What `GetDriveTypeW` says for a hard disk or SSD and for a USB stick or card reader.
+const DRIVE_REMOVABLE: u32 = 2;
+const DRIVE_FIXED: u32 = 3;
+
+/// One drive: its letter, and the space in use and in all, in bytes.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Drive {
+    pub letter: char,
+    pub used: u64,
+    pub total: u64,
+}
 
 /// What the last look found. `None` where it needs a second look or Windows would not say.
-#[derive(Clone, Copy, PartialEq, Debug, Default)]
+#[derive(Clone, PartialEq, Debug, Default)]
 pub struct Sample {
     /// How busy the processor was since the look before: 0.0 to 1.0.
     pub cpu: Option<f32>,
     /// Memory in use and in all, in bytes.
     pub memory: Option<(u64, u64)>,
-    /// Disk in use and in all, in bytes (the drive Windows is on).
-    pub disk: Option<(u64, u64)>,
+    /// The drives that are there (hard disks, SSDs and USB sticks with a disk in), in the order of their letters.
+    pub disks: Vec<Drive>,
     /// Bytes a second received and sent, over the network adapters that are really there.
     pub network: Option<(f64, f64)>,
 }
@@ -41,6 +57,11 @@ pub struct Stats {
     pub history: VecDeque<f32>,
     /// Whether at least one look has been taken.
     pub started: bool,
+    /// Whether the drives have been looked at yet (until then the view shows nothing for them rather than "not available").
+    pub disks_known: bool,
+    /// The look at the drives that is under way on its own thread: a disk that has spun down can take seconds to
+    /// answer, and the notch must not wait for it.
+    pending: Option<Receiver<Vec<Drive>>>,
     prev_cpu: Option<(u64, u64)>,
     prev_net: Option<(u64, u64, Instant)>,
     disk_at: Option<Instant>,
@@ -82,9 +103,20 @@ impl Stats {
             self.feed_cpu(idle, total);
         }
         self.last.memory = memory();
-        if self.disk_at.is_none_or(|at| now.saturating_duration_since(at) >= DISK_EVERY) {
+        if let Some(rx) = &self.pending
+            && let Ok(found) = rx.try_recv()
+        {
+            self.last.disks = found;
+            self.disks_known = true;
+            self.pending = None;
+        }
+        if self.pending.is_none() && self.disk_at.is_none_or(|at| now.saturating_duration_since(at) >= DISK_EVERY) {
             self.disk_at = Some(now);
-            self.last.disk = disk();
+            let (tx, rx) = channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(drives());
+            });
+            self.pending = Some(rx);
         }
         if let Some((received, sent)) = network_totals() {
             self.feed_net(received, sent, now);
@@ -118,14 +150,36 @@ fn memory() -> Option<(u64, u64)> {
     (info.ullTotalPhys > 0).then(|| (info.ullTotalPhys.saturating_sub(info.ullAvailPhys), info.ullTotalPhys))
 }
 
-/// Space in use and in all on the drive Windows is on, in bytes.
-fn disk() -> Option<(u64, u64)> {
-    let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
-    let root: Vec<u16> = format!("{drive}\\").encode_utf16().chain(std::iter::once(0)).collect();
-    let (mut free, mut total) = (0u64, 0u64);
-    // SAFETY: a NUL-terminated path and two valid pointers.
-    unsafe { GetDiskFreeSpaceExW(PCWSTR(root.as_ptr()), Some(&mut free), Some(&mut total), None).ok()? };
-    (total > 0).then(|| (total.saturating_sub(free), total))
+/// The drives with a disk in: fixed ones and removable ones (USB sticks, card readers), not network drives or
+/// CD drives. An empty card reader is skipped, without Windows asking anyone to insert a disk.
+fn drives() -> Vec<Drive> {
+    let mut found = Vec::new();
+    let mut before = Default::default();
+    // SAFETY: plain Windows calls; the error mode of this thread is put back at the end.
+    unsafe {
+        let _ = SetThreadErrorMode(SEM_FAILCRITICALERRORS, Some(&mut before));
+        let letters = GetLogicalDrives();
+        for i in 0..26u32 {
+            if letters & (1 << i) == 0 {
+                continue;
+            }
+            let letter = (b'A' + i as u8) as char;
+            let root: Vec<u16> = format!("{letter}:\\").encode_utf16().chain(std::iter::once(0)).collect();
+            let kind = GetDriveTypeW(PCWSTR(root.as_ptr()));
+            if kind != DRIVE_FIXED && kind != DRIVE_REMOVABLE {
+                continue;
+            }
+            let (mut free, mut total) = (0u64, 0u64);
+            if GetDiskFreeSpaceExW(PCWSTR(root.as_ptr()), Some(&mut free), Some(&mut total), None).is_ok() && total > 0 {
+                found.push(Drive { letter, used: total.saturating_sub(free), total });
+                if found.len() == MAX_DRIVES {
+                    break;
+                }
+            }
+        }
+        let _ = SetThreadErrorMode(before, None);
+    }
+    found
 }
 
 /// Bytes received and sent so far by the network adapters that are really there and up (not the loopback, and not
@@ -222,12 +276,30 @@ mod tests {
     }
 
     #[test]
+    fn the_drives_arrive_from_their_own_thread_without_the_look_waiting() {
+        let mut s = Stats::default();
+        let start = Instant::now();
+        s.sample(start);
+        assert!(!s.disks_known || !s.last.disks.is_empty());
+        // The answer comes a moment later; look again until it is there (at most a few seconds).
+        let mut tries = 0;
+        while !s.disks_known && tries < 200 {
+            std::thread::sleep(Duration::from_millis(20));
+            s.sample(start + Duration::from_millis(20 * tries));
+            tries += 1;
+        }
+        assert!(s.disks_known && !s.last.disks.is_empty(), "the drives were found");
+    }
+
+    #[test]
     fn this_pc_answers_the_questions() {
         // Real calls, so only what is true on any Windows PC: memory and disk exist, and the processor times grow.
         let (used, total) = memory().expect("memory");
         assert!(total > used && used > 0);
-        let (used, total) = disk().expect("disk");
-        assert!(total >= used && total > 0);
+        let disks = drives();
+        assert!(!disks.is_empty() && disks.len() <= MAX_DRIVES, "at least the drive Windows is on");
+        assert!(disks.iter().all(|d| d.total >= d.used && d.total > 0));
+        assert!(disks.windows(2).all(|w| w[0].letter < w[1].letter), "in the order of their letters");
         let (idle, all) = system_times().expect("times");
         assert!(all >= idle && all > 0);
         assert!(network_totals().is_some());

@@ -91,10 +91,33 @@ pub enum EyeStyle {
     Cat,
     /// Glowing blue pills.
     Glow,
+    /// White half-closed eyes, as if about to nod off.
+    Sleepy,
+    /// Happy arcs, as if smiling.
+    Happy,
+    /// Pink hearts.
+    Heart,
+    /// Yellow four-point sparkles.
+    Sparkle,
+    /// Green squares, like a robot's display.
+    Robot,
+    /// Big white eyes with a violet iris.
+    Anime,
 }
 
 impl EyeStyle {
-    pub const ALL: [EyeStyle; 4] = [EyeStyle::Classic, EyeStyle::Dots, EyeStyle::Cat, EyeStyle::Glow];
+    pub const ALL: [EyeStyle; 10] = [
+        EyeStyle::Classic,
+        EyeStyle::Dots,
+        EyeStyle::Cat,
+        EyeStyle::Glow,
+        EyeStyle::Sleepy,
+        EyeStyle::Happy,
+        EyeStyle::Heart,
+        EyeStyle::Sparkle,
+        EyeStyle::Robot,
+        EyeStyle::Anime,
+    ];
 
     fn name(self) -> &'static str {
         match self {
@@ -102,6 +125,12 @@ impl EyeStyle {
             EyeStyle::Dots => "dots",
             EyeStyle::Cat => "cat",
             EyeStyle::Glow => "glow",
+            EyeStyle::Sleepy => "sleepy",
+            EyeStyle::Happy => "happy",
+            EyeStyle::Heart => "heart",
+            EyeStyle::Sparkle => "sparkle",
+            EyeStyle::Robot => "robot",
+            EyeStyle::Anime => "anime",
         }
     }
 
@@ -262,6 +291,12 @@ pub struct Settings {
     pub size: NotchSize,
     /// A smaller closed notch while nothing is playing.
     pub minimal: bool,
+    /// The album cover and moving bars on the closed notch while a song plays.
+    pub closed_music: bool,
+    /// The parts of it, each can be turned off: the moving bars, the turning of the record, the glowing line along the edge.
+    pub closed_bars: bool,
+    pub closed_spin: bool,
+    pub closed_edge: bool,
     /// The notch opens when it is clicked instead of when the mouse rests on it.
     pub open_on_click: bool,
     /// The calendar's weeks start on Monday (otherwise Sunday), and it shows one week instead of a month.
@@ -324,7 +359,11 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { hide_fullscreen: true, show_clock: true, clock_24h: false, eyes: false, idle_eyes: true, eye_style: EyeStyle::Classic, size: NotchSize::Auto, minimal: false,
+        Self { hide_fullscreen: true, show_clock: true, clock_24h: false, eyes: false, idle_eyes: true, eye_style: EyeStyle::Glow, size: NotchSize::Auto, minimal: false,
+            closed_music: true,
+            closed_bars: true,
+            closed_spin: true,
+            closed_edge: true,
             open_on_click: false,
             week_monday: true,
             calendar_week: false,
@@ -383,7 +422,7 @@ macro_rules! on_off_settings {
 }
 
 on_off_settings!(
-    hide_fullscreen, show_clock, clock_24h, eyes, idle_eyes, minimal, open_on_click, week_monday, calendar_week,
+    hide_fullscreen, show_clock, clock_24h, eyes, idle_eyes, minimal, closed_music, closed_bars, closed_spin, closed_edge, open_on_click, week_monday, calendar_week,
     empty_shelf, hud_volume, hud_brightness, hud_lock, hud_battery, hud_network, hud_audio, hud_update, sound, clipboard,
     hide_island, water, timer, weather, fahrenheit, prayer, hud_prayer, asr_hanafi, hotkey, tab_music, tab_stats, tab_shelf, tab_todo, tab_calendar,
     tab_clipboard,
@@ -542,6 +581,10 @@ mod tests {
             screen: Screen::All,
             size: NotchSize::X130,
             minimal: true,
+            closed_music: false,
+            closed_bars: false,
+            closed_spin: false,
+            closed_edge: false,
             open_on_click: true,
             week_monday: false,
             calendar_week: true,
@@ -601,6 +644,14 @@ mod tests {
         assert_eq!(Settings::from_json(&wrong), defaults);
         // Numbers are held to their range.
         assert_eq!(Settings::from_json(&json!({ "volume": 5000 })).volume, VOLUME.max);
+    }
+
+    #[test]
+    fn the_eyes_are_glowing_unless_another_style_was_saved() {
+        assert_eq!(Settings::default().eye_style, EyeStyle::Glow);
+        assert_eq!(Settings::from_json(&json!({})).eye_style, EyeStyle::Glow);
+        // A style that was chosen and saved before stays.
+        assert_eq!(Settings::from_json(&json!({ "eye_style": "classic" })).eye_style, EyeStyle::Classic);
     }
 
     #[test]

@@ -136,6 +136,10 @@ struct App {
     /// 0.0 = player height, 1.0 = lyrics height
     view_t: f64,
     view_v: f64,
+    /// How much taller than normal the open notch is for what is in its view (the Stats view with many drives), in
+    /// logical pixels, and how fast that is changing.
+    grow_t: f64,
+    grow_v: f64,
     lyrics: LyricsState,
     lyrics_key: String,
     /// The song length the lyrics were looked up with, and whether they were looked up again once a
@@ -219,8 +223,18 @@ struct App {
     /// The window is hidden because a full-screen app is in front.
     hidden: bool,
     greeting_until: Option<Instant>,
+    /// The closed notch shows the eyes until then, after an Eye style is picked in the settings window.
+    eye_preview_until: Option<Instant>,
     next_blink: Instant,
-    blink_until: Option<Instant>,
+    /// When the blink in progress began (it lasts `eyes::blink_len`), if the eyes are blinking.
+    blink_since: Option<Instant>,
+    /// Where the eyes look now, how fast that is changing, and where they are turning to (across, down; -1 to 1).
+    look: (f64, f64),
+    look_v: (f64, f64),
+    look_goal: (f64, f64),
+    /// When the eyes next look somewhere without a blink, and how many times they have.
+    next_glance: Instant,
+    glances: u32,
     blink_count: u32,
     next_zz: Instant,
     zz_frame: bool,
@@ -230,6 +244,14 @@ struct App {
     alert_until: Option<Instant>,
     alert_msg: String,
     last_ui_tick: Instant,
+    /// How wide the closed notch is for the album cover and bars (0 = plain, 1 = with them), and how fast that changes;
+    /// and when the moving bars were last drawn.
+    music_k: f64,
+    music_v: f64,
+    /// How much wider than usual the closed notch is for them, in logical pixels, and how fast that changes.
+    music_w: f64,
+    music_wv: f64,
+    bars_at: Instant,
     proxy: EventLoopProxy<UserEvent>,
     cursor: (f64, f64),
     hovered: bool,
@@ -342,6 +364,8 @@ impl App {
             view: View::Player,
             view_t: 0.0,
             view_v: 0.0,
+            grow_t: 0.0,
+            grow_v: 0.0,
             lyrics: LyricsState::None,
             lyrics_key: String::new(),
             lyrics_duration: Duration::ZERO,
@@ -404,8 +428,14 @@ impl App {
             monitor_area: None,
             hidden: false,
             greeting_until: None,
+            eye_preview_until: None,
             next_blink: Instant::now(),
-            blink_until: None,
+            blink_since: None,
+            look: (0.0, 0.0),
+            look_v: (0.0, 0.0),
+            look_goal: (0.0, 0.0),
+            next_glance: Instant::now(),
+            glances: 0,
             blink_count: 0,
             next_zz: Instant::now(),
             zz_frame: false,
@@ -414,6 +444,11 @@ impl App {
             alert_until: None,
             alert_msg: String::new(),
             last_ui_tick: Instant::now(),
+            music_k: 0.0,
+            music_v: 0.0,
+            music_w: 0.0,
+            music_wv: 0.0,
+            bars_at: Instant::now(),
             proxy,
             cursor: (0.0, 0.0),
             hovered: false,
