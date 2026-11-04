@@ -226,11 +226,15 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             UserEvent::Media(state) => {
+                // An empty timeline that a player sends for a moment after a seek must not throw the lyrics to the top.
+                let state = state.keep_timeline(&self.media, self.position(), self.seeked);
                 let key = format!("{}|{}", state.title, state.artist);
                 if !state.has_session || state.title.is_empty() {
                     self.lyrics_key.clear();
                     self.lyrics = LyricsState::None;
+                    self.seeked = false;
                 } else if key != self.lyrics_key {
+                    self.seeked = false;
                     self.lyrics_key = key.clone();
                     self.lyrics = LyricsState::Loading;
                     self.lyric_manual = None;
@@ -342,6 +346,7 @@ impl ApplicationHandler<UserEvent> for App {
                     if let Some(handle) = &self.media_handle {
                         handle.send(Command::Seek(at));
                     }
+                    self.seeked = true;
                     // Show the jump immediately instead of waiting for the player to report it.
                     self.media.position = at;
                     self.media_at = Instant::now();

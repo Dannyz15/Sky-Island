@@ -220,8 +220,10 @@ impl App {
                 p.drag_bar_to(y);
                 let (cx, drag, page, frame) = (p.cursor.0, p.drag, p.page, frame_for(p.logical_size().0));
                 p.redraw();
-                if let Some(slide) = drag {
-                    let lay = layout(page, frame);
+                if let Some(slide) = drag
+                    && let Some(p) = &self.panel
+                {
+                    let lay = self.layout_of(p, page, frame);
                     if let Some(item) = lay.items.iter().find(|i| matches!(i.kind, Kind::Slider(k) if k == slide)) {
                         let v = slider_value(range_of(slide), item.ctrl, cx);
                         self.slider_set(slide, v);
@@ -282,7 +284,7 @@ impl App {
                 }
                 let cy = cy + p.scroll_shown;
                 let page = p.page;
-                let lay = layout(page, frame);
+                let lay = self.layout_of(p, page, frame);
                 let Some(item) = lay.items.iter().find(|i| match i.kind {
                     Kind::Slider(_) => inside((i.ctrl.0 - 8.0, i.row.1, SLIDER_W + 16.0, i.row.3), cx, cy),
                     Kind::Seg(_) | Kind::Pick | Kind::Text(_) | Kind::Cycle(_) | Kind::Button(_) | Kind::EyeGrid => inside(i.ctrl, cx, cy),
@@ -296,9 +298,13 @@ impl App {
                         let _ = std::process::Command::new("explorer").arg(url).spawn();
                     }
                     Kind::Toggle(t) => self.toggle(t),
-                    Kind::Cycle(Stepper::Method) => {
+                    Kind::Cycle(stepper) => {
                         // The left third steps back; the rest steps forward.
-                        self.step_method(if cx < item.ctrl.0 + item.ctrl.2 / 3.0 { -1 } else { 1 });
+                        let delta = if cx < item.ctrl.0 + item.ctrl.2 / 3.0 { -1 } else { 1 };
+                        match stepper {
+                            Stepper::Method => self.step_method(delta),
+                            Stepper::Zone => self.step_zone(delta),
+                        }
                     }
                     Kind::Text(Field::Hotkey) => {
                         if let Some(p) = &mut self.panel {

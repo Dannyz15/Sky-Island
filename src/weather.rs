@@ -1,6 +1,6 @@
-//! The weather and the place it is for. Both come from Open-Meteo (open-meteo.com: no account, no key). A
-//! city the user types is looked up once and its coordinates are kept; the forecast for those coordinates is
-//! fetched on a background thread, kept in `weather.json` so the tab has something to show at once and when
+//! The weather and the place it is for. The forecast comes from Open-Meteo (open-meteo.com: no account, no key); a
+//! city the user types is found by OpenStreetMap's Nominatim. The city is looked up once and its coordinates are
+//! kept; the forecast for those coordinates is fetched on a background thread, kept in `weather.json` so the tab has something to show at once and when
 //! offline, and shown in the Weather tab.
 
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -13,7 +13,9 @@ use winit::event_loop::EventLoopProxy;
 use crate::{UserEvent, store};
 
 const FORECAST: &str = "https://api.open-meteo.com/v1/forecast";
-const GEOCODING: &str = "https://geocoding-api.open-meteo.com/v1/search";
+/// OpenStreetMap's Nominatim, which finds a typed city (no account, no key; its rules ask for a real User-Agent and
+/// no more than a search a second, and a search is only made when the user presses Enter).
+const SEARCH: &str = "https://nominatim.openstreetmap.org/search";
 /// Where the user's internet connection seems to be. Asked only when the user presses Detect.
 const WHERE_AM_I: &str = "https://ipwho.is/";
 /// How often the forecast is fetched again while the Weather tab is on.
@@ -306,18 +308,25 @@ fn search(query: &str) -> Result<Place, SearchError> {
     if name.is_empty() {
         return Err(SearchError::NotFound);
     }
-    let json = agent()
-        .get(GEOCODING)
-        .header("User-Agent", user_agent())
-        .query("name", name)
-        .query("count", "10")
-        .query("language", "en")
-        .query("format", "json")
-        .call()
-        .ok()
-        .and_then(|mut r| r.body_mut().read_json::<Value>().ok())
-        .ok_or(SearchError::Offline)?;
-    pick_place(&json, query).ok_or(SearchError::NotFound)
+    let (_, hint) = split_query(query);
+    // "Johor Bahru, MY": two letters after the comma are a country code. Anything else after a comma ("Springfield,
+    // Illinois") is left in the text, which Nominatim reads as it is.
+    let country = hint.len() == 2 && hint.chars().all(|c| c.is_ascii_alphabetic());
+    let mut call = agent()
+        .get(SEARCH)
+        // Nominatim's rules ask for a User-Agent that says which app is asking and where to reach its makers.
+        .header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION"), " (https://github.com/Dannyz15/Sky-Island)"))
+        .query("q", if country { name } else { query.trim() })
+        .query("format", "jsonv2")
+        .query("addressdetails", "1")
+        .query("featuretype", "settlement")
+        .query("limit", "5")
+        .query("accept-language", "en");
+    if country {
+        call = call.query("countrycodes", &hint);
+    }
+    let json = call.call().ok().and_then(|mut r| r.body_mut().read_json::<Value>().ok()).ok_or(SearchError::Offline)?;
+    place_from_search(&json).ok_or(SearchError::NotFound)
 }
 
 /// What was typed, as the name to search for and what the user added after a comma to say which one they mean:
@@ -328,21 +337,21 @@ fn split_query(query: &str) -> (&str, String) {
     (name, parts.next().unwrap_or("").trim().to_lowercase())
 }
 
-/// The city the user meant among the search results (Open-Meteo lists the biggest first): the first one, or the
-/// first that matches the country or region typed after a comma.
-fn pick_place(json: &Value, query: &str) -> Option<Place> {
-    let (_, hint) = split_query(query);
-    let text = |r: &Value, k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-    let matches = |r: &Value| {
-        hint.is_empty()
-            || ["country", "country_code", "admin1", "admin2"].iter().any(|k| {
-                let v = text(r, k).to_lowercase();
-                !v.is_empty() && (v == hint || (hint.len() >= 3 && v.contains(&hint)))
-            })
-    };
-    let result = json.get("results")?.as_array()?.iter().find(|r| matches(r))?;
-    let label = label(&text(result, "name"), &text(result, "admin1"), &text(result, "country"));
-    Place::from_json(&json!({ "name": label, "lat": result.get("latitude")?, "lon": result.get("longitude")?, "tz": text(result, "timezone"), "cc": text(result, "country_code") }))
+/// The city the user meant: the first of Nominatim's results (it lists the most important first). Nominatim does not
+/// say which time zone a place is in, so that is left empty, as it is for a place found by Windows Location.
+fn place_from_search(json: &Value) -> Option<Place> {
+    let result = json.as_array()?.first()?;
+    let number = |k: &str| result.get(k).and_then(|v| v.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| v.as_f64()));
+    let address = result.get("address");
+    let text = |k: &str| address.and_then(|a| a.get(k)).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    // The city's own name from the address, else what the result is called.
+    let city = ["city", "town", "municipality", "village", "suburb", "city_district", "county"]
+        .iter()
+        .map(|k| text(k))
+        .find(|t| !t.is_empty())
+        .unwrap_or_else(|| result.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string());
+    let name = label(&city, &text("state"), &text("country"));
+    Place::from_json(&json!({ "name": name, "lat": number("lat")?, "lon": number("lon")?, "tz": "", "cc": text("country_code").to_ascii_uppercase() }))
 }
 
 /// "Springfield, Illinois, United States": the city, then its region and country, leaving out what repeats.
@@ -460,28 +469,39 @@ mod tests {
     }
 
     fn results() -> Value {
-        json!({ "results": [
-            { "name": "Springfield", "latitude": 39.8, "longitude": -89.6, "country": "United States", "country_code": "US", "admin1": "Illinois", "timezone": "America/Chicago" },
-            { "name": "Springfield", "latitude": 42.1, "longitude": -72.6, "country": "United States", "country_code": "US", "admin1": "Massachusetts", "timezone": "America/New_York" },
-            { "name": "Springfield", "latitude": 51.7, "longitude": 0.5, "country": "United Kingdom", "country_code": "GB", "admin1": "England", "timezone": "Europe/London" },
-        ] })
+        json!([
+            { "name": "Springfield", "lat": "39.7990175", "lon": "-89.6439575", "type": "city",
+              "address": { "city": "Springfield", "county": "Sangamon County", "state": "Illinois", "country": "United States", "country_code": "us" } },
+            { "name": "Springfield", "lat": "42.1015", "lon": "-72.5898", "type": "city",
+              "address": { "city": "Springfield", "state": "Massachusetts", "country": "United States", "country_code": "us" } },
+        ])
     }
 
     #[test]
     fn the_first_result_is_the_city() {
-        let p = pick_place(&results(), "Springfield").unwrap();
+        let p = place_from_search(&results()).unwrap();
         assert_eq!(p.name, "Springfield, Illinois, United States");
-        assert_eq!((p.tz.as_str(), p.cc.as_str()), ("America/Chicago", "US"));
-        assert!(p.same_spot(39.8, -89.6));
+        assert_eq!((p.tz.as_str(), p.cc.as_str()), ("", "US"), "Nominatim gives no time zone");
+        assert!(p.same_spot(39.7990175, -89.6439575));
     }
 
     #[test]
-    fn a_word_after_a_comma_picks_the_region_or_country() {
-        assert_eq!(pick_place(&results(), "Springfield, Massachusetts").unwrap().tz, "America/New_York");
-        assert_eq!(pick_place(&results(), "springfield, gb").unwrap().tz, "Europe/London");
-        assert_eq!(pick_place(&results(), "Springfield, United Kingdom").unwrap().tz, "Europe/London");
-        assert!(pick_place(&results(), "Springfield, Narnia").is_none());
-        assert!(pick_place(&json!({}), "x").is_none(), "no results");
+    fn a_result_without_a_city_in_its_address_is_named_by_the_result() {
+        let v = json!([{ "name": "Kajang", "lat": "2.99", "lon": "101.79", "address": { "state": "Selangor", "country": "Malaysia", "country_code": "my" } }]);
+        let p = place_from_search(&v).unwrap();
+        assert_eq!((p.name.as_str(), p.cc.as_str()), ("Kajang, Selangor, Malaysia", "MY"));
+        // A town or a village counts as the city too.
+        let town = json!([{ "name": "x", "lat": 2.0, "lon": 3.0, "address": { "town": "Gombak", "country": "Malaysia", "country_code": "my" } }]);
+        assert_eq!(place_from_search(&town).unwrap().name, "Gombak, Malaysia");
+    }
+
+    #[test]
+    fn nothing_found_or_nothing_usable_is_no_place() {
+        assert!(place_from_search(&json!([])).is_none(), "no results");
+        assert!(place_from_search(&json!({})).is_none(), "not a list");
+        assert!(place_from_search(&json!([{ "name": "X", "lat": "x", "lon": "1" }])).is_none(), "no coordinates");
+        assert!(place_from_search(&json!([{ "name": "X", "lat": "95", "lon": "1" }])).is_none(), "not on Earth");
+        assert!(place_from_search(&json!([{ "lat": "1", "lon": "1" }])).is_none(), "no name");
     }
 
     #[test]
@@ -501,8 +521,9 @@ mod tests {
 
     #[test]
     fn a_name_that_repeats_its_region_is_not_said_twice() {
-        let v = json!({ "results": [{ "name": "Kuala Lumpur", "latitude": 3.1412, "longitude": 101.69, "country": "Malaysia", "admin1": "Kuala Lumpur", "timezone": "Asia/Kuala_Lumpur" }] });
-        assert_eq!(pick_place(&v, "Kuala Lumpur").unwrap().name, "Kuala Lumpur, Malaysia");
+        let v = json!([{ "name": "Kuala Lumpur", "lat": "3.1516964", "lon": "101.6942371",
+            "address": { "city": "Kuala Lumpur", "state": "Kuala Lumpur", "country": "Malaysia", "country_code": "my" } }]);
+        assert_eq!(place_from_search(&v).unwrap().name, "Kuala Lumpur, Malaysia");
     }
 
     #[test]

@@ -190,7 +190,7 @@ impl App {
 
         // Put the notch in the middle of the window and add the flares on both sides of its top edge.
         let Some(mut out) = Pixmap::new(full_w.get(), h.get()) else { return };
-        out.draw_pixmap(ear as i32, 0, pixmap.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+        gfx::blit_over(&mut out, &pixmap, ear as i32, 0);
         draw_ears(&mut out, ear);
 
         let Some(surface) = self.surface.as_mut() else { return };
@@ -322,7 +322,7 @@ impl App {
     fn draw_view(&self, pm: &mut Pixmap, s: f32, alpha: f32, view: View) {
         let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return };
         self.draw_view_in_place(&mut layer, s, alpha, view);
-        pm.draw_pixmap(0, -(TAB_SHIFT * s).round() as i32, layer.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+        gfx::blit_over(pm, &layer, 0, -(TAB_SHIFT * s).round() as i32);
     }
 
     fn draw_view_in_place(&self, pm: &mut Pixmap, s: f32, alpha: f32, view: View) {

@@ -51,14 +51,39 @@ pub struct MediaState {
     pub art: Option<Vec<u8>>,
     pub has_session: bool,
     pub next_enabled: bool,
+    /// Whether the player lets other programs move the song (see `seek_allowed`).
+    pub can_seek: bool,
+}
+
+/// Whether a click on the bar or on a lyric line can move the song. Apple Music says it cannot ("position can
+/// be set" is false) and ignores the jump, so the song would carry on where it was and the lyrics would go back
+/// to it. A player that has not given a length yet (Firefox, for a moment) is given the benefit of the doubt.
+fn seek_allowed(position_enabled: bool, duration: Duration) -> bool {
+    position_enabled || duration.is_zero()
 }
 
 impl MediaState {
+    /// Chrome (YouTube) and Firefox answer with an empty timeline, a length of 0 and a position that only counts up
+    /// from a stale moment, for a while after a seek while the song is still the same. Taken as it is, the
+    /// position would drop to the start, and the lyrics would glide to the top right after a line was clicked.
+    /// So an empty timeline for the song that is already showing keeps the position it has (`shown`) and its
+    /// length, when the player gave a real timeline before or Sky Island has just moved the song itself
+    /// (`seeked`); everything else is taken from `self`. (A player that never gives a length, and has not
+    /// been seeked from here, is believed: its position is all there is.)
+    pub fn keep_timeline(self, old: &MediaState, shown: Duration, seeked: bool) -> MediaState {
+        let empty = self.has_session && self.duration.is_zero();
+        let same_song = (&self.title, &self.artist) == (&old.title, &old.artist);
+        if empty && same_song && (!old.duration.is_zero() || seeked) {
+            return MediaState { position: shown, duration: old.duration, ..self };
+        }
+        self
+    }
+
     /// Nothing the UI shows differs between the two.
     fn same_as(&self, o: &MediaState) -> bool {
         (&self.title, &self.artist, &self.album, self.playing, self.position, self.duration)
             == (&o.title, &o.artist, &o.album, o.playing, o.position, o.duration)
-            && (self.has_session, self.next_enabled, &self.art) == (o.has_session, o.next_enabled, &o.art)
+            && (self.has_session, self.next_enabled, self.can_seek, &self.art) == (o.has_session, o.next_enabled, o.can_seek, &o.art)
     }
 }
 
@@ -272,6 +297,7 @@ fn read_state(session: &Session, reuse: Option<&MediaState>) -> Result<MediaStat
         art,
         has_session: true,
         next_enabled,
+        can_seek: seek_allowed(info.Controls()?.IsPlaybackPositionEnabled()?, duration),
     })
 }
 
@@ -334,6 +360,68 @@ mod tests {
     fn filetime_now() -> i64 {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         (now.as_nanos() / 100) as i64 + 116_444_736_000_000_000
+    }
+
+    fn song(position: u64, duration: u64) -> MediaState {
+        MediaState {
+            title: "Song".into(),
+            artist: "Artist".into(),
+            has_session: true,
+            playing: true,
+            position: Duration::from_secs(position),
+            duration: Duration::from_secs(duration),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_player_that_cannot_be_moved_is_not_offered_a_jump() {
+        let length = Duration::from_secs(261);
+        assert!(seek_allowed(true, length), "Spotify, Chrome and Firefox");
+        assert!(!seek_allowed(false, length), "Apple Music says no, with a real length");
+        assert!(seek_allowed(false, Duration::ZERO), "no length yet: not judged");
+    }
+
+    #[test]
+    fn an_empty_timeline_for_the_same_song_keeps_the_position_that_is_shown() {
+        let shown = Duration::from_secs(133);
+        let kept = song(0, 0).keep_timeline(&song(133, 230), shown, false);
+        assert_eq!((kept.position, kept.duration), (shown, Duration::from_secs(230)));
+        assert!(kept.playing && kept.has_session && kept.title == "Song", "the rest is what the player said");
+        // Firefox's empty timeline has a small position that counts up from a stale moment.
+        let counting = MediaState { position: Duration::from_millis(529), ..song(0, 0) };
+        assert_eq!(counting.keep_timeline(&song(133, 230), shown, false).position, shown);
+    }
+
+    #[test]
+    fn a_song_moved_from_here_does_not_believe_an_empty_timeline_even_before_a_real_one_came() {
+        let shown = Duration::from_secs(133);
+        // Firefox never gave a length, then a click on a lyric line moved the song: its next empty answer is stale.
+        let first = MediaState { position: Duration::from_millis(22), ..song(0, 0) };
+        let kept = first.keep_timeline(&song(133, 0), shown, true);
+        assert_eq!((kept.position, kept.duration), (shown, Duration::ZERO));
+    }
+
+    #[test]
+    fn a_real_timeline_is_taken_as_it_is() {
+        let shown = Duration::from_secs(133);
+        // A song that restarts has a length; a seek to the start is a real position.
+        let restarted = song(0, 230).keep_timeline(&song(133, 230), shown, true);
+        assert_eq!((restarted.position, restarted.duration), (Duration::ZERO, Duration::from_secs(230)));
+        let moved = song(90, 230).keep_timeline(&song(133, 230), shown, true);
+        assert_eq!(moved.position, Duration::from_secs(90));
+    }
+
+    #[test]
+    fn an_empty_timeline_for_another_song_or_no_song_is_taken_as_it_is() {
+        let shown = Duration::from_secs(133);
+        let mut other = song(0, 0);
+        other.title = "Another song".into();
+        assert_eq!(other.keep_timeline(&song(133, 230), shown, true).duration, Duration::ZERO, "a new song");
+        let gone = MediaState::default().keep_timeline(&song(133, 230), shown, true);
+        assert!(!gone.has_session && gone.duration.is_zero(), "no player at all");
+        // A player that never gave a length, and was not moved from here, is believed: its position is all there is.
+        assert_eq!(song(7, 0).keep_timeline(&song(5, 0), shown, false).position, Duration::from_secs(7));
     }
 
     #[test]

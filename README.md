@@ -61,8 +61,8 @@
 | ⏱️ **Timer** | Countdown to the exact second, with an alarm. |
 | 💧 **Water** | Daily glass counter with optional reminders. |
 | 🌤️ **Weather** | Now and the next five days for your city. |
-| 🕌 **Prayer** | Today's prayer times, a countdown and the Hijri date. |
-| 📊 **Stats** | Processor, memory, every drive and network. |
+| 🕌 **Prayer** | Today's prayer times, a countdown and the Hijri date. In Malaysia they are JAKIM's official times for your zone. |
+| 📊 **Stats** | Gauges for the processor, memory and each graphics chip, a live graph, network speed and every drive. |
 | 📂 **Shelf** | Park files by dragging them in; drag them out later. |
 | ✅ **To-do** | Tasks with reminders. |
 | 📅 **Calendar** | Month or week view with your tasks. |
@@ -138,7 +138,8 @@ Everything is saved in `%APPDATA%\Sky-Island`. The clipboard history is kept in 
 Network requests, and why:
 
 - **Weather:** Open-Meteo, with your city's coordinates.
-- **Prayer times:** Aladhan, with your city's coordinates.
+- **Prayer times:** Aladhan, with your city's coordinates. In Malaysia, JAKIM's e-Solat is asked instead, with only the code of your zone (for example SGR01).
+- **Your city** (only when you type it and press Enter): OpenStreetMap's Nominatim, with the name you typed.
 - **Detect my location** (only when you press it): Windows Location, then OpenStreetMap's Nominatim to name the place. If Windows Location is off, ipwho.is is asked instead and sees your IP address.
 - **Lyrics:** LRCLIB, with the song title, artist and length.
 - **Updates:** GitHub, to look for a newer version at start and every 6 hours (switch off in Settings > Notices). Nothing is downloaded until you press Download.

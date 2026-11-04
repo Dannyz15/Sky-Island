@@ -18,10 +18,13 @@ fn now_secs() -> u32 {
 }
 
 impl App {
-    /// What to ask Aladhan for: the user's city, method and Asr school, while the Prayer tab is on.
+    /// What to ask for: the user's city, method and Asr school (and the e-Solat zone, for that method), while the Prayer
+    /// tab is on.
     fn prayer_request(&self) -> Option<Request> {
         let place = self.settings.place.clone().filter(|_| self.settings.prayer)?;
-        Some(Request { place, method: self.settings.prayer_method, school: u32::from(self.settings.asr_hanafi) })
+        let method = self.settings.prayer_method;
+        let zone = if method == prayer::ESOLAT_METHOD { self.settings.prayer_zone.clone() } else { String::new() };
+        Some(Request { place, method, school: u32::from(self.settings.asr_hanafi), zone })
     }
 
     /// Tell the prayer thread what to follow. Run when the window starts and when the tab, the city or a prayer setting

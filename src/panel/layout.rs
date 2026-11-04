@@ -93,6 +93,8 @@ pub(super) enum Act {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Stepper {
     Method,
+    /// The e-Solat zone (only when that is the method).
+    Zone,
 }
 
 /// The boxes the user types in.
@@ -283,7 +285,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Water tracker", "A daily glass counter with reminders", T(Toggle::Water), ""),
                     ("Weather", "The weather now and the days ahead for your city", T(Toggle::Weather), ""),
                     ("Prayer times", "Today's prayers and the next one for your city", T(Toggle::Prayer), ""),
-                    ("System stats", "Processor, memory, disk and network while the notch is open", T(Toggle::TabStats), ""),
+                    ("System stats", "Processor, memory, graphics, drives and network, with live graphs, while the notch is open", T(Toggle::TabStats), ""),
                     ("Shelf", "A place to park files", T(Toggle::TabShelf), ""),
                     ("To-do", "Tasks with reminders", T(Toggle::TabTodo), ""),
                     ("Calendar", "A month or a week with your tasks", T(Toggle::TabCalendar), ""),
@@ -312,6 +314,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 "Prayer times",
                 vec![
                     ("Method", "How the times are worked out", Cycle(Stepper::Method), ""),
+                    ("Zone", "For JAKIM e-Solat only; Automatic is the zone nearest to your city", Cycle(Stepper::Zone), ""),
                     ("Asr", "How the length of the shadow is counted", S(Seg::Asr), ""),
                 ],
             ),
@@ -390,7 +393,9 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 vec![
                     ("Synced lyrics", "", Link("https://lrclib.net"), "LRCLIB"),
                     ("Weather", "", Link("https://open-meteo.com"), "Open-Meteo"),
+                    ("Places and city search", "", Link("https://www.openstreetmap.org/copyright"), "OpenStreetMap"),
                     ("Prayer times", "", Link("https://aladhan.com"), "Aladhan"),
+                    ("Prayer times in Malaysia", "", Link("https://www.e-solat.gov.my"), "JAKIM e-Solat"),
                     ("Built with", "", Link("https://github.com/Dannyz15/Sky-Island/blob/main/Cargo.toml"), "Rust and open-source crates"),
                 ],
             ),
@@ -446,8 +451,42 @@ impl Layout {
     }
 }
 
-/// Everything on a page, laid out in logical pixels.
+/// Everything on a page, laid out in logical pixels, every line of text on one line.
+#[cfg(test)]
 pub(super) fn layout(page: Page, frame: Frame) -> Layout {
+    layout_with(page, frame, &|_, _, _| 1)
+}
+
+/// The control of a row, inside the row `row` (its left, top, width and height).
+fn ctrl_rect(kind: Kind, btn: &str, row: Rect) -> Rect {
+    let right = row.0 + row.2 - 18.0;
+    let mid = row.1 + row.3 / 2.0;
+    match kind {
+        Kind::Toggle(_) => (right - 40.0, mid - 11.25, 40.0, 22.5),
+        Kind::Seg(seg) => (right - seg_width(seg), mid - 14.0, seg_width(seg), 28.0),
+        Kind::Slider(_) => (right - SLIDER_TEXT_W - 12.0 - SLIDER_W, mid - 2.0, SLIDER_W, 4.0),
+        Kind::Pick => (right - 200.0, mid - 14.0, 200.0, 28.0),
+        // The zone's name is longer than the others, so its control is wider.
+        Kind::Cycle(Stepper::Zone) => (right - 300.0, mid - 14.0, 300.0, 28.0),
+        Kind::Text(_) | Kind::Cycle(_) => (right - 260.0, mid - 14.0, 260.0, 28.0),
+        Kind::Button(_) => {
+            let w = if btn.len() > 12 { 168.0 } else { 104.0 };
+            (right - w, mid - 14.0, w, 28.0)
+        }
+        Kind::Link(_) => (right - 260.0, mid - 14.0, 260.0, 28.0),
+        Kind::EyeGrid => (right - EYE_GRID.0, mid - EYE_GRID.1 / 2.0, EYE_GRID.0, EYE_GRID.1),
+    }
+}
+
+/// The width a row's text has before it reaches the control, in logical pixels.
+pub(super) fn text_room(kind: Kind, btn: &str, frame: Frame) -> f32 {
+    ctrl_rect(kind, btn, (frame.x, 0.0, frame.w, 0.0)).0 - frame.x - 36.0
+}
+
+/// Everything on a page, laid out in logical pixels. `lines` says how many lines the text under a row's label
+/// takes in a given width (the text is what the row shows now, which can differ from the one in the page's
+/// list), and a row grows by a line of text for each one past the first.
+pub(super) fn layout_with(page: Page, frame: Frame, lines: &dyn Fn(Kind, &'static str, f32) -> usize) -> Layout {
     let (mut groups, mut items) = (Vec::new(), Vec::new());
     let mut y = CONTENT_TOP;
     let mut hero = None;
@@ -463,28 +502,15 @@ pub(super) fn layout(page: Page, frame: Frame) -> Layout {
     }
     for (title, rows) in page_spec(page) {
         y += GROUP_LABEL_H;
-        let height: f32 = rows.iter().map(|(_, desc, kind, _)| row_height(desc, *kind)).sum();
+        let heights: Vec<f32> = rows.iter().map(|(_, desc, kind, btn)| row_height(desc, *kind, lines(*kind, desc, text_room(*kind, btn, frame)))).collect();
+        let height: f32 = heights.iter().sum();
         groups.push(Group { title, rect: (frame.x, y, frame.w, height) });
         let mut row_y = y;
         for (i, (label, desc, kind, btn)) in rows.into_iter().enumerate() {
-            let row_h = row_height(desc, kind);
+            let row_h = heights[i];
             let row = (frame.x, row_y, frame.w, row_h);
             row_y += row_h;
-            let right = row.0 + row.2 - 18.0;
-            let mid = row.1 + row_h / 2.0;
-            let ctrl = match kind {
-                Kind::Toggle(_) => (right - 40.0, mid - 11.25, 40.0, 22.5),
-                Kind::Seg(seg) => (right - seg_width(seg), mid - 14.0, seg_width(seg), 28.0),
-                Kind::Slider(_) => (right - SLIDER_TEXT_W - 12.0 - SLIDER_W, mid - 2.0, SLIDER_W, 4.0),
-                Kind::Pick => (right - 200.0, mid - 14.0, 200.0, 28.0),
-                Kind::Text(_) | Kind::Cycle(_) => (right - 260.0, mid - 14.0, 260.0, 28.0),
-                Kind::Button(_) => {
-                    let w = if btn.len() > 12 { 168.0 } else { 104.0 };
-                    (right - w, mid - 14.0, w, 28.0)
-                }
-                Kind::Link(_) => (right - 260.0, mid - 14.0, 260.0, 28.0),
-                Kind::EyeGrid => (right - EYE_GRID.0, mid - EYE_GRID.1 / 2.0, EYE_GRID.0, EYE_GRID.1),
-            };
+            let ctrl = ctrl_rect(kind, btn, row);
             items.push(Item { label, desc, kind, btn, row, ctrl, after_row: i > 0 });
         }
         y += height + GROUP_GAP;
@@ -492,12 +518,16 @@ pub(super) fn layout(page: Page, frame: Frame) -> Layout {
     Layout { groups, items, hero }
 }
 
-/// The height of a row: taller when it has a line of text under its label.
-pub(super) fn row_height(desc: &str, kind: Kind) -> f32 {
+/// The height of a row: taller when it has text under its label, and taller still for each line of that text
+/// past the first (`lines` is how many it takes).
+pub(super) fn row_height(desc: &str, kind: Kind, lines: usize) -> f32 {
     if matches!(kind, Kind::EyeGrid) {
         return EYE_GRID.1 + 28.0;
     }
-    if desc.is_empty() && !matches!(kind, Kind::Button(Act::CheckUpdate)) { 40.0 } else { ROW_H }
+    if desc.is_empty() && !matches!(kind, Kind::Button(Act::CheckUpdate)) {
+        return 40.0;
+    }
+    ROW_H + lines.saturating_sub(1) as f32 * DESC_LINE_H
 }
 
 /// The eye picker: five tiles across and two down, each showing a pair of eyes.

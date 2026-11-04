@@ -341,8 +341,10 @@ pub struct Settings {
     pub tab_clipboard: bool,
     /// Say so on the notch when a prayer time comes (with the Prayer tab on).
     pub hud_prayer: bool,
-    /// Aladhan's number for the calculation method (see `prayer::METHODS`), and the Hanafi way of finding Asr.
+    /// The number of the prayer-time method (Aladhan's, or 100 for JAKIM e-Solat; see `prayer::METHODS`), and the Hanafi way of finding Asr.
     pub prayer_method: u32,
+    /// The JAKIM e-Solat zone chosen by hand, a code such as "SGR01" ("" is the zone nearest to the city).
+    pub prayer_zone: String,
     pub asr_hanafi: bool,
     /// The city the weather and the prayer times are for.
     pub place: Option<Place>,
@@ -391,6 +393,7 @@ impl Default for Settings {
             tab_clipboard: true,
             hud_prayer: true,
             prayer_method: 3,
+            prayer_zone: String::new(),
             asr_hanafi: false,
             place: None,
             theme: ThemeMode::Dark,
@@ -476,6 +479,7 @@ impl Settings {
         {
             (out.hotkey_mods, out.hotkey_vk) = (mods, vk);
         }
+        out.prayer_zone = v.get("prayer_zone").and_then(Value::as_str).filter(|z| crate::zones::find(z).is_some()).unwrap_or("").to_string();
         out.prayer_method = v.get("prayer_method").and_then(Value::as_u64).map_or(out.prayer_method, |m| prayer::known_method(m.min(u32::MAX as u64) as u32));
         out
     }
@@ -501,6 +505,7 @@ impl Settings {
         body.insert("alarm_for".into(), json!(self.alarm_for));
         body.insert("alarm_sound".into(), json!(self.alarm_sound.as_ref().map(|p| p.to_string_lossy().into_owned())));
         body.insert("prayer_method".into(), json!(self.prayer_method));
+        body.insert("prayer_zone".into(), json!(self.prayer_zone));
         body.insert("hotkey_mods".into(), json!(self.hotkey_mods));
         body.insert("hotkey_vk".into(), json!(self.hotkey_vk));
         body.insert("place".into(), self.place.as_ref().map_or(Value::Null, Place::to_json));
@@ -615,6 +620,7 @@ mod tests {
             tab_clipboard: false,
             hud_prayer: false,
             prayer_method: 17,
+            prayer_zone: "SGR03".into(),
             asr_hanafi: true,
             place: Some(Place { name: "Kuala Lumpur, Malaysia".into(), lat: 3.1412, lon: 101.69, tz: "Asia/Kuala_Lumpur".into(), cc: "MY".into() }),
             theme: ThemeMode::System,

@@ -320,13 +320,19 @@ impl App {
                     crate::draw_text_centered(pm, font, "\u{00D7}", bx, by + 5.0 * s, 15.0 * s, crate::pick(white, grey, hot_x), 14.0 * s);
                 }
             }
-            Kind::Cycle(Stepper::Method) => {
+            Kind::Cycle(stepper) => {
                 let (x, y, w, h) = (item.ctrl.0 * s, item.ctrl.1 * s, item.ctrl.2 * s, item.ctrl.3 * s);
-                let over = panel.glows.fade(key + 9, inside(item.ctrl, cx, cy));
-                gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], crate::pick(110.0, 64.0, over) as u8], [accent[0], accent[1], accent[2], crate::pick(66.0, 32.0, over) as u8], false);
-                gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], 130]);
-                let name = crate::prayer::METHODS[crate::prayer::method_index(self.settings.prayer_method)].1;
-                crate::draw_text_centered(pm, heading, name, (item.ctrl.0 + item.ctrl.2 / 2.0) * s, (item.ctrl.1 + 18.5) * s, 12.0 * s, white, (item.ctrl.2 - 56.0) * s);
+                // The zone is dimmed and does not answer while the method is not e-Solat.
+                let live = stepper != Stepper::Zone || self.zone_applies();
+                let strength = if live { 1.0 } else { 0.45 };
+                let over = panel.glows.fade(key + 9, live && inside(item.ctrl, cx, cy));
+                gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], (crate::pick(110.0, 64.0, over) * strength) as u8], [accent[0], accent[1], accent[2], (crate::pick(66.0, 32.0, over) * strength) as u8], false);
+                gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], (130.0 * strength) as u8]);
+                let name = match stepper {
+                    Stepper::Method => crate::prayer::METHODS[crate::prayer::method_index(self.settings.prayer_method)].1.to_string(),
+                    Stepper::Zone => self.zone_text(),
+                };
+                crate::draw_text_centered(pm, heading, &name, (item.ctrl.0 + item.ctrl.2 / 2.0) * s, (item.ctrl.1 + 18.5) * s, 12.0 * s, if live { white } else { grey }, (item.ctrl.2 - 56.0) * s);
                 // The arrows at the two ends.
                 let hot_left = over > 0.01 && cx < item.ctrl.0 + item.ctrl.2 / 3.0;
                 for (bx, glyph) in [(item.ctrl.0 + 16.0, "\u{2039}"), (item.ctrl.0 + item.ctrl.2 - 16.0, "\u{203A}")] {

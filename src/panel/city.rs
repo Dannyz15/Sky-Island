@@ -97,6 +97,7 @@ impl App {
     pub(super) fn clear_city(&mut self) {
         self.settings.place = None;
         self.settings.prayer_method = Settings::default().prayer_method;
+        self.settings.prayer_zone.clear();
         weather::clear_cache();
         crate::prayer::clear_cache();
         if let Some(p) = &mut self.panel {
@@ -115,6 +116,8 @@ impl App {
                 if !place.cc.is_empty() {
                     self.settings.prayer_method = crate::prayer::default_method(&place.cc);
                 }
+                // A zone chosen by hand was for the old city.
+                self.settings.prayer_zone.clear();
                 self.settings.place = Some(place);
                 self.settings_changed();
                 self.sync_weather();

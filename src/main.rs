@@ -32,6 +32,7 @@ mod ui;
 mod update;
 mod water;
 mod weather;
+mod zones;
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -186,6 +187,8 @@ struct App {
     /// The lyrics just opened or closed: the notch changes width under the mouse, so the system's
     /// "mouse left" is ignored until it has settled.
     lyric_settle: bool,
+    /// Sky Island moved the song itself (a click on a lyric line or on the bar) and the song has not changed since.
+    seeked: bool,
     /// Latest system notice, kept after it expires so it can fade out.
     notice: Option<sys::Notice>,
     notice_until: Option<Instant>,
@@ -339,6 +342,11 @@ struct App {
     /// The Stats view's numbers and when they were last looked at.
     stats: stats::Stats,
     stats_at: Option<Instant>,
+    /// When the Stats view was last drawn for its gliding graphs; the next is a frame later.
+    stats_frame: Option<Instant>,
+    /// The parts of the Stats view that do not change from one frame to the next, drawn once and copied in (see
+    /// `blit_backdrop` in `ui/stats.rs`).
+    stats_backdrops: std::cell::RefCell<ui::StatsBackdrops>,
     /// With Show on All screens: the number of the screen the notch last followed the mouse to (none until it has).
     follow: Option<u32>,
     /// The version the notch has already told the user about, so the notice comes once per version.
@@ -398,6 +406,7 @@ impl App {
             closed_v: 0.0,
             last_wheel_tab: Instant::now(),
             lyric_settle: false,
+            seeked: false,
             notice: None,
             notice_until: None,
             ov_t: 0.0,
@@ -491,6 +500,8 @@ impl App {
             hotkey_ok: true,
             stats: stats::Stats::default(),
             stats_at: None,
+            stats_frame: None,
+            stats_backdrops: Default::default(),
             sys_volume: None,
             volume_drag: false,
             weather: None,

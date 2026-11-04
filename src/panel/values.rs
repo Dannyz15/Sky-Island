@@ -308,6 +308,36 @@ impl App {
         self.sync_prayer();
     }
 
+    /// Whether the zone applies: only the e-Solat method looks at it.
+    pub(super) fn zone_applies(&self) -> bool {
+        self.settings.prayer_method == crate::prayer::ESOLAT_METHOD
+    }
+
+    /// Step the e-Solat zone to the one before (`-1`) or after (`1`) in the list, "Automatic" being before the first.
+    pub(super) fn step_zone(&mut self, delta: isize) {
+        if !self.zone_applies() {
+            return;
+        }
+        // 0 is Automatic, 1 the first zone.
+        let at = crate::zones::index_of(&self.settings.prayer_zone).map_or(0, |i| i as isize + 1);
+        let n = crate::zones::ZONES.len() as isize + 1;
+        let to = (at + delta).rem_euclid(n);
+        self.settings.prayer_zone = if to == 0 { String::new() } else { crate::zones::ZONES[to as usize - 1].code.to_string() };
+        self.settings_changed();
+        self.sync_prayer();
+    }
+
+    /// What the Zone control says: "Automatic: SGR01 ..." or the chosen zone.
+    pub(super) fn zone_text(&self) -> String {
+        match crate::zones::find(&self.settings.prayer_zone) {
+            Some(z) => crate::zones::describe(z),
+            None => match self.settings.place.as_ref().and_then(crate::zones::nearest) {
+                Some(z) => format!("{}{}", crate::zones::AUTOMATIC, crate::zones::describe(z)),
+                None => "Automatic".to_string(),
+            },
+        }
+    }
+
     pub(super) fn slider_get(&self, slide: Slide) -> u32 {
         match slide {
             Slide::OpenDelay => self.settings.open_delay,

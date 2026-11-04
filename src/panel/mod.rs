@@ -69,6 +69,9 @@ const SCROLL_TOP: f32 = 88.0;
 /// Room left under the last card when a page is scrolled to the end.
 const BOTTOM_PAD: f32 = 24.0;
 const ROW_H: f32 = 56.0;
+/// How far apart the lines of the text under a row's label are, and the size of that text.
+const DESC_LINE_H: f32 = 14.0;
+const DESC_PX: f32 = 11.0;
 const GROUP_LABEL_H: f32 = 24.0;
 const GROUP_GAP: f32 = 16.0;
 const SLIDER_W: f32 = 150.0;

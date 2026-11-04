@@ -497,6 +497,7 @@ impl App {
         // Press on the bar (a taller target than the thin line) and drag to jump in the song.
         let (bx, by, bw) = geo.bar;
         if !self.media.duration.is_zero()
+            && self.media.can_seek
             && self.media_handle.is_some()
             && cx >= bx - 6.0
             && cx <= bx + bw + 6.0
@@ -561,6 +562,10 @@ impl App {
             return;
         }
         let LyricsState::Found(lines) = &self.lyrics else { return };
+        // A player that does not let other programs move the song would ignore the jump: leave the lyrics where they are.
+        if !self.media.can_seek {
+            return;
+        }
         let hit = self
             .layout_lyrics()
             .into_iter()
@@ -569,6 +574,7 @@ impl App {
             if let Some(handle) = &self.media_handle {
                 handle.send(Command::Seek(at));
             }
+            self.seeked = true;
             // Show the jump immediately instead of waiting for the player to report it.
             self.media.position = at;
             self.media_at = Instant::now();

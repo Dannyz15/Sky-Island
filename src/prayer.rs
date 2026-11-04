@@ -1,6 +1,7 @@
 //! Prayer times. They come from Aladhan (aladhan.com, no account, no key) for the user's city and the calculation
-//! method they chose, a month at a time. The days are kept in `prayer.json`, so the tab and the reminders work
-//! offline, and fetched again once in a while to stay ahead of the calendar.
+//! method they chose, a month at a time; or, for Malaysia, from JAKIM's e-Solat (e-solat.gov.my, also no account and no
+//! key), which gives the official times of a zone for the whole year. The days are kept in `prayer.json`, so the tab
+//! and the reminders work offline, and fetched again once in a while to stay ahead of the calendar.
 
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
@@ -10,9 +11,15 @@ use serde_json::{Value, json};
 use winit::event_loop::EventLoopProxy;
 
 use crate::weather::Place;
-use crate::{UserEvent, calendar, store};
+use crate::{UserEvent, calendar, store, zones};
 
 const CALENDAR: &str = "https://api.aladhan.com/v1/calendar";
+const ESOLAT: &str = "https://www.e-solat.gov.my/index.php?r=esolatApi/takwimsolat&period=year&zone=";
+/// The number that stands for JAKIM's e-Solat among the methods. Aladhan has no such method (its numbers end at 23);
+/// the times for it come from e-Solat, and from Aladhan's own JAKIM method where e-Solat has none.
+pub const ESOLAT_METHOD: u32 = 100;
+/// Aladhan's method that works out the times the way JAKIM does.
+const JAKIM_CALCULATED: u32 = 17;
 /// How often the days are fetched again while the Prayer tab is on.
 const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// The table has to reach this many days past today, or it is fetched again.
@@ -22,9 +29,10 @@ pub const AHEAD: i64 = 2;
 pub const NAMES: [&str; 6] = ["Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Isha"];
 pub const SUNRISE: usize = 1;
 
-/// The calculation methods Aladhan has (its numbers), the common ones first.
-pub const METHODS: [(u32, &str); 23] = [
-    (17, "JAKIM (Malaysia)"),
+/// The calculation methods (Aladhan's numbers, and e-Solat's own), the common ones first.
+pub const METHODS: [(u32, &str); 24] = [
+    (ESOLAT_METHOD, "JAKIM e-Solat (Malaysia)"),
+    (17, "JAKIM (calculated)"),
     (11, "MUIS (Singapore)"),
     (20, "Kemenag (Indonesia)"),
     (3, "Muslim World League"),
@@ -52,7 +60,7 @@ pub const METHODS: [(u32, &str); 23] = [
 /// The method that goes with a country (its ISO code), for when a city is chosen. Anywhere else: the Muslim World League's.
 pub fn default_method(country: &str) -> u32 {
     match country.to_ascii_uppercase().as_str() {
-        "MY" => 17,
+        "MY" => ESOLAT_METHOD,
         "SG" => 11,
         "ID" => 20,
         "SA" => 4,
@@ -76,7 +84,7 @@ pub fn default_method(country: &str) -> u32 {
     }
 }
 
-/// A method number if it is one Aladhan has, else the Muslim World League's.
+/// A method number if it is one in the list, else the Muslim World League's.
 pub fn known_method(id: u32) -> u32 {
     if METHODS.iter().any(|(m, _)| *m == id) { id } else { 3 }
 }
@@ -95,12 +103,14 @@ pub struct Day {
     pub hijri: (u32, u32, u32),
 }
 
-/// What to ask for: the place, the calculation method and the Asr school (0 standard, 1 Hanafi).
+/// What to ask for: the place, the calculation method and the Asr school (0 standard, 1 Hanafi). `zone` is the e-Solat
+/// zone that was chosen by hand ("" for the one nearest to the place); only e-Solat looks at it.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Request {
     pub place: Place,
     pub method: u32,
     pub school: u32,
+    pub zone: String,
 }
 
 /// The days that were fetched for a request.
@@ -110,6 +120,7 @@ pub struct Table {
     pub lon: f64,
     pub method: u32,
     pub school: u32,
+    pub zone: String,
     /// In order of date.
     pub days: Vec<Day>,
 }
@@ -117,7 +128,7 @@ pub struct Table {
 impl Table {
     /// Whether the table was fetched for this request.
     pub fn is_for(&self, req: &Request) -> bool {
-        req.place.same_spot(self.lat, self.lon) && self.method == req.method && self.school == req.school
+        req.place.same_spot(self.lat, self.lon) && self.method == req.method && self.school == req.school && self.zone == req.zone
     }
 
     pub fn day(&self, date: i64) -> Option<&Day> {
@@ -241,20 +252,54 @@ fn parse_day(d: &Value) -> Option<Day> {
     Some(Day { date: calendar::days_from_civil(year as i32, month, day), times, hijri })
 }
 
+/// "11" for "Nov" or "Dis" (December in Malay): the month of e-Solat's date, which writes its names in Malay.
+fn month_of(name: &str) -> Option<u32> {
+    let name = name.get(..3)?.to_ascii_lowercase();
+    let at = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].iter().position(|m| *m == name);
+    let malay = ["jan", "feb", "mac", "apr", "mei", "jun", "jul", "ogo", "sep", "okt", "nov", "dis"].iter().position(|m| *m == name);
+    at.or(malay).map(|i| i as u32 + 1)
+}
+
+/// The days of e-Solat's answer for a zone. A day that cannot be read is left out.
+fn parse_esolat(v: &Value) -> Vec<Day> {
+    let Some(list) = v.get("prayerTime").and_then(Value::as_array) else { return Vec::new() };
+    list.iter().filter_map(parse_esolat_day).collect()
+}
+
+fn parse_esolat_day(d: &Value) -> Option<Day> {
+    let mut times = [0u32; 6];
+    for (slot, key) in times.iter_mut().zip(["fajr", "syuruk", "dhuhr", "asr", "maghrib", "isha"]) {
+        *slot = minutes_of(d.get(key)?.as_str()?)?;
+    }
+    // "04-Nov-2026".
+    let mut g = d.get("date")?.as_str()?.split('-');
+    let (day, month, year) = (g.next()?.parse::<u32>().ok()?, month_of(g.next()?)?, g.next()?.parse::<i32>().ok()?);
+    if !(1..=31).contains(&day) {
+        return None;
+    }
+    // "1448-05-24": the year, the month and the day.
+    let mut h = d.get("hijri").and_then(Value::as_str).unwrap_or("").split('-').map(|p| p.parse::<u32>().ok());
+    let hijri = match (h.next().flatten(), h.next().flatten(), h.next().flatten()) {
+        (Some(y), Some(m), Some(day)) => (day, m, y),
+        _ => (0, 0, 0),
+    };
+    Some(Day { date: calendar::days_from_civil(year, month, day), times, hijri })
+}
+
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(10))).build().into()
 }
 
-fn fetch_month(req: &Request, year: i32, month: u32) -> Option<Vec<Day>> {
+fn fetch_month(place: &Place, method: u32, school: u32, year: i32, month: u32) -> Option<Vec<Day>> {
     let mut call = agent()
         .get(format!("{CALENDAR}/{year}/{month}"))
         .header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION")))
-        .query("latitude", req.place.lat.to_string())
-        .query("longitude", req.place.lon.to_string())
-        .query("method", req.method.to_string())
-        .query("school", req.school.to_string());
-    if !req.place.tz.is_empty() {
-        call = call.query("timezonestring", &req.place.tz);
+        .query("latitude", place.lat.to_string())
+        .query("longitude", place.lon.to_string())
+        .query("method", method.to_string())
+        .query("school", school.to_string());
+    if !place.tz.is_empty() {
+        call = call.query("timezonestring", &place.tz);
     }
     let json = call.call().ok()?.body_mut().read_json::<Value>().ok()?;
     let days = parse_month(&json);
@@ -262,15 +307,43 @@ fn fetch_month(req: &Request, year: i32, month: u32) -> Option<Vec<Day>> {
 }
 
 /// This month and the next, from Aladhan. `None` unless this month came.
-fn fetch(req: &Request, today: i64) -> Option<Table> {
+fn aladhan_days(place: &Place, method: u32, school: u32, today: i64) -> Option<Vec<Day>> {
     let (year, month, _) = calendar::civil_from_days(today);
-    let mut days = fetch_month(req, year, month)?;
+    let mut days = fetch_month(place, method, school, year, month)?;
     let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
     // Next month is only a head start: this month alone is still a table.
-    days.extend(fetch_month(req, ny, nm).unwrap_or_default());
+    days.extend(fetch_month(place, method, school, ny, nm).unwrap_or_default());
+    Some(days)
+}
+
+/// The rest of this year for a zone, from e-Solat.
+fn esolat_days(zone: &str) -> Option<Vec<Day>> {
+    let json = agent().get(format!("{ESOLAT}{zone}")).header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION"))).call().ok()?.body_mut().read_json::<Value>().ok()?;
+    let days = parse_esolat(&json);
+    (!days.is_empty()).then_some(days)
+}
+
+/// The e-Solat zone for a request: the one that was chosen, else the one nearest to the place (none outside Malaysia).
+fn zone_of(req: &Request) -> Option<&'static str> {
+    zones::find(&req.zone).or_else(|| zones::nearest(&req.place)).map(|z| z.code)
+}
+
+/// The days for a request. For e-Solat that is the zone's year; where that is short (e-Solat does not answer, the place is
+/// outside Malaysia, or it is the last days of the year) Aladhan's JAKIM method fills in what is missing.
+fn fetch(req: &Request, today: i64) -> Option<Table> {
+    let mut days = if req.method == ESOLAT_METHOD {
+        let mut days = zone_of(req).and_then(esolat_days).unwrap_or_default();
+        if !(today..=today + AHEAD).all(|d| days.iter().any(|day| day.date == d)) {
+            days.extend(aladhan_days(&req.place, JAKIM_CALCULATED, req.school, today).unwrap_or_default());
+        }
+        days
+    } else {
+        aladhan_days(&req.place, req.method, req.school, today)?
+    };
+    // Where a date is in both lists, the first one stays: e-Solat's.
     days.sort_by_key(|d| d.date);
     days.dedup_by_key(|d| d.date);
-    Some(Table { lat: req.place.lat, lon: req.place.lon, method: req.method, school: req.school, days })
+    (!days.is_empty()).then_some(Table { lat: req.place.lat, lon: req.place.lon, method: req.method, school: req.school, zone: req.zone.clone(), days })
 }
 
 /// Start the thread that fetches the days. It fetches when it is told what to ask for (`Some`) if the table it
@@ -308,7 +381,7 @@ pub fn clear_cache() {
 
 fn cache_json(t: &Table) -> Value {
     json!({
-        "lat": t.lat, "lon": t.lon, "method": t.method, "school": t.school,
+        "lat": t.lat, "lon": t.lon, "method": t.method, "school": t.school, "zone": t.zone,
         "days": t.days.iter().map(|d| json!({ "date": d.date, "times": d.times, "hijri": [d.hijri.0, d.hijri.1, d.hijri.2] })).collect::<Vec<_>>(),
     })
 }
@@ -329,6 +402,7 @@ fn from_cache(v: &Value) -> Option<Table> {
         lon: v.get("lon")?.as_f64()?,
         method: v.get("method")?.as_u64()? as u32,
         school: v.get("school")?.as_u64()? as u32,
+        zone: v.get("zone").and_then(Value::as_str).unwrap_or("").to_string(),
         days,
     })
 }
@@ -360,7 +434,7 @@ mod tests {
     const T: [u32; 6] = [337, 417, 777, 979, 1137, 1208];
 
     fn table() -> Table {
-        Table { lat: 3.1412, lon: 101.69, method: 17, school: 0, days: vec![day(100, T), day(101, T), day(102, T)] }
+        Table { lat: 3.1412, lon: 101.69, method: 17, school: 0, zone: String::new(), days: vec![day(100, T), day(101, T), day(102, T)] }
     }
 
     fn secs(h: u32, m: u32) -> u32 {
@@ -441,6 +515,46 @@ mod tests {
         assert!(parse_month(&json!({})).is_empty());
     }
 
+    fn esolat_answer() -> Value {
+        json!({ "prayerTime": [
+            { "hijri": "1448-05-24", "date": "04-Nov-2026", "imsak": "05:38:00", "fajr": "05:48:00", "syuruk": "06:55:00", "dhuha": "07:20:00",
+              "dhuhr": "13:00:00", "asr": "16:20:00", "maghrib": "18:58:00", "isha": "20:09:00" },
+            { "hijri": "1448-10-20", "date": "31-Dis-2026", "fajr": "05:48:00", "syuruk": "06:55:00", "dhuhr": "13:00:00", "asr": "16:20:00", "maghrib": "18:58:00", "isha": "20:09:00" },
+            { "hijri": "1448-05-26", "date": "06-Nov-2026", "fajr": "bad" },
+        ], "status": "OK!" })
+    }
+
+    #[test]
+    fn a_zones_days_are_read_from_esolat() {
+        let days = parse_esolat(&esolat_answer());
+        assert_eq!(days.len(), 2, "the day that cannot be read is left out");
+        assert_eq!(days[0].times, [348, 415, 780, 980, 1138, 1209]);
+        assert_eq!(days[0].hijri, (24, 5, 1448));
+        assert_eq!(calendar::civil_from_days(days[0].date), (2026, 11, 4));
+        assert_eq!(calendar::civil_from_days(days[1].date), (2026, 12, 31), "December is Dis in Malay");
+        assert!(parse_esolat(&json!({ "prayerTime": { "data": ["No data available for the current request"] } })).is_empty());
+        assert!(parse_esolat(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn the_months_are_known_in_english_and_in_malay() {
+        let names = [("Jan", 1), ("Feb", 2), ("Mac", 3), ("Mar", 3), ("Apr", 4), ("Mei", 5), ("May", 5), ("Jun", 6), ("Jul", 7), ("Ogo", 8), ("Aug", 8), ("Sep", 9), ("Okt", 10), ("Oct", 10), ("Nov", 11), ("Dis", 12), ("Dec", 12)];
+        for (name, number) in names {
+            assert_eq!(month_of(name), Some(number), "{name}");
+        }
+        assert_eq!((month_of("xyz"), month_of("")), (None, None));
+    }
+
+    #[test]
+    fn the_zone_is_the_one_chosen_or_the_nearest() {
+        let kl = Place { name: "KL".into(), lat: 3.1412, lon: 101.69, tz: String::new(), cc: "MY".into() };
+        let req = Request { place: kl.clone(), method: ESOLAT_METHOD, school: 0, zone: String::new() };
+        assert_eq!(zone_of(&req), Some("WLY01"));
+        assert_eq!(zone_of(&Request { zone: "SGR03".into(), ..req.clone() }), Some("SGR03"));
+        assert_eq!(zone_of(&Request { zone: "nonsense".into(), ..req.clone() }), Some("WLY01"));
+        assert_eq!(zone_of(&Request { place: Place { cc: "SG".into(), ..kl }, ..req }), None, "not in Malaysia");
+    }
+
     #[test]
     fn the_hijri_date_is_written_out() {
         assert_eq!(hijri_text((21, 5, 1448)), "21 Jumada al-ula 1448");
@@ -459,10 +573,11 @@ mod tests {
     fn a_table_is_for_one_request_and_covers_its_days() {
         let t = table();
         let place = Place { name: "KL".into(), lat: 3.1412, lon: 101.69, tz: String::new(), cc: String::new() };
-        let req = Request { place: place.clone(), method: 17, school: 0 };
+        let req = Request { place: place.clone(), method: 17, school: 0, zone: String::new() };
         assert!(t.is_for(&req));
         assert!(!t.is_for(&Request { method: 3, ..req.clone() }));
         assert!(!t.is_for(&Request { school: 1, ..req.clone() }));
+        assert!(!t.is_for(&Request { zone: "SGR01".into(), ..req.clone() }));
         assert!(!t.is_for(&Request { place: Place { lat: 1.0, ..place }, ..req }));
         assert!(t.covers(100, 2) && !t.covers(100, 3) && !t.covers(99, 1));
     }
@@ -477,7 +592,8 @@ mod tests {
             let m = default_method(country);
             assert_eq!(known_method(m), m);
         }
-        assert_eq!((default_method("MY"), default_method("ZZ")), (17, 3));
+        assert_eq!((default_method("MY"), default_method("ZZ")), (ESOLAT_METHOD, 3));
+        assert_eq!(METHODS[method_index(ESOLAT_METHOD)].0, ESOLAT_METHOD);
         assert_eq!(known_method(99), 3);
         assert_eq!(METHODS[method_index(11)].0, 11);
     }

@@ -138,6 +138,41 @@ pub fn soft_shadow(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spre
     }
 }
 
+/// Lay `src` over `dst` with its top left corner at (`dx`, `dy`), cut off at the edges of `dst`: what drawing it with
+/// a plain `draw_pixmap` (no scaling, no fading, no mask) does, but several times quicker, because it only has to
+/// copy or blend the pixels. A frame of the open notch does this for every layer it puts together.
+pub fn blit_over(dst: &mut Pixmap, src: &Pixmap, dx: i32, dy: i32) {
+    let (dw, dh, sw, sh) = (dst.width() as i32, dst.height() as i32, src.width() as i32, src.height() as i32);
+    let (x0, x1) = (dx.max(0), (dx + sw).min(dw));
+    let (y0, y1) = (dy.max(0), (dy + sh).min(dh));
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let n = (x1 - x0) as usize;
+    let (from, to) = (src.data(), dst.data_mut());
+    for y in y0..y1 {
+        let s = &from[(((y - dy) * sw + (x0 - dx)) as usize) * 4..][..n * 4];
+        let d = &mut to[((y * dw + x0) as usize) * 4..][..n * 4];
+        let ((s, _), (d, _)) = (s.as_chunks::<4>(), d.as_chunks_mut::<4>());
+        for (sp, dp) in s.iter().zip(d.iter_mut()) {
+            let alpha = u32::from(sp[3]);
+            if alpha == 0 {
+                continue;
+            }
+            if alpha == 255 {
+                *dp = *sp;
+                continue;
+            }
+            // Premultiplied "over": the source, and what the source lets through of what is there.
+            let through = 255 - alpha;
+            for (d, s) in dp.iter_mut().zip(sp) {
+                let kept = ((u32::from(*d) * through + 128) * 257) >> 16;
+                *d = (u32::from(*s) + kept).min(255) as u8;
+            }
+        }
+    }
+}
+
 /// A mask in the shape of `path`, to keep glows inside the notch.
 pub fn mask_of(w: u32, h: u32, path: &Path) -> Option<Mask> {
     let mut mask = Mask::new(w, h)?;
@@ -148,6 +183,50 @@ pub fn mask_of(w: u32, h: u32, path: &Path) -> Option<Mask> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A picture of every kind of pixel (clear, solid, half clear), made the same way each time.
+    fn patterned(w: u32, h: u32, seed: u32) -> Pixmap {
+        let mut pm = Pixmap::new(w, h).unwrap();
+        let mut state = seed;
+        for px in pm.pixels_mut() {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let a = match (state >> 24) % 4 {
+                0 => 0,
+                1 => 255,
+                _ => ((state >> 8) & 0xFF) as u8,
+            };
+            // Premultiplied: no colour is above the alpha.
+            let c = |shift: u32| (((state >> shift) & 0xFF) * u32::from(a) / 255) as u8;
+            *px = tiny_skia::PremultipliedColorU8::from_rgba(c(0), c(5), c(10), a).unwrap();
+        }
+        pm
+    }
+
+    #[test]
+    fn blit_over_does_what_draw_pixmap_does_at_a_whole_pixel_offset() {
+        let src = patterned(37, 23, 7);
+        for (dx, dy) in [(0, 0), (5, 3), (-4, -9), (20, 10), (-30, 2), (40, 40), (-50, -50)] {
+            let (mut quick, mut slow) = (patterned(50, 40, 99), patterned(50, 40, 99));
+            blit_over(&mut quick, &src, dx, dy);
+            slow.draw_pixmap(dx, dy, src.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+            let worst = quick.data().iter().zip(slow.data()).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+            assert!(worst <= 2, "offset ({dx}, {dy}): the pictures differ by {worst}");
+        }
+    }
+
+    #[test]
+    fn blit_over_a_clear_picture_changes_nothing_and_a_solid_one_replaces() {
+        let mut dst = patterned(20, 20, 3);
+        let before = dst.data().to_vec();
+        blit_over(&mut dst, &Pixmap::new(20, 20).unwrap(), 0, 0);
+        assert_eq!(dst.data(), &before[..], "nothing to lay over");
+        let mut solid = Pixmap::new(6, 6).unwrap();
+        solid.fill(Color::from_rgba8(10, 20, 30, 255));
+        blit_over(&mut dst, &solid, 4, 4);
+        assert_eq!(dst.pixel(4, 4).unwrap().red(), 10);
+        assert_eq!(dst.pixel(9, 9).unwrap().blue(), 30);
+        assert_ne!(dst.pixel(10, 10).unwrap().blue(), 30, "only the six by six square");
+    }
 
     #[test]
     fn mixing_and_fading_colours() {

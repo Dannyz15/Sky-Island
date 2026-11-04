@@ -33,6 +33,7 @@ pub(crate) use shapes::*;
 pub(crate) use text::*;
 pub(crate) use events::*;
 pub(crate) use clipboard::*;
+pub(crate) use stats::StatsBackdrops;
 pub(crate) use companion::*;
 pub(crate) use notice::*;
 pub(crate) use shelf::*;

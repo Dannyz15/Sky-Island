@@ -26,6 +26,36 @@ impl App {
         }
     }
 
+    /// The line under a row's label as it is now, with its colour: the page's own line, or what the row has to
+    /// say at the moment (the update check, the city, the hotkey, a click waiting for a second one).
+    pub(super) fn row_text(&self, panel: &Panel, kind: Kind, desc: &str) -> (String, [u8; 4]) {
+        match kind {
+            Kind::Button(Act::CheckUpdate) => self.update_note(),
+            Kind::Button(Act::Reset) if panel.reset_armed.is_some_and(|t| Instant::now() < t) => ("Click Reset again within 3 seconds to confirm".to_string(), [255, 150, 140, 255]),
+            Kind::Button(Act::ClearLyrics) if panel.cleared.is_some_and(|(_, t)| Instant::now() < t) => {
+                let n = panel.cleared.map_or(0, |(n, _)| n);
+                (format!("Removed {n} saved {}", if n == 1 { "song" } else { "songs" }), [120, 220, 150, 255])
+            }
+            Kind::Text(Field::City) => panel.city.note(),
+            Kind::Text(Field::Hotkey) if panel.capture => ("Press Ctrl, Alt or Win and a key. Esc cancels".to_string(), [146, 146, 160, 255]),
+            Kind::Text(Field::Hotkey) if self.settings.hotkey && !self.hotkey_ok => ("Another program already uses these keys. Choose others".to_string(), [255, 150, 140, 255]),
+            _ => (desc.to_string(), [146, 146, 160, 255]),
+        }
+    }
+
+    /// A page laid out for `frame`, with every row as tall as its text needs: a long line wraps onto more lines
+    /// instead of being cut off.
+    pub(super) fn layout_of(&self, panel: &Panel, page: Page, frame: Frame) -> Layout {
+        let lines = |kind: Kind, desc: &'static str, room: f32| match &self.font {
+            Some(font) => {
+                let text = self.row_text(panel, kind, desc).0;
+                if text.is_empty() { 1 } else { crate::wrap(font, &text, DESC_PX, room).len() }
+            }
+            None => 1,
+        };
+        layout_with(page, frame, &lines)
+    }
+
     pub(super) fn paint_panel(&self, panel: &mut Panel) {
         theme::set_light(self.light());
         let now = Instant::now();
@@ -127,7 +157,7 @@ impl App {
         }
         crate::draw_text(target, heading, page.title(), frame.x * s, 52.0 * s, 24.0 * s, [255, 255, 255, 255], 400.0 * s);
         crate::draw_text(target, font, page.subtitle(), frame.x * s, 74.0 * s, 11.5 * s, [150, 150, 164, 255], frame.w * s);
-        let lay = layout(page, frame);
+        let lay = self.layout_of(panel, page, frame);
         panel.scroll_max = scroll_limit(&lay, lh);
         panel.scroll = panel.scroll.clamp(0.0, panel.scroll_max);
         // Dragging the scroll bar moves the page with the mouse, without the gliding of the wheel and the keys.
@@ -225,23 +255,17 @@ impl App {
                 crate::fill_rect(pm, (item.row.0 + 18.0) * s, item.row.1 * s, (item.row.2 - 36.0) * s, s * 0.7, [255, 255, 255, 13]);
             }
             // The label and the line under it. The About page's update row shows what the check found.
-            let (desc, desc_ink) = match item.kind {
-                Kind::Button(Act::CheckUpdate) => self.update_note(),
-                Kind::Button(Act::Reset) if panel.reset_armed.is_some_and(|t| Instant::now() < t) => ("Click Reset again within 3 seconds to confirm".to_string(), [255, 150, 140, 255]),
-                Kind::Button(Act::ClearLyrics) if panel.cleared.is_some_and(|(_, t)| Instant::now() < t) => {
-                    let n = panel.cleared.map_or(0, |(n, _)| n);
-                    (format!("Removed {n} saved {}", if n == 1 { "song" } else { "songs" }), [120, 220, 150, 255])
-                }
-                Kind::Text(Field::City) => panel.city.note(),
-                Kind::Text(Field::Hotkey) if panel.capture => ("Press Ctrl, Alt or Win and a key. Esc cancels".to_string(), [146, 146, 160, 255]),
-                Kind::Text(Field::Hotkey) if self.settings.hotkey && !self.hotkey_ok => ("Another program already uses these keys. Choose others".to_string(), [255, 150, 140, 255]),
-                _ => (item.desc.to_string(), [146, 146, 160, 255]),
-            };
+            let (desc, desc_ink) = self.row_text(panel, item.kind, item.desc);
             let text_w = item.ctrl.0 - item.row.0 - 36.0;
             // A row with no line under its label has the label in the middle.
             let label_y = if desc.is_empty() { item.row.3 / 2.0 + 5.0 } else { 24.0 };
             crate::draw_text(pm, font, item.label, (item.row.0 + 18.0) * s, (item.row.1 + label_y) * s, 13.5 * s, crate::pick(white, [232, 232, 240, 255], hot), text_w * s);
-            crate::draw_text(pm, font, &desc, (item.row.0 + 18.0) * s, (item.row.1 + 42.0) * s, 11.0 * s, desc_ink, text_w * s);
+            // A long line goes on under itself instead of being cut off.
+            if !desc.is_empty() {
+                for (n, line) in crate::wrap(font, &desc, DESC_PX, text_w).iter().enumerate() {
+                    crate::draw_text(pm, font, line, (item.row.0 + 18.0) * s, (item.row.1 + 42.0 + n as f32 * DESC_LINE_H) * s, DESC_PX * s, desc_ink, text_w * s);
+                }
+            }
             self.paint_control(pm, panel, font, heading, item, key, tint, s);
         }
     }

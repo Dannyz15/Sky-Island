@@ -54,7 +54,7 @@ fn a_page_scrolls_only_as_far_as_it_is_taller_than_the_window() {
         let lay = layout(page, frame_for(WIDTH as f32));
         // Most pages fit the default window; About (a tall card) and Notch (all the notch settings) scroll a little.
         let limit = match page {
-            Page::About => 280.0,
+            Page::About => 330.0,
             Page::Notch => 700.0,
             Page::Tabs => 220.0,
             _ => 0.0,
@@ -276,7 +276,7 @@ fn the_eye_picker_has_a_tile_for_every_style_and_they_fit_its_control() {
     }
     assert_eq!(eye_tile_at(ctrl, ctrl.0 - 5.0, ctrl.1 - 5.0), None);
     // The row is tall enough for the picker, and the picker is on the Notch page, once.
-    assert!(row_height("x", Kind::EyeGrid) > EYE_GRID.1);
+    assert!(row_height("x", Kind::EyeGrid, 1) > EYE_GRID.1);
     let on_notch = layout(Page::Notch, frame_for(WIDTH as f32)).items.iter().filter(|i| matches!(i.kind, Kind::EyeGrid)).count();
     assert_eq!(on_notch, 1);
 }
@@ -292,4 +292,68 @@ fn segmented_choices_fill_the_control_without_gaps() {
         assert!((pair[0].0 + pair[0].2 - pair[1].0).abs() < 0.01, "no gap between choices");
     }
     assert!(cells[2].2 > cells[0].2 * 1.9, "Follow System gets the most room");
+}
+
+#[test]
+fn a_row_grows_by_a_line_for_each_extra_line_of_its_text() {
+    assert_eq!(row_height("text", Kind::Link(""), 1), ROW_H);
+    assert_eq!(row_height("text", Kind::Link(""), 2), ROW_H + DESC_LINE_H);
+    assert_eq!(row_height("text", Kind::Link(""), 3), ROW_H + 2.0 * DESC_LINE_H);
+    assert_eq!(row_height("", Kind::Link(""), 1), 40.0, "a row with no text under its label stays short");
+}
+
+#[test]
+fn rows_with_long_text_get_taller_and_everything_below_moves_down() {
+    let frame = frame_for(WIDTH as f32);
+    // Say every second line is long enough to need two lines.
+    let long = |_: Kind, desc: &'static str, _: f32| if desc.len().is_multiple_of(2) { 2 } else { 1 };
+    for page in Page::ALL {
+        let (plain, tall) = (layout(page, frame), layout_with(page, frame, &long));
+        assert!(tall.bottom() >= plain.bottom(), "{} did not grow", page.title());
+        for pair in tall.groups.windows(2) {
+            assert!(pair[0].rect.1 + pair[0].rect.3 < pair[1].rect.1, "{} overlaps {} on {}", pair[0].title, pair[1].title, page.title());
+        }
+        for (a, b) in plain.items.iter().zip(&tall.items) {
+            assert_eq!(a.ctrl.2, b.ctrl.2, "{}: the controls keep their size", a.label);
+            assert!(b.ctrl.1 >= b.row.1 && b.ctrl.1 + b.ctrl.3 <= b.row.1 + b.row.3 + 0.01, "{}: its control is inside its row", a.label);
+        }
+    }
+}
+
+#[test]
+fn every_zone_fits_the_zone_control_in_the_real_font() {
+    let Some(font) = crate::load_font() else { return };
+    let frame = frame_for(WIDTH as f32);
+    let row = layout(Page::Location, frame).items.into_iter().find(|i| matches!(i.kind, Kind::Cycle(Stepper::Zone))).expect("the Zone row");
+    // The text may use the control's width less the arrows, and a little of that is kept for the heading's heavier letters.
+    let room = row.ctrl.2 - 56.0 - 12.0;
+    let too_wide: Vec<String> = crate::zones::ZONES
+        .iter()
+        .map(|zone| format!("{}{}", crate::zones::AUTOMATIC, crate::zones::describe(zone)))
+        .filter(|text| crate::text_width(&font, text, 12.0) > room)
+        .collect();
+    assert!(too_wide.is_empty(), "wider than {room}: {too_wide:?}");
+}
+
+#[test]
+fn every_line_under_a_label_fits_its_row_in_the_real_font() {
+    let Some(font) = crate::load_font() else { return };
+    let frame = frame_for(WIDTH as f32);
+    for page in Page::ALL {
+        for (_, rows) in page_spec(page) {
+            for (label, desc, kind, btn) in rows {
+                let room = text_room(kind, btn, frame);
+                let lines = crate::wrap(&font, desc, DESC_PX, room);
+                // Every line of the wrapped text is inside the room, and no row needs more than three lines.
+                assert!(lines.len() <= 3, "{label} needs {} lines", lines.len());
+                for line in &lines {
+                    assert!(desc.is_empty() || crate::text_width(&font, line, DESC_PX) <= room, "{label}: a line is wider than its room");
+                }
+            }
+        }
+    }
+    // The note that was cut off: it now takes two lines, so the whole sentence shows.
+    let room = text_room(Kind::Text(Field::City), "", frame);
+    let note = CityField { status: CityStatus::Approximate, ..Default::default() }.note().0;
+    assert_eq!(crate::wrap(&font, &note, DESC_PX, room).len(), 2, "{note}");
 }
