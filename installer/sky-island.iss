@@ -2,7 +2,7 @@
 ; Inno Setup compiler after running `cargo build --release`.
 
 #ifndef AppVersion
-  #define AppVersion "1.5.3"
+  #define AppVersion "1.5.4"
 #endif
 #define AppName "Sky Island"
 #define AppExe "sky-island.exe"
