@@ -166,12 +166,7 @@ impl App {
             Toggle::ClosedBars => self.settings.closed_bars = !self.settings.closed_bars,
             Toggle::ClosedSpin => self.settings.closed_spin = !self.settings.closed_spin,
             Toggle::ClosedEdge => self.settings.closed_edge = !self.settings.closed_edge,
-            Toggle::ClosedSound => {
-                self.settings.closed_sound = !self.settings.closed_sound;
-                if self.settings.closed_sound {
-                    crate::loopback::warm();
-                }
-            }
+            Toggle::ClosedSound => self.settings.closed_sound = !self.settings.closed_sound,
             Toggle::EmptyShelf => self.settings.empty_shelf = !self.settings.empty_shelf,
             Toggle::HudVolume => self.settings.hud_volume = !self.settings.hud_volume,
             Toggle::HudBrightness => self.settings.hud_brightness = !self.settings.hud_brightness,

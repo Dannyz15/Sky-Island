@@ -42,7 +42,7 @@ impl CityField {
             (None, CityStatus::NotFound) => ("No such city. Try City, Country".to_string(), red),
             (None, CityStatus::Offline) => ("Could not reach the search. Are you online?".to_string(), red),
             (None, CityStatus::Undetected) => ("Could not tell where you are. Type your city".to_string(), red),
-            (None, CityStatus::Approximate) => ("Only approximate: turn on Windows Location for an exact one".to_string(), [240, 190, 110, 255]),
+            (None, CityStatus::Approximate) => ("Approximate. Turn on Windows Location".to_string(), [240, 190, 110, 255]),
             (None, CityStatus::Idle) => ("Type a city and press Enter".to_string(), grey),
         }
     }

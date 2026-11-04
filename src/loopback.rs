@@ -13,8 +13,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use windows::Win32::Media::Audio::{
-    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator,
-    WAVEFORMATEX, eConsole, eRender,
+    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator,
+    WAVEFORMATEX, eMultimedia, eRender,
 };
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree};
 
@@ -65,12 +65,7 @@ impl Analyser {
     pub fn new(rate: u32) -> Self {
         let rate = rate.max(8000) as f32;
         let window = (0..FFT_N).map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / FFT_N as f32).cos()).collect();
-        let twiddle = (0..FFT_N / 2)
-            .map(|k| {
-                let a = -std::f64::consts::TAU * k as f64 / FFT_N as f64;
-                (a.cos() as f32, a.sin() as f32)
-            })
-            .collect();
+        let twiddle = twiddles();
         let hz_per_bin = rate / FFT_N as f32;
         let mut bins = [(0, 0); BANDS];
         for (b, bin) in bins.iter_mut().enumerate() {
@@ -132,6 +127,16 @@ impl Analyser {
     }
 }
 
+/// cos and sin of -2 pi k / `FFT_N`, for the FFT.
+fn twiddles() -> Vec<(f32, f32)> {
+    (0..FFT_N / 2)
+        .map(|k| {
+            let a = -std::f64::consts::TAU * k as f64 / FFT_N as f64;
+            (a.cos() as f32, a.sin() as f32)
+        })
+        .collect()
+}
+
 /// A plain radix-2 FFT of `re` and `im` (their length a power of two, `twiddle` made for it).
 fn fft(re: &mut [f32], im: &mut [f32], twiddle: &[(f32, f32)]) {
     let n = re.len();
@@ -180,17 +185,27 @@ fn describe(format: &WAVEFORMATEX) -> Option<(u32, usize, Sample, usize)> {
     let (tag, channels, rate, align, bits) = (format.wFormatTag, format.nChannels, format.nSamplesPerSec, format.nBlockAlign, format.wBitsPerSample);
     const IEEE_FLOAT: u16 = 3;
     const EXTENSIBLE: u16 = 0xFFFE;
+    const PCM: u16 = 1;
     // The shared mix is float, but an extensible format says what its samples are in the first part of a GUID that
-    // follows the usual fields: 3 is float, 1 is whole numbers.
+    // follows the usual fields: 3 is float, 1 is whole numbers, and anything else cannot be read.
     let float = match tag {
         IEEE_FLOAT => true,
+        PCM => false,
         EXTENSIBLE => {
-            // SAFETY: an extensible format is a WAVEFORMATEXTENSIBLE, which starts with this structure, and Windows
-            // gave us all of it (`cbSize` is 22 for it).
+            // The extra part has to be all there (22 bytes) before the GUID in it is looked at.
+            if { format.cbSize } < 22 {
+                return None;
+            }
+            // SAFETY: an extensible format is a WAVEFORMATEXTENSIBLE, which starts with this structure, and `cbSize`
+            // says Windows gave us the rest of it.
             let sub = unsafe { std::ptr::read_unaligned((format as *const WAVEFORMATEX as *const u8).add(24) as *const u32) };
-            sub == 3
+            match sub {
+                3 => true,
+                1 => false,
+                _ => return None,
+            }
         }
-        _ => false,
+        _ => return None,
     };
     let kind = match (bits, float) {
         (32, true) => Sample::F32,
@@ -221,8 +236,22 @@ fn to_mono(bytes: &[u8], channels: usize, kind: Sample, align: usize, out: &mut 
     }
 }
 
+/// The name Windows gives a device, which stays the same while it is the same device.
+fn device_id(device: &IMMDevice) -> Option<String> {
+    // SAFETY: the text Windows hands back is read once and then freed.
+    unsafe {
+        let id = device.GetId().ok()?;
+        let text = id.to_string().ok();
+        CoTaskMemFree(Some(id.0 as *const _));
+        text
+    }
+}
+
 /// The open device: the default one the PC plays on, listened to.
 struct Capture {
+    enumerator: IMMDeviceEnumerator,
+    /// Which device it is, to notice when another one becomes the default.
+    id: Option<String>,
     client: IAudioClient,
     reader: IAudioCaptureClient,
     rate: u32,
@@ -237,7 +266,8 @@ impl Capture {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-            let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
+            let device = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).ok()?;
+            let id = device_id(&device);
             let client: IAudioClient = device.Activate(CLSCTX_ALL, None).ok()?;
             let format = client.GetMixFormat().ok()?;
             let described = describe(&*format);
@@ -248,12 +278,22 @@ impl Capture {
             started?;
             let reader: IAudioCaptureClient = client.GetService().ok()?;
             client.Start().ok()?;
-            Some(Capture { client, reader, rate, channels, kind, align })
+            Some(Capture { enumerator, id, client, reader, rate, channels, kind, align })
         }
     }
 
+    /// Whether this is still the device the PC plays on. When another one becomes the default (headphones plugged in,
+    /// another output picked) the old one keeps answering, only with nothing, so this has to be asked.
+    fn still_default(&self) -> bool {
+        let Some(id) = &self.id else { return true };
+        // SAFETY: a plain COM call on the thread that made the enumerator.
+        let now = unsafe { self.enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).ok() };
+        now.and_then(|d| device_id(&d)).is_none_or(|now| &now == id)
+    }
+
     /// Take what has come in since the last time and add it, as mono samples, to `out`. `None` when the device went
-    /// away (another one became the default, or it was unplugged).
+    /// away (it was unplugged or switched off); a device that is only no longer the default is noticed by
+    /// `still_default`.
     fn pump(&self, out: &mut Vec<f32>) -> Option<()> {
         // SAFETY: each buffer is read before it is given back, and only for as many frames as Windows says it holds.
         unsafe {
@@ -295,6 +335,8 @@ const GRACE_MS: u64 = 1_500;
 const RETRY: Duration = Duration::from_secs(10);
 /// How often the device is looked at.
 const POLL: Duration = Duration::from_millis(20);
+/// How often it checks that the device is still the one the PC plays on.
+const CHECK_DEFAULT: Duration = Duration::from_secs(1);
 
 /// What the thread and the UI share.
 struct Shared {
@@ -305,10 +347,18 @@ struct Shared {
     state: AtomicU8,
     /// Whether the thread is asleep because nobody asked (so it needs waking).
     asleep: AtomicBool,
+    /// Whether it has listened at least once. After that, while it starts again, the bars stay flat (they are about to
+    /// follow the sound) instead of jumping to the made-up beat for a moment.
+    worked: AtomicBool,
 }
 
-static SHARED: Shared =
-    Shared { levels: [const { AtomicU32::new(0) }; BANDS], asked: AtomicU64::new(0), state: AtomicU8::new(STARTING), asleep: AtomicBool::new(false) };
+static SHARED: Shared = Shared {
+    levels: [const { AtomicU32::new(0) }; BANDS],
+    asked: AtomicU64::new(0),
+    state: AtomicU8::new(STARTING),
+    asleep: AtomicBool::new(false),
+    worked: AtomicBool::new(false),
+};
 static THREAD: OnceLock<thread::Thread> = OnceLock::new();
 static CLOCK: OnceLock<Instant> = OnceLock::new();
 
@@ -317,28 +367,33 @@ fn now_ms() -> u64 {
     CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
 }
 
+// `asked` and `asleep` are a handshake: each side writes one and then reads the other, and with anything weaker than
+// SeqCst both could read the old value, so the thread would sleep with nobody to wake it.
 fn wanted() -> bool {
-    let asked = SHARED.asked.load(Ordering::Relaxed);
+    let asked = SHARED.asked.load(Ordering::SeqCst);
     asked != 0 && now_ms().saturating_sub(asked) <= GRACE_MS
 }
 
 /// Ask for the levels of the music (which starts the listening, or wakes it) and say what they are, 0 to 1 for each
-/// band, or `None` while it is still starting and when the sound of this PC cannot be listened to.
+/// band, or `None` when the sound of this PC cannot be listened to (and while it starts the very first time).
 pub fn listen() -> Option<[f32; BANDS]> {
-    SHARED.asked.store(now_ms(), Ordering::Relaxed);
+    SHARED.asked.store(now_ms(), Ordering::SeqCst);
     let thread = THREAD.get_or_init(|| thread::Builder::new().name("loopback".into()).spawn(run).map(|h| h.thread().clone()).unwrap_or_else(|_| thread::current()));
-    if SHARED.asleep.swap(false, Ordering::Relaxed) {
+    if SHARED.asleep.swap(false, Ordering::SeqCst) {
         thread.unpark();
     }
-    if SHARED.state.load(Ordering::Relaxed) != LISTENING {
-        return None;
+    match SHARED.state.load(Ordering::Relaxed) {
+        LISTENING => {}
+        // Starting again: the levels are flat until the sound comes in.
+        STARTING if SHARED.worked.load(Ordering::Relaxed) => {}
+        _ => return None,
     }
     Some(std::array::from_fn(|i| f32::from_bits(SHARED.levels[i].load(Ordering::Relaxed))))
 }
 
 /// Open the device once and let it go at once, on a thread of its own. The first time Windows is asked to be listened to
-/// it takes most of a second, and every time after that a few milliseconds, so this is done early (when the program
-/// starts) so that the bars do not begin with the made-up ones.
+/// it takes most of a second, and every time after that a few milliseconds, so this is done as soon as a song plays,
+/// so that the bars do not begin with the made-up ones.
 pub fn warm() {
     static DONE: AtomicBool = AtomicBool::new(false);
     if DONE.swap(true, Ordering::Relaxed) {
@@ -357,10 +412,10 @@ fn run() {
         while !wanted() {
             SHARED.state.store(STARTING, Ordering::Relaxed);
             publish([0.0; BANDS]);
-            SHARED.asleep.store(true, Ordering::Relaxed);
+            SHARED.asleep.store(true, Ordering::SeqCst);
             // Asked just now? Then do not sleep after all.
             if wanted() {
-                SHARED.asleep.store(false, Ordering::Relaxed);
+                SHARED.asleep.store(false, Ordering::SeqCst);
                 break;
             }
             thread::park();
@@ -373,13 +428,22 @@ fn run() {
         let mut analyser = Analyser::new(capture.rate);
         let mut samples = Vec::with_capacity(4096);
         let mut last = Instant::now();
+        let mut checked = last;
         SHARED.state.store(LISTENING, Ordering::Relaxed);
+        SHARED.worked.store(true, Ordering::Relaxed);
         while wanted() {
             samples.clear();
             if capture.pump(&mut samples).is_none() {
                 break;
             }
             let now = Instant::now();
+            // Another device became the default: listen to that one instead.
+            if now.duration_since(checked) >= CHECK_DEFAULT {
+                checked = now;
+                if !capture.still_default() {
+                    break;
+                }
+            }
             if samples.is_empty() {
                 // Nothing is playing (the device sends nothing at all then).
                 analyser.idle(now.duration_since(last).as_secs_f32());
@@ -419,12 +483,7 @@ mod tests {
 
     #[test]
     fn the_fft_puts_a_sine_in_its_own_bin() {
-        let twiddle: Vec<(f32, f32)> = (0..FFT_N / 2)
-            .map(|k| {
-                let a = -std::f64::consts::TAU * k as f64 / FFT_N as f64;
-                (a.cos() as f32, a.sin() as f32)
-            })
-            .collect();
+        let twiddle = twiddles();
         // Bin 64 is 1500 Hz at 48 kHz: a sine on exactly that comes out at FFT_N / 2 in that bin and nowhere else.
         let mut re: Vec<f32> = (0..FFT_N).map(|i| (std::f32::consts::TAU * 64.0 * i as f32 / FFT_N as f32).sin()).collect();
         let mut im = vec![0.0; FFT_N];
@@ -510,6 +569,8 @@ mod tests {
         assert_eq!(describe(&format(1, 2, 32)), Some((48_000, 2, Sample::I32, 8)));
         assert_eq!(describe(&format(1, 2, 24)), None, "packed 24 bit is not read");
         assert_eq!(describe(&format(3, 0, 32)), None, "no channels");
+        assert_eq!(describe(&format(2, 2, 16)), None, "a packed kind (ADPCM) is not read");
+        assert_eq!(describe(&format(0xFFFE, 2, 32)), None, "an extensible format without its extra part is not looked into");
     }
 
     #[test]

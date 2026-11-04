@@ -352,8 +352,7 @@ fn every_line_under_a_label_fits_its_row_in_the_real_font() {
             }
         }
     }
-    // The note that was cut off: it now takes two lines, so the whole sentence shows.
-    let room = text_room(Kind::Text(Field::City), "", frame);
-    let note = CityField { status: CityStatus::Approximate, ..Default::default() }.note().0;
-    assert_eq!(crate::wrap(&font, &note, DESC_PX, room).len(), 2, "{note}");
+    // The note that was once cut off: short enough now for one line.
+    let room = text_room(Kind::Text(Field::City), "", frame);    let note = CityField { status: CityStatus::Approximate, ..Default::default() }.note().0;
+    assert_eq!(crate::wrap(&font, &note, DESC_PX, room).len(), 1, "{note}");
 }
