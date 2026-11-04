@@ -84,7 +84,7 @@ To update, run a newer setup, or use **Check for updates** in Settings > About. 
 
 Hover over the notch at the top edge of your screen to open it. Move away and it closes. It also pops up briefly when something changes on your PC, such as the volume or the battery.
 
-Closed, the notch shows the clock, or a pair of blinking eyes in one of ten styles. While a song plays it also shows the album cover as a spinning record, with a ring that fills as the song goes on, and moving bars. Choose the look in Settings > Notch.
+Closed, the notch shows the clock, or a pair of blinking eyes in one of ten styles. While a song plays it also shows the album cover as a spinning record, with a ring that fills as the song goes on, and five bars that rise and fall with the real loudness of the music. Choose the look in Settings > Notch.
 
 ## Questions
 
@@ -115,7 +115,7 @@ Settings > Notch > **Show on**: pick Screen 2 or Screen 3, or **All** to have it
 <details>
 <summary>How do I change the eyes, or turn off the record and the bars?</summary>
 
-Settings > Notch. **Eye style** is a grid of ten styles; pick one to see it on the notch. Under **Closed notch**, **Show music** turns the record and the bars off, or you can keep it and switch off **Moving bars**, **Spinning record** or **Edge glow** one by one.
+Settings > Notch. **Eye style** is a grid of ten styles; pick one to see it on the notch. Under **Closed notch**, **Show music** turns the record and the bars off, or you can keep it and switch off **Moving bars**, **Spinning record** or **Edge glow** one by one. **Bars follow the sound** makes the bars listen to the sound your PC plays; switched off, they move to a made-up beat.
 </details>
 
 <details>
@@ -144,6 +144,8 @@ Network requests, and why:
 - **Lyrics:** LRCLIB, with the song title, artist and length.
 - **Updates:** GitHub, to look for a newer version at start and every 6 hours (switch off in Settings > Notices). Nothing is downloaded until you press Download.
 
+**Sound:** while a song plays and the closed notch shows its bars, Sky Island listens to the sound your PC sends to the speakers or headphones (Windows calls it loopback) to make the bars follow the music. It only measures how loud each pitch is, about 45 times a second. Nothing is recorded, saved or sent, the microphone is not used, and it stops a moment after the bars go away. Switch it off with **Bars follow the sound** in Settings > Notch. It hears everything the PC plays, not only the song.
+
 To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whether one of those two keys was pressed. It never records or sends what you type. **Start with Windows** adds one startup entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 </details>
 
@@ -152,7 +154,7 @@ To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whet
 - Windows only.
 - Brightness notices work only on laptop screens whose driver reports the brightness.
 - Lyrics depend on what LRCLIB has.
-- The moving bars on the closed notch are an animation; they do not follow the real sound.
+- The bars on the closed notch follow all the sound the PC plays, not only the song, so a video or a notification moves them too. Some players that take the sound device for themselves (exclusive mode) cannot be listened to, and then the bars move to a made-up beat.
 - Weather and prayer times need an internet connection to refresh; the last ones are kept for offline use.
 
 ## License

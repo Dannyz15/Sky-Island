@@ -4,8 +4,8 @@
 //!
 //! The record turns slowly and a thin ring round it fills as the song goes on. The five bars rise and fall from the middle
 //! line, each in its own shade of the cover's colour, over a soft glow of the same colour. A thin line of that colour along
-//! the notch's edge breathes with the beat. All of it is a lively animation, not the real loudness of the music (the app
-//! does not listen to any sound).
+//! the notch's edge breathes with the beat. The bars and the beat follow the real loudness of the sound the PC plays
+//! (`loopback.rs`) unless that is switched off or cannot be listened to, and then they move to a made-up beat.
 
 use std::sync::OnceLock;
 
@@ -28,6 +28,7 @@ const EDGE: f32 = 9.0;
 const GAP: f32 = 14.0;
 
 const BARS: usize = 5;
+const _: () = assert!(crate::loopback::BANDS == BARS, "a band of sound for each bar");
 const BAR_W: f32 = 3.0;
 const BAR_GAP: f32 = 2.25;
 const BAR_MAX: f32 = 20.0;
@@ -185,7 +186,12 @@ impl App {
         let (mid, cy) = (fw / s / 2.0, height / 2.0);
         let half = self.centre_width() / 2.0;
         let t = seconds();
-        let beat = pulse(t, 0.0);
+        // The loudness of each band of the music, when it can be listened to; else the made-up beat and waves.
+        let sound = if self.settings.closed_sound && (self.settings.closed_bars || self.settings.closed_edge) { loopback::listen() } else { None };
+        let beat = match sound {
+            Some(l) => (0.7 * l[0] + 0.3 * l[1]).powf(1.4),
+            None => pulse(t, 0.0),
+        };
         let [ar, ag, ab] = self.art_shown.map(|c| c.round().clamp(0.0, 255.0) as u8);
         let accent = vivid([ar, ag, ab], 0.0);
         let rgba = |alpha: f32| [accent[0], accent[1], accent[2], (alpha.clamp(0.0, 1.0) * 255.0) as u8];
@@ -208,7 +214,10 @@ impl App {
 
         // The bars in the right slot, with one soft glow behind all of them that follows how high they are together.
         let bars_x = mid + half + GAP;
-        let levels: Vec<f32> = (0..BARS).map(|i| bar_level(i, t)).collect();
+        let levels: Vec<f32> = match sound {
+            Some(l) => l.to_vec(),
+            None => (0..BARS).map(|i| bar_level(i, t)).collect(),
+        };
         let energy = levels.iter().sum::<f32>() / BARS as f32;
         gfx::glow(pm, (bars_x + BARS_BLOCK / 2.0) * s, cy * s, 17.0 * s, rgba((0.12 + 0.5 * energy) * a), None);
         for (i, level) in levels.iter().enumerate() {

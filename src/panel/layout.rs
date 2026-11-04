@@ -30,6 +30,7 @@ pub(crate) enum Toggle {
     ClosedBars,
     ClosedSpin,
     ClosedEdge,
+    ClosedSound,
     EmptyShelf,
     HudVolume,
     HudBrightness,
@@ -256,6 +257,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Moving bars", "Five bars that rise and fall beside the clock (with Show music)", T(Toggle::ClosedBars), ""),
                     ("Spinning record", "The cover turns like a record; off keeps it still (with Show music)", T(Toggle::ClosedSpin), ""),
                     ("Edge glow", "A thin line along the notch in the cover's colour that breathes (with Show music)", T(Toggle::ClosedEdge), ""),
+                    ("Bars follow the sound", "Listens to the sound this PC plays, only while the bars show and only on this PC, so they rise with the music. Off, they move to a made-up beat", T(Toggle::ClosedSound), ""),
                 ],
             ),
             (

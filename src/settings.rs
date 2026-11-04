@@ -297,6 +297,8 @@ pub struct Settings {
     pub closed_bars: bool,
     pub closed_spin: bool,
     pub closed_edge: bool,
+    /// The bars follow the real loudness of the sound the PC plays (`loopback.rs`), not a made-up beat.
+    pub closed_sound: bool,
     /// The notch opens when it is clicked instead of when the mouse rests on it.
     pub open_on_click: bool,
     /// The calendar's weeks start on Monday (otherwise Sunday), and it shows one week instead of a month.
@@ -366,6 +368,7 @@ impl Default for Settings {
             closed_bars: true,
             closed_spin: true,
             closed_edge: true,
+            closed_sound: true,
             open_on_click: false,
             week_monday: true,
             calendar_week: false,
@@ -425,7 +428,7 @@ macro_rules! on_off_settings {
 }
 
 on_off_settings!(
-    hide_fullscreen, show_clock, clock_24h, eyes, idle_eyes, minimal, closed_music, closed_bars, closed_spin, closed_edge, open_on_click, week_monday, calendar_week,
+    hide_fullscreen, show_clock, clock_24h, eyes, idle_eyes, minimal, closed_music, closed_bars, closed_spin, closed_edge, closed_sound, open_on_click, week_monday, calendar_week,
     empty_shelf, hud_volume, hud_brightness, hud_lock, hud_battery, hud_network, hud_audio, hud_update, sound, clipboard,
     hide_island, water, timer, weather, fahrenheit, prayer, hud_prayer, asr_hanafi, hotkey, tab_music, tab_stats, tab_shelf, tab_todo, tab_calendar,
     tab_clipboard,
@@ -590,6 +593,7 @@ mod tests {
             closed_bars: false,
             closed_spin: false,
             closed_edge: false,
+            closed_sound: false,
             open_on_click: true,
             week_monday: false,
             calendar_week: true,

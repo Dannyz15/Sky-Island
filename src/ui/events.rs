@@ -55,6 +55,10 @@ impl ApplicationHandler<UserEvent> for App {
         self.sync_weather();
         self.prayer_tx = Some(prayer::spawn(self.proxy.clone()));
         self.sync_prayer();
+        // Windows is slow to be listened to the first time, so that is done now, before the bars need it.
+        if self.settings.closed_music && self.settings.closed_sound {
+            loopback::warm();
+        }
         self.refresh_edges();
         hotkey::start(self.proxy.clone(), self.settings.hotkey.then_some((self.settings.hotkey_mods, self.settings.hotkey_vk)));
         self.step();

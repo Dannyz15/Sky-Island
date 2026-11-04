@@ -55,7 +55,7 @@ fn a_page_scrolls_only_as_far_as_it_is_taller_than_the_window() {
         // Most pages fit the default window; About (a tall card) and Notch (all the notch settings) scroll a little.
         let limit = match page {
             Page::About => 330.0,
-            Page::Notch => 700.0,
+            Page::Notch => 760.0,
             Page::Tabs => 220.0,
             _ => 0.0,
         };
@@ -193,7 +193,7 @@ fn every_setting_is_on_exactly_one_page() {
             }
         }
     }
-    assert_eq!(toggles.len(), 34, "all thirty-four switches: {toggles:?}");
+    assert_eq!(toggles.len(), 35, "all thirty-five switches: {toggles:?}");
     for (i, a) in toggles.iter().enumerate() {
         assert!(!toggles[i + 1..].contains(a), "{a:?} is on two pages");
     }
