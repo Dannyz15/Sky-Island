@@ -148,9 +148,9 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
             let resync = if sent.as_ref().is_some_and(|state| state.playing) { RESYNC } else { RESYNC_IDLE };
             let wait = settle.iter().map(|t| t.saturating_duration_since(now)).min().unwrap_or(resync).min(resync);
             // A message from Windows or the UI, or a timer that says to read again.
-            let (msg, resubscribe, quiet) = match rx.recv_timeout(wait) {
-                Ok(msg) => (msg, true, false),
-                Err(RecvTimeoutError::Timeout) => (Msg::Refresh, false, resync_only),
+            let (msg, quiet) = match rx.recv_timeout(wait) {
+                Ok(msg) => (msg, false),
+                Err(RecvTimeoutError::Timeout) => (Msg::Refresh, resync_only),
                 Err(RecvTimeoutError::Disconnected) => break,
             };
             let session = manager.GetCurrentSession().ok();
@@ -172,12 +172,11 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
                 Msg::Refresh => {
                     let now = Instant::now();
                     settle.retain(|t| *t > now);
-                    // Re-subscribe when the active session changes.
-                    if resubscribe {
-                        subscribed = None;
-                        if let Some(s) = &session {
-                            subscribed = Subscription::new(s, tx.clone()).ok();
-                        }
+                    // Subscribe again only when the active session is not the one already subscribed to: a player
+                    // that reports every second would otherwise have its three registrations dropped and made again
+                    // each time, and what it said in between would be missed.
+                    if subscribed.as_ref().map(|s| &s.session) != session.as_ref() {
+                        subscribed = session.as_ref().and_then(|s| Subscription::new(s, tx.clone()).ok());
                     }
                     let state = match &session {
                         None => MediaState::default(),

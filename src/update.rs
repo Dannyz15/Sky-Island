@@ -305,6 +305,16 @@ fn download(version: &str, asset: &Asset, mut progress: impl FnMut(u32)) -> Opti
     let part = dir.join(format!("Sky-Island-Setup-{clean}.part"));
     let done = dir.join(format!("Sky-Island-Setup-{clean}.exe"));
 
+    // A setup that an earlier run downloaded and left (it is only cleaned up once this version or a newer one is
+    // installed): if it is exactly what the release describes, use it and do not fetch it again.
+    if let Ok(file) = fs::File::open(&done)
+        && matches(&file, asset)
+    {
+        drop(file);
+        progress(100);
+        return Some(done);
+    }
+
     let mut response = agent(900).get(&asset.url).header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION"))).call().ok()?;
     let total = response.body().content_length().unwrap_or(asset.size).max(1);
     let mut reader = response.body_mut().as_reader();

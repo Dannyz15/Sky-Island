@@ -69,7 +69,7 @@ impl App {
         let rgb = TODO_AMBER;
         let amber = [rgb[0], rgb[1], rgb[2], a];
         let width = EXPANDED.0 as f32 * s;
-        let (now, today, offset) = (todo::unix_now(), today_day(), tz_offset());
+        let (now, today, zone) = (todo::unix_now(), today_day(), localtime::Zone::System);
 
         if self.editing {
             self.draw_editor(pm, s, alpha);
@@ -116,7 +116,7 @@ impl App {
                 draw_check(pm, 28.0 * s, (y + 5.0) * s, 14.0 * s, task.done, amber, a);
 
                 // When it is due (or its day) as a small tag, so the text only gets the room that is left.
-                let when = task_when(task, today, now, offset, self.settings.clock_24h);
+                let when = task_when(task, today, now, zone, self.settings.clock_24h);
                 let tag_w = when.as_ref().map_or(0.0, |(label, _)| text_width(font, label, 10.0 * s) / s + 12.0);
                 let text_w = ((346.0 - 52.0 - 8.0) * s - tag_w * s).min(250.0 * s);
 

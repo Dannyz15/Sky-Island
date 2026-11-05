@@ -2,6 +2,7 @@
 //! or edited. It holds a day and a time of day for the reminder. This file has no drawing code;
 //! `main.rs` paints the panel from these rectangles.
 
+use crate::localtime::Zone;
 use crate::todo::{self, Task};
 
 pub type Rect = (f32, f32, f32, f32);
@@ -115,8 +116,8 @@ pub struct Clock {
     pub minutes: u32,
     /// Unix time in seconds.
     pub now: u64,
-    /// Local time minus UTC, in seconds.
-    pub offset: i64,
+    /// The clock that local times are read on (summer time included).
+    pub zone: Zone,
 }
 
 pub enum Outcome {
@@ -142,7 +143,7 @@ impl Editor {
     pub fn for_task(index: usize, task: &Task, clock: Clock) -> Self {
         match task.due {
             Some(due) => {
-                let (day, minutes) = todo::split_due(due, clock.offset);
+                let (day, minutes) = clock.zone.split(due);
                 Self { index: Some(index), date: Some(day), remind: true, minutes }
             }
             None => Self { index: Some(index), date: task.date, remind: false, minutes: default_minutes(task.date, clock) },
@@ -154,7 +155,7 @@ impl Editor {
         if !self.remind {
             return None;
         }
-        todo::compose_due(self.date?, self.minutes, clock.offset)
+        clock.zone.compose(self.date?, self.minutes)
     }
 
     /// What to say next to the time: how far away it is, and whether it is already past.
@@ -194,7 +195,7 @@ impl Editor {
             Action::In(mins) => {
                 // Round up to the next five minutes, so the time reads cleanly.
                 let at = (clock.now + u64::from(mins) * 60).div_ceil(300) * 300;
-                let (day, minutes) = todo::split_due(at, clock.offset);
+                let (day, minutes) = clock.zone.split(at);
                 self.date = Some(day);
                 self.minutes = minutes;
                 self.remind = true;
@@ -243,7 +244,7 @@ mod tests {
     fn clock() -> Clock {
         let today = crate::calendar::days_from_civil(2026, 10, 28);
         let offset = 8 * 3600;
-        Clock { today, minutes: 14 * 60 + 37, now: (today * 86_400 + (14 * 60 + 37) * 60 - offset) as u64, offset }
+        Clock { today, minutes: 14 * 60 + 37, now: (today * 86_400 + (14 * 60 + 37) * 60 - offset) as u64, zone: Zone::Fixed(offset) }
     }
 
     #[test]
@@ -301,7 +302,7 @@ mod tests {
     fn quick_choice_after_midnight_moves_to_the_next_day() {
         let mut c = clock();
         c.minutes = 23 * 60 + 50;
-        c.now = (c.today * 86_400 + c.minutes as i64 * 60 - c.offset) as u64;
+        c.now = (c.today * 86_400 + c.minutes as i64 * 60 - 8 * 3600) as u64;
         let mut e = Editor::new_task(None, c);
         e.apply(Action::In(60), c);
         assert_eq!(e.date, Some(c.today + 1));
@@ -315,14 +316,14 @@ mod tests {
         e.remind = true;
         e.minutes = 9 * 60;
         let due = e.due(c).unwrap();
-        assert_eq!(todo::split_due(due, c.offset), (c.today, 9 * 60));
+        assert_eq!(c.zone.split(due), (c.today, 9 * 60));
         assert_eq!(e.status(c), ("already past".to_string(), true));
     }
 
     #[test]
     fn editing_a_task_loads_its_date_and_time() {
         let c = clock();
-        let due = todo::compose_due(c.today + 2, 18 * 60 + 30, c.offset).unwrap();
+        let due = c.zone.compose(c.today + 2, 18 * 60 + 30).unwrap();
         let task = Task { text: "x".into(), done: false, due: Some(due), notified: false, date: None };
         let e = Editor::for_task(3, &task, c);
         assert_eq!((e.index, e.date, e.remind, e.minutes), (Some(3), Some(c.today + 2), true, 18 * 60 + 30));

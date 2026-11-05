@@ -104,12 +104,46 @@ fn keep_unread(path: &Path) -> bool {
     true
 }
 
+/// Writes that are in progress, one at a time, and the texts whose file was held by another program (the latest
+/// text for each path). One lock for all of it means two threads never write the same file (or the same `.tmp`)
+/// at once: the weather and prayer threads, the lyrics threads and the main thread all save through here.
+static WRITING: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
+static RETRYING: AtomicBool = AtomicBool::new(false);
+
+/// How often, and how many times, a text whose file was held is written again, on a thread of its own.
+const RETRY_EVERY: std::time::Duration = if cfg!(test) { std::time::Duration::from_millis(50) } else { std::time::Duration::from_millis(500) };
+const RETRY_TIMES: u32 = 40;
+
+/// Whether a failed replace is because another program has the file open (a sharing violation, a lock violation, or
+/// access denied, which is what Windows says when a file is renamed over while it is open).
+fn is_busy(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(5 | 32 | 33))
+}
+
 /// Replace a file with `text` all at once: the text is written to a temporary file next to it and then
-/// renamed over it, so the file is always either the old version or the new one, never half of one.
+/// renamed over it, so the file is always either the old version or the new one, never half of one. If another
+/// program holds the file at that moment (a virus scanner, a backup tool), the text is not dropped: it is written
+/// again a moment later, for about twenty seconds, and a newer text for the same file replaces it.
 pub fn write(path: &Path, text: &str) {
+    let Ok(mut waiting) = WRITING.lock() else { return };
     if !keep_unread(path) {
         return;
     }
+    match write_now(path, text) {
+        Ok(()) => waiting.retain(|(p, _)| p != path),
+        Err(e) if is_busy(&e) => {
+            match waiting.iter_mut().find(|(p, _)| p == path) {
+                Some(entry) => entry.1 = text.to_string(),
+                None => waiting.push((path.to_path_buf(), text.to_string())),
+            }
+            drop(waiting);
+            retry_later();
+        }
+        Err(_) => {}
+    }
+}
+
+fn write_now(path: &Path, text: &str) -> std::io::Result<()> {
     let mut temp = path.as_os_str().to_owned();
     temp.push(".tmp");
     let temp = PathBuf::from(temp);
@@ -119,6 +153,32 @@ pub fn write(path: &Path, text: &str) {
     if done.is_err() {
         let _ = fs::remove_file(&temp);
     }
+    done
+}
+
+/// Start the thread that writes the waiting texts again (one thread at a time).
+fn retry_later() {
+    if RETRYING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("store-retry".into()).spawn(|| {
+        for _ in 0..RETRY_TIMES {
+            std::thread::sleep(RETRY_EVERY);
+            let Ok(mut waiting) = WRITING.lock() else { break };
+            waiting.retain(|(path, text)| write_now(path, text).is_err_and(|e| is_busy(&e)));
+            if waiting.is_empty() {
+                break;
+            }
+        }
+        // Still held after all that: given up. The flag goes down under the lock, so a text that arrives now
+        // starts a new thread.
+        if let Ok(mut waiting) = WRITING.lock() {
+            waiting.clear();
+            RETRYING.store(false, Ordering::SeqCst);
+        } else {
+            RETRYING.store(false, Ordering::SeqCst);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -183,6 +243,46 @@ mod tests {
         write(&file, "[]");
         assert_eq!(fs::read_to_string(dir.join("todo.json.unread")).unwrap(), "the user's own");
         assert_eq!(fs::read_to_string(dir.join("todo.json.unread2")).unwrap(), "the defaults of the first start");
+    }
+
+    #[test]
+    fn a_save_while_the_file_is_held_is_made_when_it_is_let_go() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = scratch("held");
+        let file = dir.join("todo.json");
+        fs::write(&file, "[1]").unwrap();
+        // Another program has the file open and shares nothing, as a scanner can.
+        let hold = fs::OpenOptions::new().read(true).share_mode(0).open(&file).unwrap();
+        write(&file, "[1,2]");
+        assert_eq!(fs::read_to_string(dir.join("todo.json.tmp")).ok(), None, "no temporary file is left behind");
+        write(&file, "[1,2,3]");
+        drop(hold);
+        for _ in 0..100 {
+            if fs::read_to_string(&file).unwrap() == "[1,2,3]" {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        panic!("the newest text was never written: {}", fs::read_to_string(&file).unwrap());
+    }
+
+    #[test]
+    fn many_threads_saving_one_file_leave_a_whole_file() {
+        let dir = scratch("threads");
+        let file = dir.join("prayer.json");
+        let threads: Vec<_> = (0..8)
+            .map(|n| {
+                let file = file.clone();
+                std::thread::spawn(move || {
+                    for i in 0..20 {
+                        write(&file, &format!("{{\"n\": {n}, \"i\": {i}, \"pad\": \"{}\"}}", "x".repeat(2000)));
+                    }
+                })
+            })
+            .collect();
+        threads.into_iter().for_each(|t| t.join().unwrap());
+        assert!(read_json(&file).is_some(), "the file is whole JSON");
+        assert!(!dir.join("prayer.json.tmp").exists());
     }
 
     #[test]

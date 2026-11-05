@@ -12,6 +12,7 @@ mod gfx;
 mod hotkey;
 mod icon;
 mod location;
+mod localtime;
 mod loopback;
 mod lyrics;
 mod media;

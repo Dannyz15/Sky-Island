@@ -24,9 +24,10 @@ VersionInfoCopyright=Copyright (c) 2026 Dannyz15. MIT License.
 AppSupportURL=https://github.com/Dannyz15/Sky-Island
 DefaultDirName={autopf}\{#AppName}
 DisableProgramGroupPage=yes
-; Installs for the current user only, so no administrator prompt is needed.
+; Installs for the current user only, so no administrator prompt is needed. There is no "for all users" choice on
+; purpose: Setup would then run as an administrator, possibly another account than the person at the keyboard, and the
+; startup entry, the data folder question and the app's own settings all belong to the current user.
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 LicenseFile=..\LICENSE
 SetupIconFile=..\assets\icon.ico
 ; The welcome page is off by default in Inno Setup; turn it on so the big picture is shown.

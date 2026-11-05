@@ -2,6 +2,7 @@
 //! Each pushes a `Notice` to the UI only when something actually changes.
 
 use std::sync::mpsc::{self, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -27,7 +28,7 @@ use windows::Win32::System::SystemServices::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL, VK_NUMLOCK};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DispatchMessageW, GetMessageW, KBDLLHOOKSTRUCT, MSG,
-    PBT_POWERSETTINGCHANGE, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WM_KEYDOWN, WM_POWERBROADCAST, WM_SYSKEYDOWN,
+    PBT_POWERSETTINGCHANGE, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_POWERBROADCAST, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 use windows::core::{PCWSTR, Result, implement, w};
 use winit::event_loop::EventLoopProxy;
@@ -549,15 +550,23 @@ pub fn key_toggled(vk: i32) -> bool {
     unsafe { GetKeyState(vk) & 1 != 0 }
 }
 
+/// Whether Caps Lock and Num Lock are held down at the moment (set on the key going down, cleared on the key coming
+/// up). A key that is held sends its down message again and again; only the first one is a press.
+static LOCK_HELD: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
+
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 && matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN) {
+    let message = wparam.0 as u32;
+    if code >= 0 && matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP) {
         let key = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
         let lock = match key.vkCode {
-            v if v == VK_CAPITAL.0 as u32 => Some(("Caps Lock", VK_CAPITAL.0 as i32)),
-            v if v == VK_NUMLOCK.0 as u32 => Some(("Num Lock", VK_NUMLOCK.0 as i32)),
+            v if v == VK_CAPITAL.0 as u32 => Some(("Caps Lock", VK_CAPITAL.0 as i32, 0)),
+            v if v == VK_NUMLOCK.0 as u32 => Some(("Num Lock", VK_NUMLOCK.0 as i32, 1)),
             _ => None,
         };
-        if let (Some((name, vk)), Some(proxy)) = (lock, PROXY.get()) {
+        let down = matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN);
+        // The first message of a press only; a repeat of a held key, and the key coming up, are not a press.
+        let pressed = lock.is_some_and(|(_, _, slot)| LOCK_HELD[slot].swap(down, Ordering::Relaxed) != down) && down;
+        if let (true, Some((name, vk, _)), Some(proxy)) = (pressed, lock, PROXY.get()) {
             // Keep the hook fast (Windows drops slow hooks): wait for the key to take effect elsewhere.
             let proxy = proxy.clone();
             thread::spawn(move || {

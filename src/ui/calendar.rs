@@ -91,7 +91,7 @@ impl App {
         let amber = [TODO_AMBER[0], TODO_AMBER[1], TODO_AMBER[2], a];
         let rgb = self.accent(View::Calendar);
         let violet = [rgb[0], rgb[1], rgb[2], a];
-        let (today, now, offset) = (today_day(), todo::unix_now(), tz_offset());
+        let (today, now, zone) = (today_day(), todo::unix_now(), localtime::Zone::System);
         let selected = self.cal.selected;
 
         if self.editing {
@@ -193,7 +193,7 @@ impl App {
                 draw_check(pm, CAL_PANEL_X * s, (y + 4.0) * s, 12.0 * s, task.done, amber, a);
                 let color = if task.done { [120, 120, 130, a] } else { white };
                 // The time of a reminder, so the text only gets the room that is left.
-                let time = task.due.map(|due| split_clock(due, now, offset, self.settings.clock_24h, task.done));
+                let time = task.due.map(|due| split_clock(due, now, zone, self.settings.clock_24h, task.done));
                 let label_w = time.as_ref().map_or(0.0, |(label, _)| text_width(font, label, 9.0 * s));
                 let text_w = (128.0 * s - label_w - if label_w > 0.0 { 6.0 * s } else { 0.0 }).max(30.0 * s);
                 draw_text(pm, font, &task.text, (CAL_PANEL_X + 18.0) * s, (y + 14.0) * s, 11.0 * s, color, text_w);

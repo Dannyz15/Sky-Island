@@ -65,6 +65,35 @@ pub fn safe_path(path: &str) -> bool {
     !path.contains('"') && !path.chars().any(char::is_control)
 }
 
+/// How long a file on another computer gets to answer before it counts as out of reach, and how long that verdict
+/// holds (so the alarm that repeats does not start the wait again each time).
+const REACH_WAIT: std::time::Duration = std::time::Duration::from_millis(400);
+const OUT_OF_REACH: std::time::Duration = std::time::Duration::from_secs(60);
+static UNREACHABLE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// Whether a sound file can be reached. A file on this PC always can (it is simply tried). One on another computer
+/// is asked about on a thread of its own and given a moment: opening it for the alarm would block the notch for as
+/// long as Windows waits for a server that is gone, at the moment the alarm should ring. When it does not answer,
+/// the built-in chime plays instead.
+fn reachable(path: &Path) -> bool {
+    if !crate::shelf::is_remote(path) {
+        return true;
+    }
+    if UNREACHABLE.lock().is_ok_and(|last| last.is_some_and(|at| at.elapsed() < OUT_OF_REACH)) {
+        return false;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let probe = path.to_path_buf();
+    let _ = std::thread::spawn(move || {
+        let _ = tx.send(std::fs::metadata(probe).is_ok());
+    });
+    let ok = rx.recv_timeout(REACH_WAIT).unwrap_or(false);
+    if !ok && let Ok(mut last) = UNREACHABLE.lock() {
+        *last = Some(std::time::Instant::now());
+    }
+    ok
+}
+
 /// Play a sound file the user picked, without blocking, at `volume` percent. A file that is still
 /// playing is left alone, so a long song is not restarted by every repeat of the alarm. Returns
 /// whether it is playing; false means the file could not be played.
@@ -76,7 +105,7 @@ pub fn play_file(path: &Path, volume: u32) -> bool {
     mci(&format!("close {ALIAS}"));
     // Quotes are not allowed in Windows file names, so a path with one did not come from a real file (only from a
     // settings file edited by hand) and is refused: in the command it would end the name and add words of its own.
-    if !safe_path(&path.display().to_string()) {
+    if !safe_path(&path.display().to_string()) || !reachable(path) {
         return false;
     }
     if !mci(&format!("open \"{}\" type mpegvideo alias {ALIAS}", path.display())).0 {
@@ -142,6 +171,17 @@ fn wav(notes: &[(f32, f32, f32)], total: f32, loudness: f32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sound_on_another_computer_that_does_not_answer_is_not_waited_for() {
+        assert!(reachable(Path::new(r"C:\Windows\notepad.exe")), "a file on this PC is always tried");
+        let started = std::time::Instant::now();
+        assert!(!reachable(Path::new(r"\\sky-island-no-such-host.invalid\share\ring.wav")));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "the wait is short");
+        let again = std::time::Instant::now();
+        assert!(!reachable(Path::new(r"\\sky-island-no-such-host.invalid\share\ring.wav")));
+        assert!(again.elapsed() < std::time::Duration::from_millis(100), "the verdict is remembered");
+    }
 
     #[test]
     fn wav_has_a_valid_header_and_the_right_length() {

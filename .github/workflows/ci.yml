@@ -22,6 +22,15 @@ jobs:
       # Not one of GitHub's own actions, so it is pinned to an exact commit (version 2.9.3): a tag can be moved
       # to other code, a commit cannot. Dependabot proposes newer ones.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # The installer script has its own copy of the version. If it is not the one in Cargo.toml, the setup that is
+      # built has the wrong name and the app's update check refuses the release.
+      - name: Installer version matches Cargo.toml
+        shell: pwsh
+        run: |
+          $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $setup = (Select-String -Path installer/sky-island.iss -Pattern '#define AppVersion "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ($cargo -ne $setup) { throw "Cargo.toml says $cargo but installer/sky-island.iss says $setup" }
+          "Both say $cargo"
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests

@@ -1,6 +1,7 @@
 //! Dates, times and how they are written.
 
 use crate::*;
+use localtime::Zone;
 
 /// Today's local date as yyyymmdd.
 pub(crate) fn today() -> u32 {
@@ -30,40 +31,29 @@ pub(crate) fn fmt_clock(hour: u32, minute: u32, clock_24h: bool) -> String {
     }
 }
 
-/// Local time minus UTC in seconds, read from the system clock (rounded to a quarter hour).
-pub(crate) fn tz_offset() -> i64 {
-    use windows::Win32::System::SystemInformation::GetLocalTime;
-    let t = unsafe { GetLocalTime() };
-    let local = calendar::days_from_civil(t.wYear as i32, t.wMonth as u32, t.wDay as u32) * 86_400
-        + i64::from(t.wHour) * 3600
-        + i64::from(t.wMinute) * 60
-        + i64::from(t.wSecond);
-    ((local - todo::unix_now() as i64) as f64 / 900.0).round() as i64 * 900
-}
-
 /// Everything the task editor needs to know about the present moment.
 pub(crate) fn clock_now() -> editor::Clock {
     let (hour, minute, _, _) = local_time();
-    editor::Clock { today: today_day(), minutes: hour * 60 + minute, now: todo::unix_now(), offset: tz_offset() }
+    editor::Clock { today: today_day(), minutes: hour * 60 + minute, now: todo::unix_now(), zone: Zone::System }
 }
 
 /// The time of a reminder as text, and whether it is overdue. Finished tasks are never overdue.
-pub(crate) fn split_clock(due: u64, now: u64, offset: i64, clock_24h: bool, done: bool) -> (String, bool) {
+pub(crate) fn split_clock(due: u64, now: u64, zone: Zone, clock_24h: bool, done: bool) -> (String, bool) {
     if !done && due <= now {
         return ("overdue".to_string(), true);
     }
-    let (_, minutes) = todo::split_due(due, offset);
+    let (_, minutes) = zone.split(due);
     (fmt_clock(minutes / 60, minutes % 60, clock_24h), false)
 }
 
 /// What to show at the right of a task: when it is due, or else its day.
-pub(crate) fn task_when(task: &todo::Task, today: i64, now: u64, offset: i64, clock_24h: bool) -> Option<(String, bool)> {
+pub(crate) fn task_when(task: &todo::Task, today: i64, now: u64, zone: Zone, clock_24h: bool) -> Option<(String, bool)> {
     if let Some(due) = task.due {
-        let (time, overdue) = split_clock(due, now, offset, clock_24h, task.done);
+        let (time, overdue) = split_clock(due, now, zone, clock_24h, task.done);
         if overdue {
             return Some((time, true));
         }
-        let (day, _) = todo::split_due(due, offset);
+        let (day, _) = zone.split(due);
         let label = match day - today {
             0 => time,
             1 => format!("Tomorrow {time}"),
