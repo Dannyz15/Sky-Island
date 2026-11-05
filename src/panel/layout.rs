@@ -31,6 +31,7 @@ pub(crate) enum Toggle {
     ClosedSpin,
     ClosedEdge,
     ClosedSound,
+    LyricsOnline,
     EmptyShelf,
     HudVolume,
     HudBrightness,
@@ -283,6 +284,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 "Tabs",
                 vec![
                     ("Music", "What is playing, its controls and the lyrics", T(Toggle::TabMusic), ""),
+                    ("Find lyrics online", "Sends the title and artist of what plays to LRCLIB to find its lyrics. Off, only lyrics saved on this PC show", T(Toggle::LyricsOnline), ""),
                     ("Timer", "A countdown timer with an alarm", T(Toggle::Timer), ""),
                     ("Water tracker", "A daily glass counter with reminders", T(Toggle::Water), ""),
                     ("Weather", "The weather now and the days ahead for your city", T(Toggle::Weather), ""),

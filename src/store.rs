@@ -4,6 +4,8 @@
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::Value;
 
@@ -14,15 +16,54 @@ pub fn path(name: &str) -> Option<PathBuf> {
     Some(dir.join(name))
 }
 
-/// The JSON in a file. `None` when there is no file. A file that cannot be read or understood is not
-/// left in place, where the next save would overwrite it: it is renamed to `<name>.corrupt` (the
-/// previous copy of that is replaced), so the user can still get to what was in it.
+/// A file another program holds open (Windows error 32, a sharing violation, or 33, a lock violation) is tried
+/// again this many times, this far apart: a virus scanner or a backup tool lets go of it in a moment. Any other
+/// error (no right to read it, a bad disk) will not clear, so it is not waited for.
+const READ_TRIES: u32 = 5;
+const READ_WAIT: std::time::Duration = std::time::Duration::from_millis(150);
+
+fn is_locked(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(32 | 33))
+}
+
+/// Set when a file stayed locked through every try: the files after it are tried once, so a locked folder costs
+/// the start of the app about a second and not a second for each file.
+static GAVE_UP: AtomicBool = AtomicBool::new(false);
+
+/// Files that could not be read at all. They are not overwritten blindly: `write` first keeps a copy of what is in
+/// them.
+static UNREAD: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// The JSON in a file. `None` when there is no file. A file that is damaged (it is read, but it is not
+/// JSON) is not left in place, where the next save would overwrite it: it is renamed to `<name>.corrupt`
+/// (the previous copy of that is replaced), so the user can still get to what was in it. A file that
+/// cannot be read at all (an antivirus or a backup tool holds it at sign-in) is left alone and `None` is given,
+/// after a few tries if it is locked; `write` keeps a copy of it before it is first replaced.
 pub fn read_json(path: &Path) -> Option<Value> {
-    let parsed = match fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str::<Value>(&text).ok(),
-        Err(e) if e.kind() == ErrorKind::NotFound => return None,
-        Err(_) => None,
+    let tries = if GAVE_UP.load(Ordering::Relaxed) { 1 } else { READ_TRIES };
+    let mut tried = 0;
+    let text = loop {
+        tried += 1;
+        match fs::read_to_string(path) {
+            Ok(text) => break text,
+            Err(e) if e.kind() == ErrorKind::NotFound => return None,
+            // Not text at all: as damaged as a file can be.
+            Err(e) if e.kind() == ErrorKind::InvalidData => break String::new(),
+            Err(e) if is_locked(&e) && tried < tries => std::thread::sleep(READ_WAIT),
+            Err(e) => {
+                if is_locked(&e) {
+                    GAVE_UP.store(true, Ordering::Relaxed);
+                }
+                if let Ok(mut unread) = UNREAD.lock()
+                    && !unread.iter().any(|p| p == path)
+                {
+                    unread.push(path.to_path_buf());
+                }
+                return None;
+            }
+        }
     };
+    let parsed = serde_json::from_str::<Value>(&text).ok();
     if parsed.is_none() {
         let mut kept = path.as_os_str().to_owned();
         kept.push(".corrupt");
@@ -31,9 +72,44 @@ pub fn read_json(path: &Path) -> Option<Value> {
     parsed
 }
 
+/// How many copies of one file are kept at most (`.unread`, `.unread2`, ...).
+const UNREAD_COPIES: u32 = 5;
+
+/// For a file that could not be read when the app started: keep a copy of it as `<name>.unread` before it is
+/// replaced. A copy that is already there is never written over (it may be the only one of what the user had, while
+/// the file now holds the defaults an earlier start saved): the next free name is used, and when all are taken the
+/// oldest copies stay. Gives false when the copy cannot be made, so the file is not touched yet.
+fn keep_unread(path: &Path) -> bool {
+    let Ok(mut unread) = UNREAD.lock() else { return true };
+    let Some(i) = unread.iter().position(|p| p == path) else { return true };
+    if !path.exists() {
+        unread.remove(i);
+        return true;
+    }
+    for n in 1..=UNREAD_COPIES {
+        let mut name = path.as_os_str().to_owned();
+        name.push(if n == 1 { ".unread".to_string() } else { format!(".unread{n}") });
+        let copy = PathBuf::from(name);
+        if copy.exists() {
+            continue;
+        }
+        if fs::copy(path, &copy).is_ok() {
+            unread.remove(i);
+            return true;
+        }
+        return false;
+    }
+    // Every name is taken: the oldest copies are the ones to keep.
+    unread.remove(i);
+    true
+}
+
 /// Replace a file with `text` all at once: the text is written to a temporary file next to it and then
 /// renamed over it, so the file is always either the old version or the new one, never half of one.
 pub fn write(path: &Path, text: &str) {
+    if !keep_unread(path) {
+        return;
+    }
     let mut temp = path.as_os_str().to_owned();
     temp.push(".tmp");
     let temp = PathBuf::from(temp);
@@ -82,5 +158,37 @@ mod tests {
         assert!(read_json(&file).is_none());
         assert!(!file.exists(), "the next save writes a fresh file");
         assert_eq!(fs::read_to_string(dir.join("todo.json.corrupt")).unwrap(), "[{\"text\": \"buy milk\"", "what was in it is still there");
+    }
+
+    #[test]
+    fn a_file_that_could_not_be_read_is_copied_before_it_is_replaced() {
+        let dir = scratch("unread");
+        let file = dir.join("settings.json");
+        fs::write(&file, "{\"theme\": 1}").unwrap();
+        UNREAD.lock().unwrap().push(file.clone());
+        write(&file, "{}");
+        assert_eq!(fs::read_to_string(dir.join("settings.json.unread")).unwrap(), "{\"theme\": 1}", "what the user had is kept");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "{}");
+        write(&file, "[]");
+        assert_eq!(fs::read_to_string(dir.join("settings.json.unread")).unwrap(), "{\"theme\": 1}", "the copy is made only once");
+    }
+
+    #[test]
+    fn a_copy_that_is_already_there_is_never_written_over() {
+        let dir = scratch("unread-twice");
+        let file = dir.join("todo.json");
+        fs::write(dir.join("todo.json.unread"), "the user's own").unwrap();
+        fs::write(&file, "the defaults of the first start").unwrap();
+        UNREAD.lock().unwrap().push(file.clone());
+        write(&file, "[]");
+        assert_eq!(fs::read_to_string(dir.join("todo.json.unread")).unwrap(), "the user's own");
+        assert_eq!(fs::read_to_string(dir.join("todo.json.unread2")).unwrap(), "the defaults of the first start");
+    }
+
+    #[test]
+    fn only_a_held_file_is_waited_for() {
+        assert!(is_locked(&std::io::Error::from_raw_os_error(32)));
+        assert!(is_locked(&std::io::Error::from_raw_os_error(33)));
+        assert!(!is_locked(&std::io::Error::from_raw_os_error(5)), "access denied will not clear");
     }
 }

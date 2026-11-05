@@ -140,8 +140,8 @@ Network requests, and why:
 - **Weather:** Open-Meteo, with your city's coordinates.
 - **Prayer times:** Aladhan, with your city's coordinates. In Malaysia, JAKIM's e-Solat is asked instead, with only the code of your zone (for example SGR01).
 - **Your city** (only when you type it and press Enter): OpenStreetMap's Nominatim, with the name you typed.
-- **Detect my location** (only when you press it): Windows Location, then OpenStreetMap's Nominatim to name the place. If Windows Location is off, ipwho.is is asked instead and sees your IP address.
-- **Lyrics:** LRCLIB, with the song title, artist and length.
+- **Detect my location** (only when you press it): Windows Location, then OpenStreetMap's Nominatim to name the place. The position is rounded to about a kilometre first, so it is never more exact than your area, and that is also all that is saved and sent for the weather and prayer times. If Windows Location is off, ipwho.is is asked instead and sees your IP address.
+- **Lyrics:** LRCLIB, with the title, artist and length of what plays, also from a browser tab. Switch it off with **Find lyrics online** in Settings > Tabs; then only lyrics already saved on this PC show.
 - **Updates:** GitHub, to look for a newer version at start and every 6 hours (switch off in Settings > Notices). Nothing is downloaded until you press Download.
 
 **Sound:** while a song plays and the closed notch shows its bars, Sky Island listens to the sound your PC sends to the speakers or headphones (Windows calls it loopback) to make the bars follow the music. It only measures how loud each pitch is, about 45 times a second. Nothing is recorded, saved or sent, the microphone is not used, and it stops a moment after the bars go away. Switch it off with **Bars follow the sound** in Settings > Notch. It hears everything the PC plays, not only the song.

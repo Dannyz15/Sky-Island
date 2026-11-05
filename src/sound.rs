@@ -58,6 +58,13 @@ fn mci(command: &str) -> (bool, String) {
     (code == 0, String::from_utf16_lossy(&answer[..len]))
 }
 
+/// Whether a sound file path can be put in an MCI command in quotes as it is: no real file name has a quote or a
+/// control character, so a path that has one came from a settings file edited by hand. The one rule for the
+/// settings load and for playing.
+pub fn safe_path(path: &str) -> bool {
+    !path.contains('"') && !path.chars().any(char::is_control)
+}
+
 /// Play a sound file the user picked, without blocking, at `volume` percent. A file that is still
 /// playing is left alone, so a long song is not restarted by every repeat of the alarm. Returns
 /// whether it is playing; false means the file could not be played.
@@ -67,7 +74,11 @@ pub fn play_file(path: &Path, volume: u32) -> bool {
         return true;
     }
     mci(&format!("close {ALIAS}"));
-    // Quotes are not allowed in Windows file names, so the path can be quoted as it is.
+    // Quotes are not allowed in Windows file names, so a path with one did not come from a real file (only from a
+    // settings file edited by hand) and is refused: in the command it would end the name and add words of its own.
+    if !safe_path(&path.display().to_string()) {
+        return false;
+    }
     if !mci(&format!("open \"{}\" type mpegvideo alias {ALIAS}", path.display())).0 {
         return false;
     }

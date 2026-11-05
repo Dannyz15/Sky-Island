@@ -72,7 +72,9 @@ use ui::*;
 
 pub enum UserEvent {
     Media(MediaState),
-    Lyrics { key: String, fetched: lyrics::Fetched },
+    /// `online` is whether looking lyrics up online was on when the look began; an answer that began under the other
+    /// setting is not shown.
+    Lyrics { key: String, fetched: lyrics::Fetched, online: bool },
     Notice(sys::Notice),
     /// A lock key was pressed; its state is read on the UI thread.
     LockKey { name: &'static str, vk: i32 },

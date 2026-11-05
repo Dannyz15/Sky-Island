@@ -325,6 +325,10 @@ fn download(version: &str, asset: &Asset, mut progress: impl FnMut(u32)) -> Opti
         }
         hash.update(&buf[..n]);
         got += n as u64;
+        // More than the release says the setup is: it is not that setup, so stop before it fills the disk.
+        if got > asset.size {
+            break false;
+        }
         let percent = (got * 100 / total).min(100) as u32;
         if percent != last {
             last = percent;

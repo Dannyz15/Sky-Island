@@ -15,7 +15,7 @@ use windows::Win32::Media::Audio::{
     AUDIO_VOLUME_NOTIFICATION_DATA, DEVICE_STATE, EDataFlow, ERole, IMMDevice, IMMDeviceEnumerator, IMMNotificationClient,
     IMMNotificationClient_Impl, MMDeviceEnumerator, PKEY_AudioEndpoint_FormFactor, eConsole, eRender,
 };
-use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
+use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, GetDriveTypeW, OPEN_EXISTING};
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, STGM_READ};
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Power::{
@@ -567,6 +567,21 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         }
     }
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// What kind of drive a path with a drive letter ("C:\...") is on, as `GetDriveTypeW` says it: 2 removable, 3 fixed
+/// (hard disk or SSD), 4 network, 5 CD, 6 RAM disk; 0 and 1 mean it cannot be told or nothing is there. `None` for a
+/// path with no drive letter (a share such as `\\server\share`, or a relative path). Answered by this PC, so it
+/// never waits for a server.
+pub fn drive_type(path: &std::path::Path) -> Option<u32> {
+    let text = path.as_os_str().to_string_lossy();
+    let bytes = text.as_bytes();
+    if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
+        return None;
+    }
+    let root: Vec<u16> = format!(r"{}:\", bytes[0] as char).encode_utf16().chain([0]).collect();
+    // SAFETY: a NUL-terminated root such as "C:\"; the call only reads it.
+    Some(unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) })
 }
 
 #[cfg(test)]

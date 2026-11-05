@@ -202,9 +202,10 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::LockKey { name, vk } => {
                 self.show_notice(sys::Notice::Lock { name, on: sys::key_toggled(vk) });
             }
-            UserEvent::Lyrics { key, fetched } => {
-                // Ignore answers for a song that is no longer playing.
-                if key == self.lyrics_key {
+            UserEvent::Lyrics { key, fetched, online } => {
+                // Ignore answers for a song that is no longer playing, and ones that began before the lyrics
+                // switch was turned the other way.
+                if key == self.lyrics_key && online == self.settings.lyrics_online {
                     // A second look that finds nothing does not take away what the first one found.
                     let keep = !matches!(fetched, lyrics::Fetched::Lines(_)) && matches!(self.lyrics, LyricsState::Found(_));
                     self.lyrics_retry_at = None;
@@ -212,6 +213,7 @@ impl ApplicationHandler<UserEvent> for App {
                         lyrics::Fetched::Lines(l) => LyricsState::Found(l),
                         _ if keep => std::mem::replace(&mut self.lyrics, LyricsState::None),
                         lyrics::Fetched::NotFound => LyricsState::NotFound,
+                        lyrics::Fetched::Off => LyricsState::Off,
                         lyrics::Fetched::Unreachable => {
                             self.lyrics_retry_at = Some(Instant::now() + LYRICS_RETRY);
                             LyricsState::Unreachable
@@ -247,7 +249,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.lyric_v = 0.0;
                     (self.track_t, self.track_v) = (0.0, 0.0);
                     (self.lyrics_duration, self.lyrics_refetched) = (state.duration, false);
-                    lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.proxy.clone());
+                    lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.settings.lyrics_online, self.proxy.clone());
                 } else if !self.lyrics_refetched
                     && !state.duration.is_zero()
                     && state.duration.abs_diff(self.lyrics_duration) > Duration::from_secs(2)
@@ -255,13 +257,13 @@ impl ApplicationHandler<UserEvent> for App {
                     // The first look used no length or the old song's: look again, once, with the right one.
                     // What is shown stays until the answer comes.
                     (self.lyrics_duration, self.lyrics_refetched) = (state.duration, true);
-                    lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.proxy.clone());
+                    lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.settings.lyrics_online, self.proxy.clone());
                 } else if self.lyrics_retry_at.is_some_and(|at| Instant::now() >= at) {
                     // The lyrics site could not be reached a while ago: ask again. The message stays until the
                     // answer comes, and the next try is only planned if that one fails too.
                     self.lyrics_retry_at = None;
                     self.lyrics_duration = state.duration;
-                    lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.proxy.clone());
+                    lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.settings.lyrics_online, self.proxy.clone());
                 }
                 if let Some(art) = &state.art {
                     let art_key = format!("{}|{}|{}", state.title, state.artist, art.len());

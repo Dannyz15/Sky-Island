@@ -23,6 +23,8 @@ pub(crate) enum LyricsState {
     NotFound,
     /// The lyrics site could not be reached, which is not the same as the song having no lyrics.
     Unreachable,
+    /// Looking lyrics up online is switched off in Settings (and none are saved for the song).
+    Off,
     Found(Vec<Line>),
 }
 
@@ -166,6 +168,29 @@ impl App {
     pub(crate) fn snap_lyrics(&mut self) {
         self.lyric_pos = self.lyric_target();
         self.lyric_v = 0.0;
+    }
+
+    /// Look for the lyrics of the song that plays again, at once: used when the Find lyrics online switch is turned,
+    /// so the view does not wait for the player's next update to show the new state.
+    pub(crate) fn restart_lyrics(&mut self) {
+        self.lyrics_key.clear();
+        let m = &self.media;
+        if !m.has_session || m.title.is_empty() {
+            self.lyrics = LyricsState::None;
+            return;
+        }
+        let key = format!("{}|{}", m.title, m.artist);
+        self.lyrics_key = key.clone();
+        self.lyrics = LyricsState::Loading;
+        (self.lyric_manual, self.lyrics_retry_at) = (None, None);
+        (self.lyrics_duration, self.lyrics_refetched) = (m.duration, false);
+        crate::lyrics::spawn_fetch(key, m.title.clone(), m.artist.clone(), m.duration, self.settings.lyrics_online, self.proxy.clone());
+        self.snap_lyrics();
+        if self.progress > 0.0
+            && let Some(w) = &self.window
+        {
+            w.request_redraw();
+        }
     }
 
     /// Whether the lyrics were scrolled to somewhere other than the line being sung, so Sync is offered.
@@ -348,6 +373,7 @@ impl App {
                 LyricsState::Loading => "Searching for lyrics\u{2026}",
                 LyricsState::NotFound => "No synced lyrics found",
                 LyricsState::Unreachable => "Lyrics site unreachable",
+                LyricsState::Off => "Lyrics lookup is off in Settings",
                 _ => "Play something to see lyrics",
             };
             let y = (LYRIC_AREA.0 + LYRIC_AREA.1) / 2.0 + 5.0;

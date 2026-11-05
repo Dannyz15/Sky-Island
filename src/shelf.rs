@@ -9,6 +9,24 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::{UserEvent, store};
 
+/// Whether a path may be on another computer: a `\\server\share` path, or a drive letter that is a network drive
+/// or one that Windows cannot tell the kind of (a mapped drive whose server is gone reads as that). Such a path is
+/// never looked at by the app on its own (only when the user opens or drags it): asking about it can wait a long
+/// time for a server that is gone, and it makes Windows sign in to that server. (A removed USB stick reads the
+/// same, so its files stay on the shelf until it is back.)
+pub fn is_remote(path: &Path) -> bool {
+    let text = path.as_os_str().to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        // A long path: `\\?\C:\...` is on this PC, `\\?\UNC\server\...` is a share.
+        return rest.get(..4).is_some_and(|p| p.eq_ignore_ascii_case(r"UNC\")) || is_remote(Path::new(rest));
+    }
+    if text.starts_with(r"\\") || text.starts_with("//") {
+        return true;
+    }
+    // 0 cannot be told, 1 no such root, 4 network.
+    crate::sys::drive_type(path).is_some_and(|kind| matches!(kind, 0 | 1 | 4))
+}
+
 /// Look for files that are gone, on a thread of its own: a file on a network drive that cannot be reached can
 /// take a long time to answer, and the app should not wait for it to start. The missing ones come back as
 /// `UserEvent::ShelfMissing`.
@@ -16,7 +34,7 @@ pub fn check_in_background(paths: Vec<PathBuf>, proxy: EventLoopProxy<UserEvent>
     std::thread::spawn(move || {
         // One at a time, each reported as soon as it is known, so a slow path does not hold back the others.
         for path in paths {
-            if !path.exists() {
+            if !is_remote(&path) && !path.exists() {
                 let _ = proxy.send_event(UserEvent::ShelfMissing(vec![path]));
             }
         }
@@ -100,7 +118,8 @@ impl Shelf {
     /// Drop entries whose files no longer exist, e.g. after one was moved by a drag.
     pub fn prune(&mut self) {
         let before = self.items.len();
-        self.items.retain(|p| p.exists());
+        // A file on another computer is kept: it is not asked about (see `is_remote`).
+        self.items.retain(|p| is_remote(p) || p.exists());
         if self.items.len() != before {
             self.clamp_scroll();
             self.save();
@@ -129,9 +148,32 @@ pub fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-/// Upper-case extension for the tile badge, or "FILE" / "DIR".
+/// Upper-case extension for the tile badge, or "FILE" / "DIR". It is drawn every frame, so whether a path is a
+/// folder is asked only once for each, and never for one on another computer.
 pub fn badge(path: &Path) -> String {
-    if path.is_dir() {
+    use std::time::{Duration, Instant};
+    /// How long an answer is kept, and how many paths are remembered at most.
+    const KEEP: Duration = Duration::from_secs(30);
+    const MAX: usize = 200;
+    thread_local! {
+        static FOLDERS: std::cell::RefCell<std::collections::HashMap<PathBuf, (bool, Instant)>> = Default::default();
+    }
+    let folder = FOLDERS.with(|f| {
+        let mut known = f.borrow_mut();
+        // Found by reference first: nothing is allocated for a path that is already known.
+        if let Some(&(folder, at)) = known.get(path)
+            && at.elapsed() < KEEP
+        {
+            return folder;
+        }
+        if known.len() >= MAX {
+            known.clear();
+        }
+        let folder = !is_remote(path) && path.is_dir();
+        known.insert(path.to_path_buf(), (folder, Instant::now()));
+        folder
+    });
+    if folder {
         return "DIR".into();
     }
     match path.extension().and_then(|e| e.to_str()) {
@@ -214,6 +256,16 @@ mod tests {
             s.remove(0);
         }
         assert_eq!(s.scroll, 0);
+    }
+
+    #[test]
+    fn a_path_on_another_computer_is_told_apart() {
+        assert!(is_remote(&p(r"\\server\share\a.txt")));
+        assert!(is_remote(&p("//server/share/a.txt")));
+        assert!(is_remote(&p(r"\\?\UNC\server\share\a.txt")));
+        assert!(!is_remote(&p(r"\\?\C:\Users\a.txt")));
+        assert!(!is_remote(&p(r"C:\Windows\notepad.exe")));
+        assert!(!is_remote(&p("relative.txt")));
     }
 
     #[test]

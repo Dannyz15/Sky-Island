@@ -409,8 +409,16 @@ fn from_cache(v: &Value) -> Option<Table> {
 
 /// The days kept from last time, if they are for this request.
 pub fn load_cache(req: &Request) -> Option<Table> {
-    let t = from_cache(&store::read_json(&store::path("prayer.json")?)?)?;
-    t.is_for(req).then_some(t)
+    let mut t = from_cache(&store::read_json(&store::path("prayer.json")?)?)?;
+    if !t.is_for(req) {
+        return None;
+    }
+    // Days kept before positions were rounded: written again with the rounded one.
+    if (t.lat, t.lon) != (req.place.lat, req.place.lon) {
+        (t.lat, t.lon) = (req.place.lat, req.place.lon);
+        save_cache(&t);
+    }
+    Some(t)
 }
 
 fn save_cache(t: &Table) {

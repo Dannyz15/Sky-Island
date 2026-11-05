@@ -44,17 +44,24 @@ impl Place {
 
     pub fn from_json(v: &Value) -> Option<Place> {
         let name = v.get("name")?.as_str()?.trim().to_string();
-        let (lat, lon) = (v.get("lat")?.as_f64()?, v.get("lon")?.as_f64()?);
+        let (lat, lon) = (coarse(v.get("lat")?.as_f64()?), coarse(v.get("lon")?.as_f64()?));
         let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
         let (tz, cc) = (text("tz"), text("cc"));
         let on_earth = (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon);
         (!name.is_empty() && on_earth).then_some(Place { name, lat, lon, tz, cc })
     }
 
-    /// Whether `other` is the same spot.
+    /// Whether `other` is the same spot. A place is kept to two decimals (see `coarse`), and a cache from before
+    /// that was kept to more, so a difference of up to half of the last decimal is the same spot.
     pub fn same_spot(&self, lat: f64, lon: f64) -> bool {
-        (self.lat - lat).abs() < 1e-6 && (self.lon - lon).abs() < 1e-6
+        (self.lat - lat).abs() < 0.006 && (self.lon - lon).abs() < 0.006
     }
+}
+
+/// A coordinate to two decimals (about a kilometre). That is all the weather, the prayer times and the name of
+/// the city need, so a position more exact than that (Windows Location can find the house) is never sent or kept.
+pub fn coarse(degrees: f64) -> f64 {
+    (degrees * 100.0).round() / 100.0
 }
 
 /// One day of the forecast. Temperatures are in degrees Celsius.
@@ -251,8 +258,16 @@ fn from_cache(v: &Value) -> Option<Report> {
 /// The forecast kept from the last time, if it is for this place.
 pub fn load_cache(place: &Place) -> Option<Report> {
     let v = store::read_json(&store::path("weather.json")?)?;
-    let r = from_cache(&v)?;
-    place.same_spot(r.lat, r.lon).then_some(r)
+    let mut r = from_cache(&v)?;
+    if !place.same_spot(r.lat, r.lon) {
+        return None;
+    }
+    // A forecast kept before positions were rounded: written again with the rounded one.
+    if (r.lat, r.lon) != (place.lat, place.lon) {
+        (r.lat, r.lon) = (place.lat, place.lon);
+        save_cache(&r);
+    }
+    Some(r)
 }
 
 /// What goes into weather.json: the answer in the shape Open-Meteo gave it, so reading it back is the same code.
@@ -482,7 +497,7 @@ mod tests {
         let p = place_from_search(&results()).unwrap();
         assert_eq!(p.name, "Springfield, Illinois, United States");
         assert_eq!((p.tz.as_str(), p.cc.as_str()), ("", "US"), "Nominatim gives no time zone");
-        assert!(p.same_spot(39.7990175, -89.6439575));
+        assert!(p.same_spot(39.8, -89.64), "to about a kilometre");
     }
 
     #[test]
@@ -507,10 +522,10 @@ mod tests {
     #[test]
     fn the_place_an_internet_connection_seems_to_be_in_is_read() {
         let kl = json!({ "success": true, "country": "Malaysia", "country_code": "MY", "region": "Kuala Lumpur", "city": "Kuala Lumpur",
-            "latitude": 3.1411762, "longitude": 101.6865331, "timezone": { "id": "Asia/Kuala_Lumpur" } });
+            "latitude": 3.1511762, "longitude": 101.6865331, "timezone": { "id": "Asia/Kuala_Lumpur" } });
         let p = place_from_ip(&kl).unwrap();
         assert_eq!((p.name.as_str(), p.cc.as_str(), p.tz.as_str()), ("Kuala Lumpur, Malaysia", "MY", "Asia/Kuala_Lumpur"));
-        assert!(p.same_spot(3.1411762, 101.6865331));
+        assert!(p.same_spot(3.15, 101.69), "to about a kilometre");
         // No city: the region will do. Nothing at all, or a refusal: no place.
         let region = json!({ "success": true, "country": "Malaysia", "country_code": "MY", "region": "Selangor", "city": "", "latitude": 3.0, "longitude": 101.5 });
         assert_eq!(place_from_ip(&region).unwrap().name, "Selangor, Malaysia");

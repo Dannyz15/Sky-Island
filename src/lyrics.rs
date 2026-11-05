@@ -27,6 +27,8 @@ pub enum Fetched {
     NotFound,
     /// LRCLIB could not be reached or is failing, which says nothing about the song.
     Unreachable,
+    /// Looking lyrics up online is switched off, and none are saved for this song.
+    Off,
 }
 
 /// The name a song's lyrics are cached under: the song and its length, because versions of one song
@@ -37,11 +39,13 @@ fn cache_key(key: &str, duration: Duration) -> Option<String> {
 }
 
 /// Look up lyrics on a background thread; the result arrives as `UserEvent::Lyrics`.
-pub fn spawn_fetch(key: String, title: String, artist: String, duration: Duration, proxy: EventLoopProxy<UserEvent>) {
+/// Find the lyrics of a song: the saved ones, else (when `online`) from LRCLIB.
+pub fn spawn_fetch(key: String, title: String, artist: String, duration: Duration, online: bool, proxy: EventLoopProxy<UserEvent>) {
     thread::spawn(move || {
         let cached = cache_key(&key, duration);
         let looked = match cached.as_deref().and_then(load_cached) {
             Some(lrc) => Looked::Found(lrc),
+            None if !online => Looked::Off,
             None => {
                 let looked = fetch(&title, &artist, duration);
                 if let (Looked::Found(lrc), Some(name)) = (&looked, &cached) {
@@ -57,8 +61,9 @@ pub fn spawn_fetch(key: String, title: String, artist: String, duration: Duratio
             },
             Looked::NotFound => Fetched::NotFound,
             Looked::Unreachable => Fetched::Unreachable,
+            Looked::Off => Fetched::Off,
         };
-        let _ = proxy.send_event(UserEvent::Lyrics { key, fetched });
+        let _ = proxy.send_event(UserEvent::Lyrics { key, fetched, online });
     });
 }
 
@@ -66,6 +71,7 @@ enum Looked {
     Found(String),
     NotFound,
     Unreachable,
+    Off,
 }
 
 /// Whether a failed request says that LRCLIB itself is the problem (no connection, a timeout, a server

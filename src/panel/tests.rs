@@ -193,7 +193,7 @@ fn every_setting_is_on_exactly_one_page() {
             }
         }
     }
-    assert_eq!(toggles.len(), 35, "all thirty-five switches: {toggles:?}");
+    assert_eq!(toggles.len(), 36, "all thirty-six switches: {toggles:?}");
     for (i, a) in toggles.iter().enumerate() {
         assert!(!toggles[i + 1..].contains(a), "{a:?} is on two pages");
     }

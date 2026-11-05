@@ -328,12 +328,31 @@ fn ticks(t: i64) -> Duration {
     Duration::from_nanos(t.max(0) as u64 * 100)
 }
 
+/// The most bytes of album art that are read. Real covers are well under 1 MB; a player (or a web page,
+/// through the browser's media session) can hand over anything, and a bigger one is left out.
+const ART_MAX_BYTES: u64 = 8 * 1024 * 1024;
+/// The largest cover that is decoded, across and down, and the most memory the decoding may take.
+const ART_MAX_SIDE: u32 = 4096;
+const ART_MAX_ALLOC: u64 = 96 * 1024 * 1024;
+
+/// Decode a cover within the limits above (`None` for one that is too big or not a picture).
+fn decode_art(bytes: &[u8]) -> Option<image::DynamicImage> {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(ART_MAX_SIDE);
+    limits.max_image_height = Some(ART_MAX_SIDE);
+    limits.max_alloc = Some(ART_MAX_ALLOC);
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
+    reader.limits(limits);
+    reader.decode().ok()
+}
+
 fn read_art(r: &IRandomAccessStreamReference) -> Result<Option<Vec<u8>>> {
     let stream = r.OpenReadAsync()?.join()?;
-    let size = stream.Size()? as u32;
-    if size == 0 {
+    let size = stream.Size()?;
+    if size == 0 || size > ART_MAX_BYTES {
         return Ok(None);
     }
+    let size = size as u32;
     let buffer = Buffer::Create(size)?;
     let buffer = stream
         .ReadAsync(&buffer, size, InputStreamOptions::None)?
@@ -342,7 +361,7 @@ fn read_art(r: &IRandomAccessStreamReference) -> Result<Option<Vec<u8>>> {
     let mut bytes = vec![0u8; buffer.Length()? as usize];
     reader.ReadBytes(&mut bytes)?;
 
-    let Ok(img) = image::load_from_memory(&bytes) else {
+    let Some(img) = decode_art(&bytes) else {
         return Ok(None);
     };
     let img = img.resize_to_fill(ART_SIZE, ART_SIZE, image::imageops::FilterType::Triangle);
@@ -356,6 +375,21 @@ pub const fn art_size() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        use image::ImageEncoder;
+        let mut out = Vec::new();
+        let pixels = vec![200u8; (width * height * 4) as usize];
+        image::codecs::png::PngEncoder::new(&mut out).write_image(&pixels, width, height, image::ExtendedColorType::Rgba8).unwrap();
+        out
+    }
+
+    #[test]
+    fn a_cover_is_decoded_only_within_the_limits() {
+        assert!(decode_art(&png(64, 64)).is_some());
+        assert!(decode_art(&png(ART_MAX_SIDE + 1, 1)).is_none(), "too wide");
+        assert!(decode_art(b"not a picture").is_none());
+    }
 
     fn filetime_now() -> i64 {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();

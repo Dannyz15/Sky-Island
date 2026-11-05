@@ -299,6 +299,9 @@ pub struct Settings {
     pub closed_edge: bool,
     /// The bars follow the real loudness of the sound the PC plays (`loopback.rs`), not a made-up beat.
     pub closed_sound: bool,
+    /// Look up the lyrics of what plays on LRCLIB (its title, artist and length are sent there). Off, only lyrics
+    /// already saved on this PC show.
+    pub lyrics_online: bool,
     /// The notch opens when it is clicked instead of when the mouse rests on it.
     pub open_on_click: bool,
     /// The calendar's weeks start on Monday (otherwise Sunday), and it shows one week instead of a month.
@@ -369,6 +372,7 @@ impl Default for Settings {
             closed_spin: true,
             closed_edge: true,
             closed_sound: true,
+            lyrics_online: true,
             open_on_click: false,
             week_monday: true,
             calendar_week: false,
@@ -428,7 +432,7 @@ macro_rules! on_off_settings {
 }
 
 on_off_settings!(
-    hide_fullscreen, show_clock, clock_24h, eyes, idle_eyes, minimal, closed_music, closed_bars, closed_spin, closed_edge, closed_sound, open_on_click, week_monday, calendar_week,
+    hide_fullscreen, show_clock, clock_24h, eyes, idle_eyes, minimal, closed_music, closed_bars, closed_spin, closed_edge, closed_sound, lyrics_online, open_on_click, week_monday, calendar_week,
     empty_shelf, hud_volume, hud_brightness, hud_lock, hud_battery, hud_network, hud_audio, hud_update, sound, clipboard,
     hide_island, water, timer, weather, fahrenheit, prayer, hud_prayer, asr_hanafi, hotkey, tab_music, tab_stats, tab_shelf, tab_todo, tab_calendar,
     tab_clipboard,
@@ -437,7 +441,18 @@ on_off_settings!(
 impl Settings {
     pub fn load() -> Self {
         match Self::path().and_then(|p| store::read_json(&p)) {
-            Some(v) => Self::from_json(&v),
+            Some(v) => {
+                let settings = Self::from_json(&v);
+                // A place saved before positions were rounded (to about a kilometre) is written again at once, so
+                // the exact position does not stay on the disk.
+                let raw = v.get("place").map(|p| (p.get("lat").and_then(Value::as_f64), p.get("lon").and_then(Value::as_f64)));
+                if let (Some(place), Some(raw)) = (&settings.place, raw)
+                    && raw != (Some(place.lat), Some(place.lon))
+                {
+                    settings.save();
+                }
+                settings
+            }
             None => Self::default(),
         }
     }
@@ -474,7 +489,8 @@ impl Settings {
         out.volume = num("volume", VOLUME, out.volume);
         out.alarm_every = num("alarm_every", ALARM_EVERY, out.alarm_every);
         out.alarm_for = num("alarm_for", ALARM_FOR, out.alarm_for);
-        out.alarm_sound = v.get("alarm_sound").and_then(Value::as_str).filter(|p| !p.is_empty()).map(PathBuf::from);
+        // A quote cannot be in a real file name (see `sound::play_file`), so such a value is dropped.
+        out.alarm_sound = v.get("alarm_sound").and_then(Value::as_str).filter(|p| !p.is_empty() && crate::sound::safe_path(p)).map(PathBuf::from);
         out.place = v.get("place").and_then(Place::from_json);
         let number = |k: &str| v.get(k).and_then(Value::as_u64).map(|n| n.min(u64::from(u32::MAX)) as u32);
         if let (Some(mods), Some(vk)) = (number("hotkey_mods"), number("hotkey_vk"))
@@ -538,13 +554,21 @@ fn quoted_target(value: &str) -> Option<&str> {
     value.trim().strip_prefix('"')?.split('"').next().filter(|path| !path.is_empty())
 }
 
+/// Whether `path` is surely gone: it would be on a hard disk or SSD of this PC, and is not there. A program on a
+/// USB stick or a network drive is never taken as gone (the drive may not be ready yet when Windows starts, and
+/// asking a network drive can wait long and makes Windows sign in to it).
+fn surely_gone(path: &std::path::Path) -> bool {
+    const DRIVE_FIXED: u32 = 3;
+    crate::sys::drive_type(path) == Some(DRIVE_FIXED) && !path.exists()
+}
+
 /// Whether the app is registered to start with Windows, after removing an entry that points to a program that
 /// is gone (a portable copy that was started with Windows and then deleted). Run when the app starts.
 pub fn repair_autostart() -> bool {
     let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(RUN_KEY, KEY_READ | KEY_SET_VALUE);
     let Ok(key) = key else { return false };
     let Ok(value) = key.get_value::<String, _>(RUN_NAME) else { return false };
-    if quoted_target(&value).is_some_and(|path| !std::path::Path::new(path).exists()) {
+    if quoted_target(&value).is_some_and(|path| surely_gone(std::path::Path::new(path))) {
         let _ = key.delete_value(RUN_NAME);
         return false;
     }
@@ -594,6 +618,7 @@ mod tests {
             closed_spin: false,
             closed_edge: false,
             closed_sound: false,
+            lyrics_online: false,
             open_on_click: true,
             week_monday: false,
             calendar_week: true,
@@ -626,7 +651,7 @@ mod tests {
             prayer_method: 17,
             prayer_zone: "SGR03".into(),
             asr_hanafi: true,
-            place: Some(Place { name: "Kuala Lumpur, Malaysia".into(), lat: 3.1412, lon: 101.69, tz: "Asia/Kuala_Lumpur".into(), cc: "MY".into() }),
+            place: Some(Place { name: "Kuala Lumpur, Malaysia".into(), lat: 3.15, lon: 101.69, tz: "Asia/Kuala_Lumpur".into(), cc: "MY".into() }),
             theme: ThemeMode::System,
             motion: Motion::Snappy,
             open_delay: 150,
@@ -654,6 +679,14 @@ mod tests {
         assert_eq!(Settings::from_json(&wrong), defaults);
         // Numbers are held to their range.
         assert_eq!(Settings::from_json(&json!({ "volume": 5000 })).volume, VOLUME.max);
+    }
+
+    #[test]
+    fn an_alarm_sound_with_a_quote_in_it_is_dropped() {
+        let bad = Settings::from_json(&json!({ "alarm_sound": "x.mp3\" type waveaudio alias other" }));
+        assert_eq!(bad.alarm_sound, None, "no real file name has a quote");
+        let good = Settings::from_json(&json!({ "alarm_sound": "C:/Sounds/ring.wav" }));
+        assert_eq!(good.alarm_sound, Some(PathBuf::from("C:/Sounds/ring.wav")));
     }
 
     #[test]

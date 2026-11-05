@@ -121,6 +121,7 @@ impl App {
             Toggle::ClosedSpin => self.settings.closed_spin,
             Toggle::ClosedEdge => self.settings.closed_edge,
             Toggle::ClosedSound => self.settings.closed_sound,
+            Toggle::LyricsOnline => self.settings.lyrics_online,
             Toggle::EmptyShelf => self.settings.empty_shelf,
             Toggle::HudVolume => self.settings.hud_volume,
             Toggle::HudBrightness => self.settings.hud_brightness,
@@ -167,6 +168,11 @@ impl App {
             Toggle::ClosedSpin => self.settings.closed_spin = !self.settings.closed_spin,
             Toggle::ClosedEdge => self.settings.closed_edge = !self.settings.closed_edge,
             Toggle::ClosedSound => self.settings.closed_sound = !self.settings.closed_sound,
+            Toggle::LyricsOnline => {
+                self.settings.lyrics_online = !self.settings.lyrics_online;
+                // Look again for the song that plays, now with or without the lyrics site.
+                self.restart_lyrics();
+            }
             Toggle::EmptyShelf => self.settings.empty_shelf = !self.settings.empty_shelf,
             Toggle::HudVolume => self.settings.hud_volume = !self.settings.hud_volume,
             Toggle::HudBrightness => self.settings.hud_brightness = !self.settings.hud_brightness,

@@ -46,7 +46,8 @@ fn windows_position() -> Option<(f64, f64)> {
     let position = locator.GetGeopositionAsyncWithAgeAndTimeout(span(MAX_AGE), span(FIND_TIME)).ok()?.join().ok()?;
     let p = position.Coordinate().ok()?.Point().ok()?.Position().ok()?;
     let on_earth = (-90.0..=90.0).contains(&p.Latitude) && (-180.0..=180.0).contains(&p.Longitude);
-    on_earth.then_some((p.Latitude, p.Longitude))
+    // Only to about a kilometre: the city is all that is needed, not the house.
+    on_earth.then_some((weather::coarse(p.Latitude), weather::coarse(p.Longitude)))
 }
 
 /// The place Nominatim names for coordinates, to the city. `None` when it could not be asked.
