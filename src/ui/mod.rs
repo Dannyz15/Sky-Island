@@ -10,6 +10,7 @@ mod events;
 pub(crate) mod eyes;
 mod icons;
 mod input;
+mod mirrors;
 mod notice;
 mod player;
 mod prayer;
@@ -38,6 +39,10 @@ pub(crate) use companion::*;
 pub(crate) use notice::*;
 pub(crate) use shelf::*;
 pub(crate) use timer::*;
+pub(crate) use mirrors::Mirror;
+pub(crate) use window::display_number;
+#[cfg(test)]
+pub(crate) use window::screen_by_order;
 pub(crate) use todo::*;
 pub(crate) use weather::draw_moon;
 pub(crate) use window::*;

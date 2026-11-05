@@ -36,6 +36,7 @@ mod controls;
 mod keys;
 mod layout;
 mod paint;
+mod screens;
 mod scroll;
 mod spot;
 #[cfg(test)]
@@ -49,6 +50,7 @@ use changelog::*;
 use city::*;
 use controls::*;
 use layout::*;
+use screens::*;
 use scroll::*;
 use spot::*;
 use values::*;

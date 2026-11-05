@@ -286,6 +286,71 @@ impl App {
                     }
                 }
             }
+            Kind::ScreenMap => {
+                // The connected screens as they sit in Windows' layout, each with its number; the one the notch is on
+                // is lit in the page's colour with a little notch drawn at its top, and the tile under the mouse
+                // brightens. At the right, All lights every screen.
+                let screens = self.detected_screens();
+                let rects = tiles(item.ctrl, &screens);
+                // Its own range of keys for the glows, so they never meet those of another row.
+                let own = key + (1u64 << 40);
+                let all = self.settings.screen == Screen::All;
+                let lights_all = self.settings.screen.follows();
+                // The screen the notch is on right now (with All, the one the mouse last touched the top of).
+                let here = self.window.as_ref().and_then(|w| self.island_monitor(w)).map(|m| (m.position().x, m.position().y));
+                for (i, (d, t)) in screens.iter().zip(&rects).enumerate() {
+                    let (x, y, w, h) = (t.0 * s, t.1 * s, t.2 * s, t.3 * s);
+                    let over = panel.glows.fade(own + i as u64, inside(*t, cx, cy));
+                    let target = if is_chosen(d, self.settings.screen) { 1.0 } else if lights_all { 0.6 } else { 0.0 };
+                    let lit = panel.glows.follow(own + 16 + i as u64, target, 30.0, 0.8) as f32;
+                    crate::fill_rounded(pm, x, y, w, h, 6.0 * s, [255, 255, 255, (14.0 + 22.0 * over) as u8]);
+                    if lit > 0.01 {
+                        gfx::gradient_rounded(pm, x, y, w, h, 6.0 * s, [accent[0], accent[1], accent[2], (140.0 * lit) as u8], [accent[0], accent[1], accent[2], (86.0 * lit) as u8], false);
+                        gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, 6.0 * s, s, [accent[0], accent[1], accent[2], (170.0 * lit) as u8]);
+                    }
+                    // The notch, small, at the top middle of the screen it is on now. (With All every screen is lit the
+                    // same, so this is what says where it is at the moment.)
+                    let on = panel.glows.follow(own + 32 + i as u64, if here == Some((d.x, d.y)) { 1.0 } else { 0.0 }, 30.0, 0.8) as f32;
+                    let pill = (t.2 * 0.3).clamp(8.0, 22.0);
+                    let pill_colour = if lit > 0.3 { [10, 10, 14, (230.0 * on) as u8] } else { [255, 255, 255, (170.0 * on) as u8] };
+                    crate::fill_rounded(pm, x + (w - pill * s) / 2.0, y + 1.0 * s, pill * s, 3.5 * s, 1.75 * s, pill_colour);
+                    let ink = crate::pick(grey, white, lit.max(over * 0.6));
+                    let mid = (x + w / 2.0, y + h / 2.0);
+                    if t.2 >= 34.0 && t.3 >= 22.0 {
+                        let sub = t.3 >= 40.0 && t.2 >= 52.0;
+                        crate::draw_text_centered(pm, font, &d.order.to_string(), mid.0, mid.1 + if sub { 0.0 } else { 5.0 * s }, 15.0 * s, ink, w - 4.0 * s);
+                        if sub {
+                            let text = if d.primary { "Main".to_string() } else { format!("{}\u{00D7}{}", d.w, d.h) };
+                            crate::draw_text_centered(pm, font, &text, mid.0, mid.1 + 12.0 * s, 9.0 * s, [ink[0], ink[1], ink[2], 200], w - 4.0 * s);
+                        }
+                    } else {
+                        crate::draw_text_centered(pm, font, &d.order.to_string(), mid.0, mid.1 + 4.0 * s, 10.0 * s, ink, w);
+                    }
+                }
+                if screens.len() > 1 {
+                    // All: the notch follows the mouse. Every: a closed notch on each screen, the touched one opens.
+                    let every = self.settings.screen == Screen::Every;
+                    for (n, (tile, name, note, on)) in [(all_tile(item.ctrl), "All", "follows mouse", all), (every_tile(item.ctrl), "Every", "all closed", every)].into_iter().enumerate() {
+                        let (x, y, w, h) = (tile.0 * s, tile.1 * s, tile.2 * s, tile.3 * s);
+                        let over = panel.glows.fade(own + 48 + 2 * n as u64, inside(tile, cx, cy));
+                        let lit = panel.glows.follow(own + 49 + 2 * n as u64, if on { 1.0 } else { 0.0 }, 30.0, 0.8) as f32;
+                        crate::fill_rounded(pm, x, y, w, h, 8.0 * s, [255, 255, 255, (14.0 + 22.0 * over) as u8]);
+                        if lit > 0.01 {
+                            gfx::gradient_rounded(pm, x, y, w, h, 8.0 * s, [accent[0], accent[1], accent[2], (140.0 * lit) as u8], [accent[0], accent[1], accent[2], (86.0 * lit) as u8], false);
+                            gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, 8.0 * s, s, [accent[0], accent[1], accent[2], (170.0 * lit) as u8]);
+                        }
+                        let ink = crate::pick(grey, white, lit.max(over * 0.6));
+                        crate::draw_text_centered(pm, font, name, x + w / 2.0, y + h / 2.0 + 0.0 * s, 12.5 * s, ink, w - 6.0 * s);
+                        crate::draw_text_centered(pm, font, note, x + w / 2.0, y + h / 2.0 + 11.0 * s, 8.0 * s, [ink[0], ink[1], ink[2], 200], w - 4.0 * s);
+                    }
+                } else {
+                    // One screen: nothing to choose between, and nothing to follow.
+                    let tile = (item.ctrl.0 + item.ctrl.2 - 66.0, item.ctrl.1, 66.0, item.ctrl.3);
+                    let (x, y, w, h) = (tile.0 * s, tile.1 * s, tile.2 * s, tile.3 * s);
+                    crate::draw_text_centered(pm, font, "One screen", x + w / 2.0, y + h / 2.0 - 2.0 * s, 9.5 * s, [150, 150, 160, 255], w - 4.0 * s);
+                    crate::draw_text_centered(pm, font, "connected", x + w / 2.0, y + h / 2.0 + 10.0 * s, 9.5 * s, [150, 150, 160, 255], w - 4.0 * s);
+                }
+            }
             Kind::Slider(slide) => {
                 let range = range_of(slide);
                 let v = self.slider_get(slide);

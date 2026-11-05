@@ -197,7 +197,7 @@ fn every_setting_is_on_exactly_one_page() {
     for (i, a) in toggles.iter().enumerate() {
         assert!(!toggles[i + 1..].contains(a), "{a:?} is on two pages");
     }
-    assert_eq!(segs.len(), 10);
+    assert_eq!(segs.len(), 9);
     assert_eq!(slides.len(), 5);
     assert_eq!(picks, 1);
 }
@@ -279,6 +279,18 @@ fn the_eye_picker_has_a_tile_for_every_style_and_they_fit_its_control() {
     assert!(row_height("x", Kind::EyeGrid, 1) > EYE_GRID.1);
     let on_notch = layout(Page::Notch, frame_for(WIDTH as f32)).items.iter().filter(|i| matches!(i.kind, Kind::EyeGrid)).count();
     assert_eq!(on_notch, 1);
+}
+
+#[test]
+fn the_screen_picker_is_on_the_notch_page_once_and_its_row_is_tall_enough() {
+    let lay = layout(Page::Notch, frame_for(WIDTH as f32));
+    let rows: Vec<_> = lay.items.iter().filter(|i| matches!(i.kind, Kind::ScreenMap)).collect();
+    assert_eq!(rows.len(), 1);
+    assert!(row_height("x", Kind::ScreenMap, 1) > SCREEN_MAP.1);
+    let ctrl = rows[0].ctrl;
+    assert_eq!((ctrl.2, ctrl.3), SCREEN_MAP);
+    // The picker sits inside its row and does not run into the text of the row.
+    assert!(ctrl.1 >= rows[0].row.1 && ctrl.1 + ctrl.3 <= rows[0].row.1 + rows[0].row.3);
 }
 
 #[test]

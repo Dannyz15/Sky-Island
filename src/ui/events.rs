@@ -139,18 +139,12 @@ impl ApplicationHandler<UserEvent> for App {
                 self.last_tick = Instant::now();
                 self.refresh_edges();
                 self.step();
-            }
-            UserEvent::FollowTo(screen) => {
-                if self.settings.screen == settings::Screen::All && self.follow != Some(screen) {
-                    // The notch moves to the screen the mouse touched the top of, and the other screens are watched instead.
-                    self.follow = Some(screen);
-                    self.rate_read = None;
-                    self.monitor_area = None;
-                    self.last_tick = Instant::now();
-                    self.refresh_edges();
-                    self.step();
+                // The screen picker in Settings shows what is connected: draw it again for a screen that came or went.
+                if let Some(p) = &mut self.panel {
+                    p.redraw();
                 }
             }
+            UserEvent::FollowTo(screen) => self.follow_to(screen),
             UserEvent::Icon { path, icon } => {
                 // Only for a file still on the shelf: it may have been removed while the icon was loading.
                 if let Some(slot) = self.icons.get_mut(&path) {
@@ -286,6 +280,15 @@ impl ApplicationHandler<UserEvent> for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if self.panel.as_ref().is_some_and(|p| p.id() == id) {
             self.panel_event(event);
+            return;
+        }
+        // The copies of the notch on the other screens take no part in anything: they are only drawn again if asked.
+        if self.is_mirror(id) {
+            match event {
+                WindowEvent::RedrawRequested => self.draw_mirrors(true),
+                WindowEvent::CursorEntered { .. } | WindowEvent::CursorMoved { .. } => self.mirror_touched(id),
+                _ => {}
+            }
             return;
         }
         match event {
@@ -566,6 +569,10 @@ impl ApplicationHandler<UserEvent> for App {
             }
         }
 
+        if self.mirrors_wanted {
+            self.mirrors_wanted = false;
+            self.sync_mirrors(event_loop);
+        }
         if self.panel_wanted {
             self.panel_wanted = false;
             self.open_panel(event_loop);

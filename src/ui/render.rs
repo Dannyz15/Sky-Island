@@ -169,24 +169,10 @@ impl App {
             }
         }
 
-        // Collapsed: show the countdown while the timer runs.
+        // What the closed notch shows (the clock or eyes, the song, the timer's countdown) and a notice, while closed.
         let collapsed_alpha = ((1.0 - self.progress.clamp(0.0, 1.0) * 2.0).clamp(0.0, 1.0) * (1.0 - self.ov_t.clamp(0.0, 1.0))) as f32;
-        if collapsed_alpha > 0.0 {
-            if let (true, Some(font)) = (self.timer.running(), &self.font) {
-                let text = fmt_remaining(self.timer.remaining(Instant::now()));
-                let color = [255, 255, 255, (collapsed_alpha * 255.0) as u8];
-                draw_text_centered(&mut pixmap, self.heading_font().unwrap_or(font), &text, fw / 2.0, (self.closed_size().1 as f32 / 2.0 + 5.0) * s, 13.0 * s, color, fw);
-            } else {
-                self.draw_companion(&mut pixmap, s, collapsed_alpha, fw);
-            }
-            self.draw_closed_music(&mut pixmap, s, collapsed_alpha, fw);
-        }
-
-        // System notice (volume, battery...) in the compact notch.
         let notice_alpha = self.ov_t.clamp(0.0, 1.0) as f32 * (1.0 - self.progress.clamp(0.0, 1.0) as f32 * 2.0).clamp(0.0, 1.0);
-        if let (true, Some(notice)) = (notice_alpha > 0.02, &self.notice) {
-            self.draw_notice(&mut pixmap, notice, s, notice_alpha, fw);
-        }
+        self.draw_closed_content(&mut pixmap, s, fw, collapsed_alpha, notice_alpha);
 
         // Put the notch in the middle of the window and add the flares on both sides of its top edge.
         let Some(mut out) = Pixmap::new(full_w.get(), h.get()) else { return };
@@ -204,6 +190,48 @@ impl App {
                 | src.blue() as u32;
         }
         buffer.present().ok();
+        // The copies of this notch on other screens are drawn with it, so they always show the same.
+        self.draw_mirrors(false);
+    }
+
+    /// What the closed notch shows on top of its body: the countdown while the timer runs, else the clock or the eyes,
+    /// with the record and the bars while a song plays, and then a system notice (volume, battery...) in the compact
+    /// notch. `s` is the scale it is drawn at and `fw` the width of the notch's picture. Used for the real notch and for
+    /// the copies of it on the other screens.
+    pub(crate) fn draw_closed_content(&self, pixmap: &mut Pixmap, s: f32, fw: f32, collapsed_alpha: f32, notice_alpha: f32) {
+        if collapsed_alpha > 0.0 {
+            if let (true, Some(font)) = (self.timer.running(), &self.font) {
+                let text = fmt_remaining(self.timer.remaining(Instant::now()));
+                let color = [255, 255, 255, (collapsed_alpha * 255.0) as u8];
+                draw_text_centered(pixmap, self.heading_font().unwrap_or(font), &text, fw / 2.0, (self.closed_size().1 as f32 / 2.0 + 5.0) * s, 13.0 * s, color, fw);
+            } else {
+                self.draw_companion(pixmap, s, collapsed_alpha, fw);
+            }
+            self.draw_closed_music(pixmap, s, collapsed_alpha, fw);
+        }
+        if let (true, Some(notice)) = (notice_alpha > 0.02, &self.notice) {
+            self.draw_notice(pixmap, notice, s, notice_alpha, fw);
+        }
+    }
+
+    /// The closed notch as a finished picture (the flares on its sides included) for a screen that is drawn at scale
+    /// `s`, as the window of that screen shows it. `None` if there is no room for it.
+    pub(crate) fn closed_picture(&self, s: f32) -> Option<Pixmap> {
+        let ov = self.ov_t.clamp(0.0, 1.0);
+        let closed = self.closed_size();
+        let (lw, lh) = (lerp(closed.0, OVERLAY.0, ov), lerp(closed.1, OVERLAY.1, ov));
+        let ear = (EAR as f32 * s).round();
+        let full_w = ((lw as f32 + 2.0 * EAR as f32) * s).round().max(1.0) as u32;
+        let h = (lh as f32 * s).round().max(1.0) as u32;
+        let w = full_w.checked_sub(2 * ear as u32).filter(|w| *w > 0)?;
+        let mut pixmap = Pixmap::new(w, h)?;
+        pixmap.fill(Color::TRANSPARENT);
+        self.paint_body(&mut pixmap, s, ear, 0.0);
+        self.draw_closed_content(&mut pixmap, s, w as f32, (1.0 - ov) as f32, ov as f32);
+        let mut out = Pixmap::new(full_w, h)?;
+        gfx::blit_over(&mut out, &pixmap, ear as i32, 0);
+        draw_ears(&mut out, ear);
+        Some(out)
     }
 
     /// The notch itself on a blank picture: square top edge, rounded bottom corners, a dark gradient, a faint

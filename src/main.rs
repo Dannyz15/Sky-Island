@@ -316,6 +316,13 @@ struct App {
     system_light: bool,
     /// The settings window, while it is open.
     panel: Option<Panel>,
+    /// With Show on = Every: the copies of the closed notch on the other screens (`ui/mirrors.rs`).
+    mirrors: Vec<Mirror>,
+    /// The copies are to be made or taken away the next time the event loop is free to (windows are made from it).
+    mirrors_wanted: bool,
+    /// When they were last drawn, and last put in front of other always-on-top windows.
+    mirror_drawn: Instant,
+    mirror_raised: Instant,
     /// Open the settings window the next time the event loop is free to (a click cannot create a window).
     panel_wanted: bool,
     /// The page the settings window should show when it opens.
@@ -496,6 +503,10 @@ impl App {
             beat: Instant::now(),
             system_light: false,
             panel: None,
+            mirrors: Vec::new(),
+            mirrors_wanted: false,
+            mirror_drawn: Instant::now(),
+            mirror_raised: Instant::now(),
             panel_wanted: false,
             panel_page: None,
             update: update::Status::Idle,

@@ -86,10 +86,18 @@ impl App {
 
     /// The screen the island is on: the one the Screen setting names, if it is connected, otherwise the main
     /// screen.
-    fn island_monitor(&self, window: &Window) -> Option<winit::monitor::MonitorHandle> {
+    pub(crate) fn island_monitor(&self, window: &Window) -> Option<winit::monitor::MonitorHandle> {
         // With All, the notch is on the screen the mouse last touched the top of (the main one until then).
-        let wanted = if self.settings.screen == settings::Screen::All { self.follow } else { self.settings.screen.display_number() };
-        let chosen = wanted.and_then(|n| window.available_monitors().find(|m| m.name().and_then(|name| display_number(&name)) == Some(n)));
+        let monitors: Vec<_> = window.available_monitors().collect();
+        let wanted = if self.settings.screen.follows() {
+            self.follow
+        } else {
+            // "Display 2" is the second screen in order, not the one whose device name ends in 2: the names count up
+            // every time a screen is plugged in (a second screen is often DISPLAY5), Windows' own Display 2 does not.
+            let devices: Vec<u32> = monitors.iter().filter_map(|m| m.name().and_then(|name| display_number(&name))).collect();
+            self.settings.screen.display_number().and_then(|n| screen_by_order(&devices, n))
+        };
+        let chosen = wanted.and_then(|n| monitors.into_iter().find(|m| m.name().and_then(|name| display_number(&name)) == Some(n)));
         chosen.or_else(|| window.primary_monitor()).or_else(|| window.current_monitor())
     }
 
@@ -118,8 +126,10 @@ impl App {
     /// touching that screen's top edge (`edge.rs`); otherwise nothing is watched. Run when the setting or the screens
     /// change and when the notch has moved.
     pub(crate) fn refresh_edges(&mut self) {
+        // The closed notches on the other screens (for Every) are made or taken away to match, when the loop is next free.
+        self.mirrors_wanted = true;
         let Some(window) = self.window.clone() else { return };
-        if self.settings.screen != settings::Screen::All {
+        if !self.settings.screen.follows() {
             self.follow = None;
             edge::disable();
             return;
@@ -144,6 +154,20 @@ impl App {
         } else {
             edge::enable(self.proxy.clone());
             edge::set_zones(zones);
+        }
+    }
+
+    /// The notch goes to a screen (given by its device number): the one the mouse touched the top of, or came onto a
+    /// copy of the notch on. Only with a Show on setting that follows the mouse.
+    pub(crate) fn follow_to(&mut self, screen: u32) {
+        if self.settings.screen.follows() && self.follow != Some(screen) {
+            // The notch moves there, and the other screens are watched instead.
+            self.follow = Some(screen);
+            self.rate_read = None;
+            self.monitor_area = None;
+            self.last_tick = Instant::now();
+            self.refresh_edges();
+            self.step();
         }
     }
 
@@ -309,9 +333,14 @@ impl App {
     /// The scale the Size setting asks for. Auto keeps the island the same share of the screen's width
     /// (normal at 1536 logical pixels, which is a 1920 pixel screen at 125 percent).
     fn target_k(&self) -> f64 {
+        self.k_for(self.screen_w)
+    }
+
+    /// The Size setting's scale on a screen that is `screen_w` logical pixels wide (Auto depends on the width).
+    pub(crate) fn k_for(&self, screen_w: f64) -> f64 {
         match self.settings.size.factor() {
             Some(k) => k,
-            None => ((self.screen_w / 1536.0).clamp(0.9, 1.3) * 20.0).round() / 20.0,
+            None => ((screen_w / 1536.0).clamp(0.9, 1.3) * 20.0).round() / 20.0,
         }
     }
 
@@ -426,14 +455,23 @@ impl App {
 }
 
 /// The number Windows gives a screen, from the device name winit reports (`\\.\DISPLAY2` is 2).
-fn display_number(device: &str) -> Option<u32> {
+pub(crate) fn display_number(device: &str) -> Option<u32> {
     let digits: String = device.chars().rev().take_while(char::is_ascii_digit).collect::<Vec<_>>().into_iter().rev().collect();
     digits.parse().ok()
 }
 
+/// The device number of the screen that is number `n` (1 is the first) when the connected screens are put in order of
+/// their device numbers; `None` if there are fewer than `n` screens.
+pub(crate) fn screen_by_order(devices: &[u32], n: u32) -> Option<u32> {
+    let mut sorted = devices.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    sorted.get((n as usize).checked_sub(1)?).copied()
+}
+
 /// How far down from the top of the screen the usable area starts: more than zero when a taskbar (or any
 /// other bar) is docked along the top.
-fn top_inset(monitor: &winit::monitor::MonitorHandle) -> i32 {
+pub(crate) fn top_inset(monitor: &winit::monitor::MonitorHandle) -> i32 {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
     use winit::platform::windows::MonitorHandleExtWindows;
@@ -469,6 +507,17 @@ fn next_beat(beat: Instant, frame: Duration, now: Instant) -> (Instant, Instant)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_two_is_the_second_screen_whatever_its_device_name() {
+        // A second screen that Windows named DISPLAY5, because others came and went.
+        assert_eq!(screen_by_order(&[1, 5], 2), Some(5));
+        assert_eq!(screen_by_order(&[5, 1], 2), Some(5), "the order they were listed in does not matter");
+        assert_eq!(screen_by_order(&[1, 2, 7], 3), Some(7));
+        assert_eq!(screen_by_order(&[1, 5], 3), None, "no third screen");
+        assert_eq!(screen_by_order(&[1], 2), None, "no second screen: the main one is used");
+        assert_eq!(screen_by_order(&[1, 5], 0), None);
+    }
 
     #[test]
     fn a_screen_is_known_by_the_number_in_its_device_name() {

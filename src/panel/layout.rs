@@ -66,7 +66,6 @@ pub(super) enum Seg {
     WeekStart,
     CalView,
     ClipKeep,
-    Screen,
     Units,
     Asr,
 }
@@ -123,6 +122,8 @@ pub(super) enum Kind {
     Link(&'static str),
     /// The eye picker: a tile for each style, each showing a pair of eyes drawn the way the closed notch draws them.
     EyeGrid,
+    /// The map of the connected screens, to choose where the notch is.
+    ScreenMap,
 }
 
 /// The pages of the window, in the order of the sidebar.
@@ -210,7 +211,7 @@ pub(super) type RowSpec = (&'static str, &'static str, Kind, &'static str);
 
 /// The groups (title and rows) on a page.
 pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
-    use Kind::{Button, Cycle, EyeGrid, Link, Pick, Seg as S, Slider, Text, Toggle as T};
+    use Kind::{Button, Cycle, EyeGrid, Link, Pick, ScreenMap, Seg as S, Slider, Text, Toggle as T};
     match page {
         Page::General => vec![
             ("Startup", vec![("Start with Windows", "Open Sky Island when you sign in", T(Toggle::Autostart), "")]),
@@ -247,7 +248,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
             ),
             (
                 "Screen",
-                vec![("Show on", "Which screen the notch is on; All follows your mouse to the screen you touch the top of", S(Seg::Screen), "")],
+                vec![("Show on", "Click a screen. All follows your mouse; Every keeps a closed notch on each screen", ScreenMap, "")],
             ),
             (
                 "Closed notch",
@@ -479,6 +480,7 @@ fn ctrl_rect(kind: Kind, btn: &str, row: Rect) -> Rect {
         }
         Kind::Link(_) => (right - 260.0, mid - 14.0, 260.0, 28.0),
         Kind::EyeGrid => (right - EYE_GRID.0, mid - EYE_GRID.1 / 2.0, EYE_GRID.0, EYE_GRID.1),
+        Kind::ScreenMap => (right - SCREEN_MAP.0, mid - SCREEN_MAP.1 / 2.0, SCREEN_MAP.0, SCREEN_MAP.1),
     }
 }
 
@@ -527,6 +529,9 @@ pub(super) fn layout_with(page: Page, frame: Frame, lines: &dyn Fn(Kind, &'stati
 pub(super) fn row_height(desc: &str, kind: Kind, lines: usize) -> f32 {
     if matches!(kind, Kind::EyeGrid) {
         return EYE_GRID.1 + 28.0;
+    }
+    if matches!(kind, Kind::ScreenMap) {
+        return SCREEN_MAP.1 + 28.0;
     }
     if desc.is_empty() && !matches!(kind, Kind::Button(Act::CheckUpdate)) {
         return 40.0;

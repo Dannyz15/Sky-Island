@@ -17,8 +17,6 @@ pub(super) const VIEW_NAMES: [&str; 2] = ["Month", "Week"];
 
 pub(super) const KEEP_NAMES: [&str; 4] = ["Never", "5 min", "30 min", "1 hour"];
 
-pub(super) const SCREEN_NAMES: [&str; 4] = ["Main", "Screen 2", "Screen 3", "All"];
-
 pub(super) const ASR_NAMES: [&str; 2] = ["Standard", "Hanafi"];
 
 pub(super) const UNITS_NAMES: [&str; 2] = ["\u{00B0}C", "\u{00B0}F"];
@@ -31,7 +29,6 @@ pub(super) fn seg_weights(seg: Seg) -> &'static [f32] {
         Seg::Size => &[1.0, 1.0, 1.0, 1.0, 1.0],
         Seg::Open | Seg::WeekStart | Seg::CalView | Seg::Units | Seg::Asr => &[1.0, 1.0],
         Seg::ClipKeep => &[1.0, 1.0, 1.0, 1.0],
-        Seg::Screen => &[1.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -43,7 +40,6 @@ pub(super) fn seg_width(seg: Seg) -> f32 {
         Seg::Open | Seg::CalView => 170.0,
         Seg::WeekStart => 190.0,
         Seg::ClipKeep => 270.0,
-        Seg::Screen => 300.0,
         Seg::Units => 130.0,
         Seg::Asr => 190.0,
     }
@@ -73,7 +69,6 @@ pub(super) fn seg_names(seg: Seg) -> &'static [&'static str] {
         Seg::WeekStart => &WEEK_NAMES,
         Seg::CalView => &VIEW_NAMES,
         Seg::ClipKeep => &KEEP_NAMES,
-        Seg::Screen => &SCREEN_NAMES,
         Seg::Units => &UNITS_NAMES,
         Seg::Asr => &ASR_NAMES,
     }
@@ -275,7 +270,6 @@ impl App {
             Seg::WeekStart => usize::from(self.settings.week_monday),
             Seg::CalView => usize::from(self.settings.calendar_week),
             Seg::ClipKeep => ClipKeep::ALL.iter().position(|k| *k == self.settings.clip_keep).unwrap_or(0),
-            Seg::Screen => Screen::ALL.iter().position(|s| *s == self.settings.screen).unwrap_or(0),
             Seg::Units => usize::from(self.settings.fahrenheit),
             Seg::Asr => usize::from(self.settings.asr_hanafi),
         }
@@ -290,7 +284,6 @@ impl App {
             Seg::WeekStart => self.settings.week_monday = i == 1,
             Seg::CalView => self.settings.calendar_week = i == 1,
             Seg::ClipKeep => self.settings.clip_keep = ClipKeep::ALL[i.min(3)],
-            Seg::Screen => self.settings.screen = Screen::ALL[i.min(3)],
             Seg::Units => self.settings.fahrenheit = i == 1,
             Seg::Asr => self.settings.asr_hanafi = i == 1,
         }

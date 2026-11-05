@@ -109,7 +109,7 @@ Open Settings > Location, type your city and press Enter, or press **Detect my l
 <details>
 <summary>I want the notch on another screen.</summary>
 
-Settings > Notch > **Show on**: pick Screen 2 or Screen 3, or **All** to have it follow the mouse to the top edge of whichever screen you use.
+Settings > Notch > **Show on**: it shows a small map of the screens that are connected, so click the one you want (the number is the one on the map), **All** to have the notch follow the mouse to the top edge of whichever screen you use, or **Every** to keep a closed notch on each screen at once (the one you point at opens).
 </details>
 
 <details>

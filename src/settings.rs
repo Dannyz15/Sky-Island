@@ -220,36 +220,50 @@ impl ClipKeep {
 pub enum Screen {
     /// The main screen.
     Main,
-    /// The screen Windows calls Display 2 or Display 3 in its settings; the main screen if there is none.
-    Display2,
-    Display3,
+    /// The first, second, third... connected screen, counted in order of their device numbers (so it does not matter
+    /// that Windows named a screen DISPLAY5); the main screen if there are not that many. (The main screen is saved as
+    /// Main, but another screen can be the first in that order, when the main one has a higher device number.)
+    Display(u32),
     /// Every screen: the notch is on the one the mouse last touched the top of.
     All,
+    /// Every screen, with a closed notch on each of them at the same time: the one the mouse touches opens, and the
+    /// others stay closed.
+    Every,
 }
 
 impl Screen {
-    pub const ALL: [Screen; 4] = [Screen::Main, Screen::Display2, Screen::Display3, Screen::All];
+    /// The most screens that can be chosen by number.
+    pub const MAX_DISPLAY: u32 = 16;
 
-    /// The number Windows gives the screen, or `None` for the main one (and for All, which has no fixed screen).
+    /// The number of the screen, or `None` for the main one (and for All, which has no fixed screen).
     pub fn display_number(self) -> Option<u32> {
         match self {
-            Screen::Main | Screen::All => None,
-            Screen::Display2 => Some(2),
-            Screen::Display3 => Some(3),
+            Screen::Display(n) => Some(n),
+            Screen::Main | Screen::All | Screen::Every => None,
         }
     }
 
-    fn name(self) -> &'static str {
+    /// Whether the notch goes to the screen the mouse touches the top of (All and Every do).
+    pub fn follows(self) -> bool {
+        matches!(self, Screen::All | Screen::Every)
+    }
+
+    fn name(self) -> String {
         match self {
-            Screen::Main => "main",
-            Screen::Display2 => "display2",
-            Screen::Display3 => "display3",
-            Screen::All => "all",
+            Screen::Main => "main".to_string(),
+            Screen::Display(n) => format!("display{n}"),
+            Screen::All => "all".to_string(),
+            Screen::Every => "every".to_string(),
         }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|s| s.name() == name)
+        match name {
+            "main" => Some(Screen::Main),
+            "all" => Some(Screen::All),
+            "every" => Some(Screen::Every),
+            _ => name.strip_prefix("display")?.parse().ok().filter(|n| (1..=Self::MAX_DISPLAY).contains(n)).map(Screen::Display),
+        }
     }
 }
 
@@ -679,6 +693,21 @@ mod tests {
         assert_eq!(Settings::from_json(&wrong), defaults);
         // Numbers are held to their range.
         assert_eq!(Settings::from_json(&json!({ "volume": 5000 })).volume, VOLUME.max);
+    }
+
+    #[test]
+    fn a_screen_is_saved_by_its_number_and_old_names_still_load() {
+        for screen in [Screen::Main, Screen::All, Screen::Every, Screen::Display(2), Screen::Display(3), Screen::Display(16)] {
+            assert_eq!(Screen::from_name(&screen.name()), Some(screen));
+        }
+        assert_eq!(Screen::from_name("display2"), Some(Screen::Display(2)), "what 1.5.6 saved");
+        assert_eq!(Screen::from_name("display1"), Some(Screen::Display(1)), "a screen that comes before the main one");
+        assert_eq!(Screen::from_name("display0"), None);
+        assert_eq!(Screen::from_name("display17"), None);
+        assert_eq!(Screen::from_name("display"), None);
+        assert_eq!(Screen::from_name("nonsense"), None);
+        assert_eq!(Screen::Display(4).display_number(), Some(4));
+        assert_eq!(Screen::Main.display_number(), None);
     }
 
     #[test]
