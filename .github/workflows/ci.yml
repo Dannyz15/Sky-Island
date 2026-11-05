@@ -18,7 +18,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      # rust-toolchain.toml makes rustup install the stable compiler with clippy on the first cargo call.
+      # rust-toolchain.toml makes rustup install the exact compiler named there, with clippy, on the first cargo call.
       # Not one of GitHub's own actions, so it is pinned to an exact commit (version 2.9.3): a tag can be moved
       # to other code, a commit cannot. Dependabot proposes newer ones.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -31,11 +31,14 @@ jobs:
           $setup = (Select-String -Path installer/sky-island.iss -Pattern '#define AppVersion "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
           if ($cargo -ne $setup) { throw "Cargo.toml says $cargo but installer/sky-island.iss says $setup" }
           "Both say $cargo"
-      # Known security problems, licences and sources of the crates the app is built from (see deny.toml). Pinned to an
-      # exact commit (version 2.1.1) for the same reason as the cache action above.
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          command: check
+      # Known security problems, licences and sources of the crates the app is built from (see deny.toml). The tool's own
+      # GitHub action only runs on Linux, and this runs on Windows, so the tool is built from its published source: an
+      # exact version, with the crate versions in its own lock file. The cache above keeps the built program, so only the
+      # first run pays for the build.
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Crates (known problems, licences, sources)
+        run: cargo deny check
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests
