@@ -1,6 +1,6 @@
 [package]
 name = "sky-island"
-version = "1.5.5"
+version = "1.5.6"
 edition = "2024"
 rust-version = "1.99"
 description = "A notch for the top of your Windows screen: music with lyrics, timer, water, weather, prayer times, system stats, file shelf, to-do, calendar, clipboard and system notices."
