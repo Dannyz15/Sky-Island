@@ -49,6 +49,7 @@ impl ApplicationHandler<UserEvent> for App {
         sys::install_lock_hook(self.proxy.clone());
         presence::spawn(self.proxy.clone(), self.native_handle().unwrap_or(0));
         shelf::check_in_background(self.shelf.items.clone(), self.proxy.clone());
+        clipboard::set_enabled(self.settings.clipboard);
         clipboard::spawn_watcher(self.proxy.clone());
         update::spawn_auto(self.settings.hud_update, self.proxy.clone());
         self.weather_tx = Some(weather::spawn(self.proxy.clone()));

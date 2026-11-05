@@ -1,0 +1,37 @@
+# Checks of the crates the app is built from, run by CI (`cargo deny check`) and by hand with the same command.
+# Install it with: cargo install cargo-deny --locked
+
+[graph]
+# Only what is built into the Windows app. The Linux and macOS parts of the crates (the GTK tray code, for one) are
+# never compiled for it.
+targets = ["x86_64-pc-windows-msvc"]
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained, with no known flaw. fontdue uses it, and the fonts it reads come from this PC. Revisit when fontdue moves to another parser." },
+]
+
+[licenses]
+# Every licence the built-in crates use today; all of them are permissive and fit this project's MIT licence.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+# Two versions of one crate are common and harmless here (windows-sys, syn, miniz_oxide): a note, not a failure.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

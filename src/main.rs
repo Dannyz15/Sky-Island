@@ -543,13 +543,60 @@ fn earliest(wake: &mut Option<Instant>, t: Instant) {
     *wake = Some(wake.map_or(t, |w| w.min(t)));
 }
 
-/// With no console, a panic would vanish silently. Write it to a file the user can find and send.
+/// The most a crash log may hold. When a new report would make it longer, the oldest ones are cut off.
+const CRASH_LOG_MAX: usize = 64 * 1024;
+
+/// "2026-11-05 10:34:07 UTC" for seconds since 1970.
+fn utc_text(unix: u64) -> String {
+    let (year, month, day) = calendar::civil_from_days((unix / 86_400) as i64);
+    let secs = unix % 86_400;
+    format!("{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02} UTC", secs / 3600, secs % 3600 / 60, secs % 60)
+}
+
+/// One report for the crash log: which version, when, on which thread, what went wrong and where.
+fn crash_entry(version: &str, unix: u64, thread: &str, what: &str, backtrace: &str) -> String {
+    format!("---- {} | Sky Island {version} | thread {thread} ----\n{what}\n{}\n\n", utc_text(unix), backtrace.trim_end())
+}
+
+/// The log with a new entry added at the end, and the oldest entries cut off to stay within `max` bytes (the newest
+/// entry is always kept whole, and the cut falls between entries when it can).
+fn crash_log_with(old: &str, entry: &str, max: usize) -> String {
+    let mut log = String::from(old);
+    log.push_str(entry);
+    if log.len() <= max {
+        return log;
+    }
+    let mut start = log.len().saturating_sub(max).min(log.len() - entry.len().min(log.len()));
+    while !log.is_char_boundary(start) {
+        start += 1;
+    }
+    if let Some(next) = log[start..].find("---- ") {
+        start += next;
+    }
+    log[start..].to_string()
+}
+
+/// Add a report to `crash.log` in `dir`, keeping the earlier ones (within the size limit).
+fn record_crash(dir: &std::path::Path, entry: &str) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join("crash.log");
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    std::fs::write(&path, crash_log_with(&old, entry, CRASH_LOG_MAX))
+}
+
+/// With no console, a panic would vanish silently. Write it to a file the user can find and send: what went wrong and
+/// where (the file and line come with the panic itself), the version, the time and the thread. A trace of the calls is
+/// added too, but in the shipped exe its frames are not named (Windows keeps names in a separate .pdb file that users
+/// do not have), so the panic's own file and line are what to go by. Reports are added one after the other, up to a size
+/// limit, so a second crash does not wipe out the first.
 fn install_crash_log() {
     std::panic::set_hook(Box::new(|info| {
         let Some(appdata) = std::env::var_os("APPDATA") else { return };
-        let dir = PathBuf::from(appdata).join("Sky-Island");
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join("crash.log"), format!("{info}\n"));
+        let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let thread = std::thread::current();
+        let backtrace = std::backtrace::Backtrace::force_capture().to_string();
+        let entry = crash_entry(env!("CARGO_PKG_VERSION"), unix, thread.name().unwrap_or("unnamed"), &info.to_string(), &backtrace);
+        let _ = record_crash(&PathBuf::from(appdata).join("Sky-Island"), &entry);
     }));
 }
 
@@ -593,6 +640,46 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_crash_report_says_which_version_when_and_where() {
+        assert_eq!(utc_text(0), "1970-01-01 00:00:00 UTC");
+        assert_eq!(utc_text(1_793_871_247), "2026-11-05 09:34:07 UTC");
+        let entry = crash_entry("1.5.8", 1_793_871_247, "main", "panicked at src/x.rs:1:1:\nboom", "  0: a\n  1: b\n");
+        assert!(entry.starts_with("---- 2026-11-05 09:34:07 UTC | Sky Island 1.5.8 | thread main ----\n"), "{entry}");
+        assert!(entry.contains("boom") && entry.contains("1: b") && entry.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn a_second_crash_is_added_and_the_oldest_are_cut_when_the_log_is_too_long() {
+        let entry = |n: usize| crash_entry("1.5.8", 0, "main", &format!("report {n} {}", "x".repeat(200)), "");
+        let log = crash_log_with(&crash_log_with("", &entry(1), 10_000), &entry(2), 10_000);
+        assert!(log.contains("report 1") && log.contains("report 2"), "both are kept while there is room");
+        assert!(log.find("report 1") < log.find("report 2"), "oldest first");
+
+        let mut long = String::new();
+        for n in 0..50 {
+            long = crash_log_with(&long, &entry(n), 2_000);
+        }
+        assert!(long.len() <= 2_000, "{}", long.len());
+        assert!(long.starts_with("---- "), "the cut falls between reports");
+        assert!(long.contains("report 49") && !long.contains("report 0 "), "the newest stays, the oldest went");
+
+        let huge = crash_entry("1.5.8", 0, "main", &"y".repeat(5_000), "");
+        let kept = crash_log_with("old stuff\n", &huge, 1_000);
+        assert!(kept.contains("yyyy") && !kept.contains("old stuff"), "a report bigger than the limit is still written");
+    }
+
+    #[test]
+    fn crashes_are_written_to_the_log_one_after_the_other() {
+        let dir = std::env::temp_dir().join(format!("sky-island-crash-test-{}", std::process::id())).join("Sky-Island");
+        let _ = std::fs::remove_dir_all(&dir);
+        record_crash(&dir, &crash_entry("1.5.8", 1, "main", "first", "")).unwrap();
+        record_crash(&dir, &crash_entry("1.5.8", 2, "lyrics", "second", "")).unwrap();
+        let text = std::fs::read_to_string(dir.join("crash.log")).unwrap();
+        assert!(text.find("first") < text.find("second") && text.contains("thread lyrics"), "{text}");
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+    }
 
     #[test]
     fn each_data_folder_has_its_own_instance_lock() {

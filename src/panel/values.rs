@@ -250,6 +250,7 @@ impl App {
     /// Save the settings and let the notch (and this window) pick them up.
     pub(crate) fn settings_changed(&mut self) {
         self.settings.save();
+        crate::clipboard::set_enabled(self.settings.clipboard);
         self.refresh_edges();
         self.apply_visibility();
         self.last_tick = Instant::now();

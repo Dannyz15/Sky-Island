@@ -31,6 +31,11 @@ jobs:
           $setup = (Select-String -Path installer/sky-island.iss -Pattern '#define AppVersion "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
           if ($cargo -ne $setup) { throw "Cargo.toml says $cargo but installer/sky-island.iss says $setup" }
           "Both say $cargo"
+      # Known security problems, licences and sources of the crates the app is built from (see deny.toml). Pinned to an
+      # exact commit (version 2.1.1) for the same reason as the cache action above.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests

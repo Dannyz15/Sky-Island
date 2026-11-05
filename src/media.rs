@@ -278,9 +278,9 @@ fn read_state(session: &Session, reuse: Option<&MediaState>) -> Result<MediaStat
     // Windows gives the position as it was at `LastUpdatedTime`, not now. Add the time since then
     // while the track plays, or a restarted app starts from a stale minute.
     let mut position = ticks(timeline.Position()?.Duration);
-    let duration = ticks(timeline.EndTime()?.Duration - timeline.StartTime()?.Duration);
+    let duration = ticks(timeline.EndTime()?.Duration.saturating_sub(timeline.StartTime()?.Duration));
     if playing && let Ok(updated) = timeline.LastUpdatedTime() {
-        position += since(updated.UniversalTime);
+        position = position.saturating_add(since(updated.UniversalTime));
         if !duration.is_zero() {
             position = position.min(duration);
         }
@@ -318,13 +318,14 @@ fn since(universal: i64) -> Duration {
     const EPOCH_TICKS: i64 = 116_444_736_000_000_000;
     let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else { return Duration::ZERO };
     let now_ticks = (now.as_nanos() / 100) as i64 + EPOCH_TICKS;
-    let age = ticks(now_ticks - universal);
+    let age = ticks(now_ticks.saturating_sub(universal));
     if age > Duration::from_secs(12 * 3600) { Duration::ZERO } else { age }
 }
 
 /// WinRT TimeSpan is in 100 ns ticks.
 fn ticks(t: i64) -> Duration {
-    Duration::from_nanos(t.max(0) as u64 * 100)
+    // A player can send any number here; a huge one must not overflow.
+    Duration::from_nanos((t.max(0) as u64).saturating_mul(100))
 }
 
 /// The most bytes of album art that are read. Real covers are well under 1 MB; a player (or a web page,
@@ -381,6 +382,15 @@ mod tests {
         let pixels = vec![200u8; (width * height * 4) as usize];
         image::codecs::png::PngEncoder::new(&mut out).write_image(&pixels, width, height, image::ExtendedColorType::Rgba8).unwrap();
         out
+    }
+
+    #[test]
+    fn strange_times_from_a_player_do_not_overflow() {
+        assert_eq!(ticks(10_000_000), Duration::from_secs(1));
+        assert_eq!(ticks(-5), Duration::ZERO, "a negative time is nothing");
+        assert_eq!(ticks(i64::MAX), Duration::from_nanos(u64::MAX), "a huge one is held to the longest time there is");
+        assert_eq!(since(i64::MIN), Duration::ZERO, "a time far in the past is not a real update time");
+        assert_eq!(since(i64::MAX), Duration::ZERO);
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! `pinned.json`. Also holds the Windows clipboard calls the app needs.
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -407,10 +407,19 @@ pub fn spawn_watcher(proxy: EventLoopProxy<UserEvent>) {
     }
 }
 
+/// Whether the clipboard history is on. While it is off the clipboard is not opened or read at all (only its change
+/// counter is noted, so what was copied meanwhile is not picked up when the history is switched on again).
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// The Clipboard setting was changed (or read at start).
+pub fn set_enabled(on: bool) {
+    ENABLED.store(on, Ordering::Relaxed);
+}
+
 /// Read the clipboard if it changed since the last look, and pass on what it holds.
 fn look() {
     let now = unsafe { GetClipboardSequenceNumber() };
-    if LAST_SEEN.swap(now, Ordering::Relaxed) == now {
+    if LAST_SEEN.swap(now, Ordering::Relaxed) == now || !ENABLED.load(Ordering::Relaxed) {
         return;
     }
     if let Some(content) = read_content()
@@ -470,7 +479,7 @@ fn read_content() -> Option<Content> {
         let can_include = RegisterClipboardFormatW(w!("CanIncludeInClipboardHistory"));
         let kept_out_of_history = can_include != 0
             && IsClipboardFormatAvailable(can_include).is_ok()
-            && read_format(can_include).is_some_and(|flag| is_barred_from_history(&flag));
+            && read_flag(can_include).is_some_and(|flag| is_barred_from_history(&flag));
         if marked(w!("ExcludeClipboardContentFromMonitorProcessing")) || marked(w!("Clipboard Viewer Ignore")) || kept_out_of_history {
             (None, None, None)
         } else if let Some(text) = read_unicode_text().filter(|t| !t.trim().is_empty()) {
@@ -569,8 +578,11 @@ unsafe fn read_unicode_text() -> Option<String> {
     }
 }
 
-/// The raw bytes stored under a clipboard format. Must be called with the clipboard open.
-unsafe fn read_format(format: u32) -> Option<Vec<u8>> {
+/// The first bytes stored under a clipboard format (a small flag is all this is used for, so another app cannot make a
+/// big block be copied here). Must be called with the clipboard open.
+unsafe fn read_flag(format: u32) -> Option<Vec<u8>> {
+    /// The most that is copied. The flag is a 4 byte number.
+    const MAX_FLAG: usize = 8;
     if format == 0 {
         return None;
     }
@@ -578,15 +590,14 @@ unsafe fn read_format(format: u32) -> Option<Vec<u8>> {
         let handle = GetClipboardData(format).ok()?;
         let hglobal = HGLOBAL(handle.0);
         let size = GlobalSize(hglobal);
-        // Pictures can be large, but a gigabyte is not a screenshot.
-        if size == 0 || size > 1 << 30 {
+        if size == 0 {
             return None;
         }
         let ptr = GlobalLock(hglobal) as *const u8;
         if ptr.is_null() {
             return None;
         }
-        let bytes = std::slice::from_raw_parts(ptr, size).to_vec();
+        let bytes = std::slice::from_raw_parts(ptr, size.min(MAX_FLAG)).to_vec();
         let _ = GlobalUnlock(hglobal);
         Some(bytes)
     }

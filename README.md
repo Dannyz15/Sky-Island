@@ -23,7 +23,8 @@
   <a href="#using-it">Using it</a> ·
   <a href="#questions">Questions</a> ·
   <a href="#privacy">Privacy</a> ·
-  <a href="#known-limitations">Limitations</a>
+  <a href="#known-limitations">Limitations</a> ·
+  <a href="#building-from-source">Building</a>
 </p>
 
 <p align="center">
@@ -124,6 +125,12 @@ Settings > Notch. **Eye style** is a grid of ten styles; pick one to see it on t
 In `%APPDATA%\Sky-Island`. Settings > About has **Open data folder** and **Reset to defaults**.
 </details>
 
+<details>
+<summary>Sky Island closed by itself.</summary>
+
+When the app hits an error it cannot recover from, it writes a report to `crash.log` in the data folder (Settings > About > **Open data folder**): the version, the time, what went wrong and where. If you open an issue, please attach that file. A new report is added at the end of the file; the oldest are dropped when the file passes 64 KB.
+</details>
+
 Found a bug or have an idea? [Open an issue](https://github.com/Dannyz15/Sky-Island/issues).
 
 ## Privacy
@@ -156,6 +163,34 @@ To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whet
 - Lyrics depend on what LRCLIB has.
 - The bars on the closed notch follow all the sound the PC plays, not only the song, so a video or a notification moves them too. Some players that take the sound device for themselves (exclusive mode) cannot be listened to, and then the bars move to a made-up beat.
 - Weather and prayer times need an internet connection to refresh; the last ones are kept for offline use.
+
+## Building from source
+
+You need:
+
+- Windows 10 or 11 (64-bit).
+- [Rust](https://rustup.rs/) through rustup. The exact compiler version is set in `rust-toolchain.toml`, and rustup installs it by itself the first time you run `cargo` in the project.
+- The Visual Studio Build Tools with the **Desktop development with C++** workload (the linker and the Windows SDK, which also puts the icon and version information into the exe).
+- To make the setup program only: [Inno Setup 7](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup.7`).
+
+```
+git clone https://github.com/Dannyz15/Sky-Island.git
+cd Sky-Island
+cargo run --release
+```
+
+`cargo build --release` leaves the program at `target\release\sky-island.exe`. It runs as it is, with no installer.
+
+| To do this | Run |
+|---|---|
+| Run the tests | `cargo test` |
+| Check the code the way the project's CI does | `cargo clippy --all-targets -- -D warnings` |
+| Check the crates for known problems, licences and sources | `cargo install cargo-deny --locked`, then `cargo deny check` (settings in `deny.toml`) |
+| Make the setup program, `dist\Sky-Island-Setup-<version>.exe` | `powershell -ExecutionPolicy Bypass -File scripts\package.ps1` |
+
+To try a build without touching your own settings, shelf and to-do list, start it with another data folder: in a terminal run `set APPDATA=C:\temp\sky-test` and then the program. Its data goes in `C:\temp\sky-test\Sky-Island`, and it can run next to the copy you normally use.
+
+The version number is in two places that must match, `Cargo.toml` and `installer\sky-island.iss`; CI checks this. The app's update check only offers a release that has `Sky-Island-Setup-<version>.exe` attached.
 
 ## License
 

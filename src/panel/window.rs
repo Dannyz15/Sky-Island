@@ -331,7 +331,7 @@ impl App {
                     }
                     Kind::Seg(seg) => {
                         let cells = seg_cells(seg, item.ctrl);
-                        let i = cells.iter().position(|c| cx < c.0 + c.2).unwrap_or(cells.len() - 1);
+                        let i = cells.iter().position(|c| cx < c.0 + c.2).unwrap_or(cells.len().saturating_sub(1));
                         self.set_seg(seg, i);
                     }
                     Kind::Slider(slide) => {

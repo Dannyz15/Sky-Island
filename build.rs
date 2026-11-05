@@ -54,8 +54,15 @@ fn main() {
     let icon = format!("{}/assets/icon.ico", manifest.replace('\\', "/"));
 
     let script = PathBuf::from(env::var("OUT_DIR").unwrap_or_default()).join("app.rc");
-    if fs::write(&script, resource_script(&version, numbers, &icon)).is_ok() {
-        let _ = embed_resource::compile(&script, embed_resource::NONE);
+    // If this goes wrong the build still works, but the exe would have no icon and no version information: say so,
+    // where Cargo shows it, instead of staying quiet.
+    match fs::write(&script, resource_script(&version, numbers, &icon)) {
+        Ok(()) => {
+            if let Err(problem) = embed_resource::compile(&script, embed_resource::NONE).manifest_optional() {
+                println!("cargo:warning=the icon and version information were not added to the exe: {problem}");
+            }
+        }
+        Err(problem) => println!("cargo:warning=the icon and version information were not added to the exe: {problem}"),
     }
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=assets/icon.ico");

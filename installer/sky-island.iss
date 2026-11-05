@@ -90,7 +90,12 @@ function AppIsRunning: Boolean;
 var
   ResultCode: Integer;
 begin
-  Result := Exec(ExpandConstant('{cmd}'), '/C tasklist /FI "IMAGENAME eq {#AppExe}"' + WhichCopies + ' /NH | find /I "{#AppExe}"',
+  { Both programs are the ones in Windows' own folder: a tasklist or find in the folder Setup was started from, or an
+    earlier one on the PATH, is never run. The whole command sits in one more pair of quotes, which cmd takes off, so
+    the quotes around the two paths stay. }
+  Result := Exec(ExpandConstant('{cmd}'),
+    '/C ""' + ExpandConstant('{sys}\tasklist.exe') + '" /FI "IMAGENAME eq {#AppExe}"' + WhichCopies + ' /NH | "' +
+    ExpandConstant('{sys}\find.exe') + '" /I "{#AppExe}""',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
