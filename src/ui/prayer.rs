@@ -17,6 +17,19 @@ fn now_secs() -> u32 {
     h * 3600 + m * 60 + s
 }
 
+/// What the Prayer tab knows: the prayer times it shows, whether a fetch is on its way or failed, the thread that fetches
+/// them (told which request to follow; `None` before the window exists), the prayer a notice was last shown for (day
+/// and index), and the minute the Prayer view was last drawn.
+#[derive(Default)]
+pub(crate) struct PrayerTab {
+    pub(crate) table: Option<prayer::Table>,
+    pub(crate) loading: bool,
+    pub(crate) failed: bool,
+    pub(crate) tx: Option<std::sync::mpsc::Sender<Option<prayer::Request>>>,
+    pub(crate) told: Option<(i64, usize)>,
+    pub(crate) minute: u32,
+}
+
 impl App {
     /// What to ask for: the user's city, method and Asr school (and the e-Solat zone, for that method), while the Prayer
     /// tab is on.
@@ -31,17 +44,17 @@ impl App {
     /// changes. What was kept from last time shows at once while the days are fetched again.
     pub(crate) fn sync_prayer(&mut self) {
         let request = self.prayer_request();
-        if self.prayer.as_ref().is_some_and(|t| !request.as_ref().is_some_and(|r| t.is_for(r))) {
-            self.prayer = None;
+        if self.prayer.table.as_ref().is_some_and(|t| !request.as_ref().is_some_and(|r| t.is_for(r))) {
+            self.prayer.table = None;
         }
-        if self.prayer.is_none()
+        if self.prayer.table.is_none()
             && let Some(r) = &request
         {
-            self.prayer = prayer::load_cache(r);
+            self.prayer.table = prayer::load_cache(r);
         }
-        self.prayer_failed = false;
-        self.prayer_loading = request.is_some();
-        if let Some(tx) = &self.prayer_tx {
+        self.prayer.failed = false;
+        self.prayer.loading = request.is_some();
+        if let Some(tx) = &self.prayer.tx {
             let _ = tx.send(request);
         }
         if let Some(w) = &self.window {
@@ -51,15 +64,15 @@ impl App {
 
     /// Days (or the news that fetching them failed) arrived.
     pub(crate) fn prayer_arrived(&mut self, table: Option<Table>) {
-        self.prayer_loading = false;
+        self.prayer.loading = false;
         match table {
             Some(t) if self.prayer_request().is_some_and(|r| t.is_for(&r)) => {
-                self.prayer = Some(t);
-                self.prayer_failed = false;
+                self.prayer.table = Some(t);
+                self.prayer.failed = false;
             }
             // Days for a city or a method that is no longer the one, or while the tab is off, are dropped.
             Some(_) => return,
-            None => self.prayer_failed = true,
+            None => self.prayer.failed = true,
         }
         self.last_tick = Instant::now();
         if self.view == View::Prayer
@@ -71,8 +84,8 @@ impl App {
 
     /// The tab was opened: fetch again if the days do not reach far enough.
     pub(crate) fn prayer_opened(&mut self) {
-        let short = self.prayer.as_ref().is_none_or(|t| !t.covers(today_day(), prayer::AHEAD));
-        if self.settings.prayer && self.settings.place.is_some() && short && !self.prayer_loading {
+        let short = self.prayer.table.as_ref().is_none_or(|t| !t.covers(today_day(), prayer::AHEAD));
+        if self.settings.prayer && self.settings.place.is_some() && short && !self.prayer.loading {
             self.sync_prayer();
         }
     }
@@ -82,13 +95,13 @@ impl App {
         if !self.settings.prayer || !self.settings.hud_prayer {
             return;
         }
-        let Some(table) = &self.prayer else { return };
+        let Some(table) = &self.prayer.table else { return };
         let today = today_day();
         let Some((index, minute)) = prayer::just_arrived(table, today, now_secs()) else { return };
-        if self.prayer_told == Some((today, index)) {
+        if self.prayer.told == Some((today, index)) {
             return;
         }
-        self.prayer_told = Some((today, index));
+        self.prayer.told = Some((today, index));
         self.show_notice(sys::Notice::Prayer { name: prayer::NAMES[index], minute });
         self.play_sound(sound::Chime::Reminder);
     }
@@ -99,7 +112,7 @@ impl App {
             return None;
         }
         let (today, secs) = (today_day(), now_secs());
-        let next = prayer::next_prayer(self.prayer.as_ref()?, today, secs)?;
+        let next = prayer::next_prayer(self.prayer.table.as_ref()?, today, secs)?;
         Some(now + Duration::from_secs(prayer::secs_until(&next, today, secs).max(0) as u64 + 1))
     }
 
@@ -110,8 +123,8 @@ impl App {
         }
         let (h, m, s, ms) = local_time();
         let minute = h * 60 + m;
-        if minute != self.prayer_minute {
-            self.prayer_minute = minute;
+        if minute != self.prayer.minute {
+            self.prayer.minute = minute;
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -134,9 +147,9 @@ impl App {
             return;
         };
         let (today, secs) = (today_day(), now_secs());
-        let day = self.prayer.as_ref().and_then(|t| t.day(today));
-        let (Some(table), Some(day)) = (&self.prayer, day) else {
-            let text = if self.prayer_failed || (self.prayer.is_some() && !self.prayer_loading) {
+        let day = self.prayer.table.as_ref().and_then(|t| t.day(today));
+        let (Some(table), Some(day)) = (&self.prayer.table, day) else {
+            let text = if self.prayer.failed || (self.prayer.table.is_some() && !self.prayer.loading) {
                 "Prayer times are not available. Are you online?"
             } else {
                 "Loading the prayer times..."

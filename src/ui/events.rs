@@ -54,7 +54,7 @@ impl ApplicationHandler<UserEvent> for App {
         update::spawn_auto(self.settings.hud_update, self.proxy.clone());
         self.weather.tx = Some(weather::spawn(self.proxy.clone()));
         self.sync_weather();
-        self.prayer_tx = Some(prayer::spawn(self.proxy.clone()));
+        self.prayer.tx = Some(prayer::spawn(self.proxy.clone()));
         self.sync_prayer();
         self.refresh_edges();
         hotkey::start(self.proxy.clone(), self.settings.hotkey.then_some((self.settings.hotkey_mods, self.settings.hotkey_vk)));

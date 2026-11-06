@@ -346,12 +346,7 @@ struct App {
     weather: ui::WeatherTab,
     /// The prayer times the Prayer tab shows, the same bookkeeping as the weather, the prayer a notice was last
     /// shown for (day and index), and the minute the Prayer view was last drawn.
-    prayer: Option<prayer::Table>,
-    prayer_loading: bool,
-    prayer_failed: bool,
-    prayer_tx: Option<std::sync::mpsc::Sender<Option<prayer::Request>>>,
-    prayer_told: Option<(i64, usize)>,
-    prayer_minute: u32,
+    prayer: ui::PrayerTab,
     /// The volume of the default output device and whether it is muted, as last heard, for the Music view's slider;
     /// and whether that slider is being dragged.
     sys_volume: Option<(u32, bool)>,
@@ -525,12 +520,7 @@ impl App {
             sys_volume: None,
             volume_drag: false,
             weather: ui::WeatherTab::default(),
-            prayer: None,
-            prayer_loading: false,
-            prayer_failed: false,
-            prayer_tx: None,
-            prayer_told: None,
-            prayer_minute: 0,
+            prayer: ui::PrayerTab::default(),
             changelog: update::Changelog::Idle,
             next_chime: None,
             shown_view: View::Player,

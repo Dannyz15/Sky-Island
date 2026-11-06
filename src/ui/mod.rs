@@ -35,6 +35,7 @@ pub(crate) use icons::*;
 pub(crate) use mirrors::Mirror;
 pub(crate) use notice::*;
 pub(crate) use player::*;
+pub(crate) use prayer::PrayerTab;
 pub(crate) use render::BodyKey;
 pub(crate) use shapes::*;
 pub(crate) use shelf::*;
