@@ -44,7 +44,7 @@ pub(crate) use text::*;
 pub(crate) use timer::*;
 pub(crate) use todo::*;
 pub(crate) use tray::*;
-pub(crate) use weather::draw_moon;
+pub(crate) use weather::{WeatherTab, draw_moon};
 pub(crate) use window::display_number;
 #[cfg(test)]
 pub(crate) use window::screen_by_order;

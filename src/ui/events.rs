@@ -52,7 +52,7 @@ impl ApplicationHandler<UserEvent> for App {
         clipboard::set_enabled(self.settings.clipboard);
         clipboard::spawn_watcher(self.proxy.clone());
         update::spawn_auto(self.settings.hud_update, self.proxy.clone());
-        self.weather_tx = Some(weather::spawn(self.proxy.clone()));
+        self.weather.tx = Some(weather::spawn(self.proxy.clone()));
         self.sync_weather();
         self.prayer_tx = Some(prayer::spawn(self.proxy.clone()));
         self.sync_prayer();

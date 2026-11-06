@@ -343,11 +343,7 @@ struct App {
     update: update::Status,
     /// The forecast the Weather tab shows, when it was fetched, whether the last fetch is still on its way or failed,
     /// and the thread that fetches it (told which place to watch; `None` before the window exists).
-    weather: Option<weather::Report>,
-    weather_at: Option<Instant>,
-    weather_loading: bool,
-    weather_failed: bool,
-    weather_tx: Option<std::sync::mpsc::Sender<Option<weather::Place>>>,
+    weather: ui::WeatherTab,
     /// The prayer times the Prayer tab shows, the same bookkeeping as the weather, the prayer a notice was last
     /// shown for (day and index), and the minute the Prayer view was last drawn.
     prayer: Option<prayer::Table>,
@@ -528,11 +524,7 @@ impl App {
             stats_backdrops: Default::default(),
             sys_volume: None,
             volume_drag: false,
-            weather: None,
-            weather_at: None,
-            weather_loading: false,
-            weather_failed: false,
-            weather_tx: None,
+            weather: ui::WeatherTab::default(),
             prayer: None,
             prayer_loading: false,
             prayer_failed: false,

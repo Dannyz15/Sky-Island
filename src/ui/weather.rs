@@ -11,24 +11,35 @@ const DAY_COLUMNS: usize = 5;
 const DAY_X0: f32 = 52.0;
 const DAY_STEP: f32 = 79.0;
 
+/// What the Weather tab knows: the forecast it shows, when it was fetched, whether a fetch is on its way or failed, and
+/// the thread that fetches it (told which place to watch; `None` before the window exists).
+#[derive(Default)]
+pub(crate) struct WeatherTab {
+    pub(crate) report: Option<Report>,
+    pub(crate) at: Option<Instant>,
+    pub(crate) loading: bool,
+    pub(crate) failed: bool,
+    pub(crate) tx: Option<std::sync::mpsc::Sender<Option<weather::Place>>>,
+}
+
 impl App {
     /// Tell the weather thread which city to follow: the user's, while the Weather tab is on, and nothing
     /// otherwise. Run when the window starts and when the tab, the city or the settings change. What was kept
     /// from last time is shown at once while a new forecast is on its way.
     pub(crate) fn sync_weather(&mut self) {
         let place = self.settings.place.clone().filter(|_| self.settings.weather);
-        if self.weather.as_ref().is_some_and(|r| !place.as_ref().is_some_and(|p| p.same_spot(r.lat, r.lon))) {
-            self.weather = None;
-            self.weather_at = None;
+        if self.weather.report.as_ref().is_some_and(|r| !place.as_ref().is_some_and(|p| p.same_spot(r.lat, r.lon))) {
+            self.weather.report = None;
+            self.weather.at = None;
         }
-        if self.weather.is_none()
+        if self.weather.report.is_none()
             && let Some(p) = &place
         {
-            self.weather = weather::load_cache(p);
+            self.weather.report = weather::load_cache(p);
         }
-        self.weather_failed = false;
-        self.weather_loading = place.is_some();
-        if let Some(tx) = &self.weather_tx {
+        self.weather.failed = false;
+        self.weather.loading = place.is_some();
+        if let Some(tx) = &self.weather.tx {
             let _ = tx.send(place);
         }
         if let Some(w) = &self.window {
@@ -38,16 +49,16 @@ impl App {
 
     /// A forecast (or the news that fetching it failed) arrived.
     pub(crate) fn weather_arrived(&mut self, report: Option<Report>) {
-        self.weather_loading = false;
+        self.weather.loading = false;
         match report {
             Some(r) if self.settings.weather && self.settings.place.as_ref().is_some_and(|p| p.same_spot(r.lat, r.lon)) => {
-                self.weather = Some(r);
-                self.weather_at = Some(Instant::now());
-                self.weather_failed = false;
+                self.weather.report = Some(r);
+                self.weather.at = Some(Instant::now());
+                self.weather.failed = false;
             }
             // An answer for a city that is no longer the one, or while the tab is off, is dropped.
             Some(_) => return,
-            None => self.weather_failed = true,
+            None => self.weather.failed = true,
         }
         self.last_tick = Instant::now();
         if self.view == View::Weather
@@ -59,8 +70,8 @@ impl App {
 
     /// The tab was opened: look again if what it has is more than ten minutes old.
     pub(crate) fn weather_opened(&mut self) {
-        let old = self.weather_at.is_none_or(|t| t.elapsed() > weather::STALE);
-        if self.settings.weather && self.settings.place.is_some() && old && !self.weather_loading {
+        let old = self.weather.at.is_none_or(|t| t.elapsed() > weather::STALE);
+        if self.settings.weather && self.settings.place.is_some() && old && !self.weather.loading {
             self.sync_weather();
         }
     }
@@ -78,8 +89,8 @@ impl App {
             draw_chip(pm, font, SET_CITY_BUTTON, "Open Settings", false, self.hot_t(SET_CITY_BUTTON, s), rgb, s, alpha);
             return;
         };
-        let Some(report) = &self.weather else {
-            let text = if self.weather_failed { "Weather is not available. Are you online?" } else { "Loading the weather..." };
+        let Some(report) = &self.weather.report else {
+            let text = if self.weather.failed { "Weather is not available. Are you online?" } else { "Loading the weather..." };
             draw_sky(pm, Sky::Cloudy, true, 210.0 * s, 70.0 * s, 1.1 * s, a);
             draw_text_centered(pm, font, text, 210.0 * s, 108.0 * s, 12.0 * s, grey, 340.0 * s);
             draw_text_centered(pm, font, &place.name, 210.0 * s, 126.0 * s, 10.5 * s, [130, 130, 144, a], 340.0 * s);
