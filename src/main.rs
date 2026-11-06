@@ -18,6 +18,8 @@ mod lyrics;
 mod media;
 mod motion;
 mod msgwin;
+mod net;
+mod open;
 mod panel;
 mod prayer;
 mod presence;

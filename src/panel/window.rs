@@ -295,7 +295,7 @@ impl App {
                 };
                 match item.kind {
                     Kind::Link(url) => {
-                        let _ = std::process::Command::new("explorer").arg(url).spawn();
+                        crate::open::open(url);
                     }
                     Kind::Toggle(t) => self.toggle(t),
                     Kind::Cycle(stepper) => {
@@ -364,7 +364,7 @@ impl App {
                     Kind::Button(Act::OpenFolder) => {
                         if let Some(dir) = std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join("Sky-Island")) {
                             let _ = std::fs::create_dir_all(&dir);
-                            let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                            crate::open::open(dir);
                         }
                     }
                     Kind::Button(Act::ClearLyrics) => {
@@ -394,7 +394,7 @@ impl App {
                             }
                             crate::update::Status::Available { page, .. } => {
                                 // A release without an installer: show its page instead.
-                                let _ = std::process::Command::new("explorer").arg(page).spawn();
+                                crate::open::open(page);
                             }
                             crate::update::Status::Ready { path, asset, .. } => {
                                 // The installer closes this app, installs over it and starts it again. It is checked

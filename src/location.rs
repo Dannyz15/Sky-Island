@@ -13,6 +13,7 @@ use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
+use crate::net::BodyExt;
 use crate::weather::{self, Place, SearchError};
 
 const REVERSE: &str = "https://nominatim.openstreetmap.org/reverse";
@@ -64,7 +65,7 @@ fn reverse(lat: f64, lon: f64) -> Option<Value> {
         .call()
         .ok()?
         .body_mut()
-        .read_json::<Value>()
+        .read_limited_json()
         .ok()
 }
 

@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
+use crate::net::BodyExt;
 
 /// Where this project's releases live. The release page and the installer must both be on it.
 const REPO: &str = "https://github.com/Dannyz15/Sky-Island/";
@@ -86,7 +87,7 @@ fn fetch_changelog() -> Option<Vec<Release>> {
         .call()
         .ok()?
         .body_mut()
-        .read_json::<Value>()
+        .read_limited_json()
         .ok()?;
     let releases = releases_from(&json)?;
     (!releases.is_empty()).then_some(releases)
@@ -224,7 +225,7 @@ fn check() -> Status {
         .header("Accept", "application/vnd.github+json")
         .call()
         .ok()
-        .and_then(|mut r| r.body_mut().read_json::<Value>().ok());
+        .and_then(|mut r| r.body_mut().read_limited_json().ok());
     json.as_ref().and_then(|v| judge(v, env!("CARGO_PKG_VERSION"))).unwrap_or(Status::Failed)
 }
 

@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use winit::event_loop::EventLoopProxy;
 
+use crate::net::BodyExt;
 use crate::weather::Place;
 use crate::{UserEvent, calendar, store, zones};
 
@@ -301,7 +302,7 @@ fn fetch_month(place: &Place, method: u32, school: u32, year: i32, month: u32) -
     if !place.tz.is_empty() {
         call = call.query("timezonestring", &place.tz);
     }
-    let json = call.call().ok()?.body_mut().read_json::<Value>().ok()?;
+    let json = call.call().ok()?.body_mut().read_limited_json().ok()?;
     let days = parse_month(&json);
     (!days.is_empty()).then_some(days)
 }
@@ -318,7 +319,7 @@ fn aladhan_days(place: &Place, method: u32, school: u32, today: i64) -> Option<V
 
 /// The rest of this year for a zone, from e-Solat.
 fn esolat_days(zone: &str) -> Option<Vec<Day>> {
-    let json = agent().get(format!("{ESOLAT}{zone}")).header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION"))).call().ok()?.body_mut().read_json::<Value>().ok()?;
+    let json = agent().get(format!("{ESOLAT}{zone}")).header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION"))).call().ok()?.body_mut().read_limited_json().ok()?;
     let days = parse_esolat(&json);
     (!days.is_empty()).then_some(days)
 }

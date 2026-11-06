@@ -2,7 +2,6 @@
 
 use std::collections::VecDeque;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
@@ -13,6 +12,7 @@ use serde_json::Value;
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
+use crate::net::BodyExt;
 
 const API: &str = "https://lrclib.net/api";
 /// No song is longer than a day; a stamp beyond that is garbage.
@@ -22,8 +22,6 @@ const MAX_STAMP_SECS: f64 = 24.0 * 3600.0;
 // Real synced lyrics are a few KB; these limits are far above that.
 /// The largest `syncedLyrics` text that is kept, saved or parsed.
 const MAX_LRC_BYTES: usize = 256 * 1024;
-/// The largest answer read from LRCLIB, counted AFTER any gzip decoding (ureq's own limit counts the wire bytes).
-const MAX_ANSWER_BYTES: u64 = 2 * 1024 * 1024;
 /// Lines kept from one song, and timestamps kept from one line.
 const MAX_LRC_LINES: usize = 2000;
 const MAX_STAMPS_PER_LINE: usize = 16;
@@ -204,20 +202,6 @@ fn means_down(e: &ureq::Error) -> bool {
     }
 }
 
-/// An LRCLIB answer as JSON. At most `MAX_ANSWER_BYTES` are read AFTER decoding: ureq's own 10 MiB limit counts
-/// the bytes on the wire, below the gzip decoder, so a small compressed answer could still grow far larger.
-fn read_value(body: &mut ureq::Body) -> Result<Value, ureq::Error> {
-    parse_limited(body.as_reader(), MAX_ANSWER_BYTES)
-}
-
-/// JSON from `reader`, which is read for at most `limit` bytes: an answer that is longer is cut, so it no longer
-/// parses (an error that says nothing about LRCLIB being down).
-fn parse_limited(reader: impl Read, limit: u64) -> Result<Value, ureq::Error> {
-    let mut bytes = Vec::new();
-    reader.take(limit).read_to_end(&mut bytes)?;
-    Ok(serde_json::from_slice(&bytes)?)
-}
-
 fn fetch(title: &str, artist: &str, duration: Duration, superseded: &dyn Fn() -> bool) -> Looked {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(8)))
@@ -233,7 +217,7 @@ fn fetch(title: &str, artist: &str, duration: Duration, superseded: &dyn Fn() ->
     if !duration.is_zero() {
         req = req.query("duration", duration.as_secs().to_string());
     }
-    match req.call().and_then(|mut r| read_value(r.body_mut())) {
+    match req.call().and_then(|mut r| r.body_mut().read_limited_json()) {
         Ok(v) => {
             if let Some(lrc) = synced(&v) {
                 return Looked::Found(lrc);
@@ -254,7 +238,7 @@ fn fetch(title: &str, artist: &str, duration: Duration, superseded: &dyn Fn() ->
         .header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION")))
         .query("q", format!("{title} {artist}"))
         .call()
-        .and_then(|mut r| read_value(r.body_mut()));
+        .and_then(|mut r| r.body_mut().read_limited_json());
     match results {
         Ok(v) => v.as_array().and_then(|list| list.iter().find_map(synced)).map_or(Looked::NotFound, Looked::Found),
         Err(e) if means_down(&e) => Looked::Unreachable,
@@ -501,28 +485,6 @@ mod tests {
         assert!(synced(&edge).is_some());
         assert_eq!(synced(&serde_json::json!({ "syncedLyrics": "   " })), None);
         assert_eq!(synced(&serde_json::json!({})), None);
-    }
-
-    /// A small answer that unpacks to something endless (what a gzip bomb does) is read only up to the limit.
-    #[test]
-    fn an_answer_that_never_ends_is_read_only_up_to_the_limit() {
-        use std::io::Cursor;
-        let fine = parse_limited(Cursor::new(br#"{"syncedLyrics":"[00:01.00] hi"}"#.to_vec()), 1024).unwrap();
-        assert_eq!(synced(&fine).as_deref(), Some("[00:01.00] hi"));
-
-        let mut seen = 0u64;
-        struct Counting<'a, R: Read>(R, &'a mut u64);
-        impl<R: Read> Read for Counting<'_, R> {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                let n = self.0.read(buf)?;
-                *self.1 += n as u64;
-                Ok(n)
-            }
-        }
-        let endless = std::io::repeat(b'x');
-        let err = parse_limited(Counting(endless, &mut seen), 64 * 1024).unwrap_err();
-        assert!(!means_down(&err), "an oversized answer is not the site being down: {err}");
-        assert!(seen <= 64 * 1024, "read {seen} bytes");
     }
 
     fn file(name: &str, age_secs: u64, len: u64) -> (PathBuf, SystemTime, u64) {

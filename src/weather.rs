@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use winit::event_loop::EventLoopProxy;
 
+use crate::net::BodyExt;
 use crate::{UserEvent, store};
 
 const FORECAST: &str = "https://api.open-meteo.com/v1/forecast";
@@ -220,7 +221,7 @@ fn fetch(place: &Place) -> Option<Report> {
         .call()
         .ok()?
         .body_mut()
-        .read_json::<Value>()
+        .read_limited_json()
         .ok()?;
     parse(&json, place.lat, place.lon)
 }
@@ -340,7 +341,7 @@ fn search(query: &str) -> Result<Place, SearchError> {
     if country {
         call = call.query("countrycodes", &hint);
     }
-    let json = call.call().ok().and_then(|mut r| r.body_mut().read_json::<Value>().ok()).ok_or(SearchError::Offline)?;
+    let json = call.call().ok().and_then(|mut r| r.body_mut().read_limited_json().ok()).ok_or(SearchError::Offline)?;
     place_from_search(&json).ok_or(SearchError::NotFound)
 }
 
@@ -390,7 +391,7 @@ pub fn detect_by_ip() -> Result<Place, SearchError> {
         .query("fields", "success,city,region,country,country_code,latitude,longitude,timezone.id")
         .call()
         .ok()
-        .and_then(|mut r| r.body_mut().read_json::<Value>().ok())
+        .and_then(|mut r| r.body_mut().read_limited_json().ok())
         .ok_or(SearchError::Offline)?;
     place_from_ip(&json).ok_or(SearchError::Undetected)
 }

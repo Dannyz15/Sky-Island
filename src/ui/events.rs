@@ -368,7 +368,7 @@ impl ApplicationHandler<UserEvent> for App {
                 // A press that never turned into a drag is a click: open the file.
                 if let Some((idx, _)) = self.press.take()
                     && let Some(path) = self.shelf.items.get(idx).cloned() {
-                        let _ = std::process::Command::new("explorer").arg(&path).spawn();
+                        crate::open::open(&path);
                         self.selected.clear();
                         self.sync_selection_focus();
                     }
