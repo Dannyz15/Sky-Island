@@ -574,8 +574,8 @@ impl ApplicationHandler<UserEvent> for App {
             }
         }
 
-        if self.mirrors_wanted {
-            self.mirrors_wanted = false;
+        if self.mirrors.wanted {
+            self.mirrors.wanted = false;
             self.sync_mirrors(event_loop);
         }
         if self.panel_wanted {

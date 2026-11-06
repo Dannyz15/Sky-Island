@@ -125,7 +125,7 @@ impl App {
     /// change and when the notch has moved.
     pub(crate) fn refresh_edges(&mut self) {
         // The closed notches on the other screens (for Every) are made or taken away to match, when the loop is next free.
-        self.mirrors_wanted = true;
+        self.mirrors.wanted = true;
         let Some(window) = self.window.clone() else { return };
         if !self.settings.screen.follows() {
             self.follow = None;

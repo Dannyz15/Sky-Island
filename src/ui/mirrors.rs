@@ -23,6 +23,22 @@ const OPEN_EVERY: Duration = Duration::from_millis(500);
 /// How often they are put back in front of other always-on-top windows.
 const RAISE_EVERY: Duration = Duration::from_secs(1);
 
+/// The copies of the closed notch on the other screens (With Show on = Every), and what the event loop keeps about them.
+pub(crate) struct Mirrors {
+    pub(crate) list: Vec<Mirror>,
+    /// The copies are to be made or taken away the next time the event loop is free to (windows are made from it).
+    pub(crate) wanted: bool,
+    /// When they were last drawn, and last put in front of other always-on-top windows.
+    pub(crate) drawn: Instant,
+    pub(crate) raised: Instant,
+}
+
+impl Default for Mirrors {
+    fn default() -> Self {
+        Self { list: Vec::new(), wanted: false, drawn: Instant::now(), raised: Instant::now() }
+    }
+}
+
 /// The copy of the closed notch on one screen.
 pub(crate) struct Mirror {
     window: Rc<Window>,
@@ -72,12 +88,12 @@ fn make_mirror(event_loop: &ActiveEventLoop, at: (i32, i32)) -> Option<Mirror> {
 impl App {
     /// Whether a window is one of the copies (which have nothing to say about the keys or the clicks).
     pub(crate) fn is_mirror(&self, id: WindowId) -> bool {
-        self.mirrors.iter().any(|m| m.id() == id)
+        self.mirrors.list.iter().any(|m| m.id() == id)
     }
 
     /// The mouse came onto a copy: the real notch goes to that copy's screen.
     pub(crate) fn mirror_touched(&mut self, id: WindowId) {
-        let Some(at) = self.mirrors.iter().find(|m| m.id() == id).map(|m| m.at) else { return };
+        let Some(at) = self.mirrors.list.iter().find(|m| m.id() == id).map(|m| m.at) else { return };
         let Some(window) = self.window.clone() else { return };
         let device = window.available_monitors().find(|m| (m.position().x, m.position().y) == at).and_then(|m| m.name().and_then(|n| display_number(&n)));
         if let Some(device) = device {
@@ -93,12 +109,12 @@ impl App {
         let here = self.island_monitor(&window).map(|m| at_of(&m));
         let wanted: Vec<(i32, i32)> =
             if self.settings.screen == settings::Screen::Every { window.available_monitors().map(|m| at_of(&m)).filter(|at| Some(*at) != here).collect() } else { Vec::new() };
-        self.mirrors.retain(|m| wanted.contains(&m.at));
+        self.mirrors.list.retain(|m| wanted.contains(&m.at));
         for at in wanted {
-            if !self.mirrors.iter().any(|m| m.at == at)
+            if !self.mirrors.list.iter().any(|m| m.at == at)
                 && let Some(mirror) = make_mirror(event_loop, at)
             {
-                self.mirrors.push(mirror);
+                self.mirrors.list.push(mirror);
             }
         }
         self.draw_mirrors(true);
@@ -107,28 +123,28 @@ impl App {
     /// Draw the copies. Not more often than they need: about 30 times a second while the notch is closed and now and
     /// again while it is open, unless `force` says it must be now.
     pub(crate) fn draw_mirrors(&mut self, force: bool) {
-        if self.mirrors.is_empty() {
+        if self.mirrors.list.is_empty() {
             return;
         }
         let every = if self.progress <= 0.001 { CLOSED_EVERY } else { OPEN_EVERY };
-        if !force && self.mirror_drawn.elapsed() < every {
+        if !force && self.mirrors.drawn.elapsed() < every {
             return;
         }
-        self.mirror_drawn = Instant::now();
+        self.mirrors.drawn = Instant::now();
         let Some(window) = self.window.clone() else { return };
         let monitors: Vec<_> = window.available_monitors().collect();
         let tucked = self.tuck_t > 0.5;
-        let raise = self.mirror_raised.elapsed() >= RAISE_EVERY;
+        let raise = self.mirrors.raised.elapsed() >= RAISE_EVERY;
         if raise {
-            self.mirror_raised = Instant::now();
+            self.mirrors.raised = Instant::now();
         }
-        let mut mirrors = std::mem::take(&mut self.mirrors);
+        let mut mirrors = std::mem::take(&mut self.mirrors.list);
         // Screens drawn at the same scale (most sets of monitors) share one picture of the notch.
         let mut pictures: Vec<(u32, Option<Pixmap>)> = Vec::new();
         for mirror in &mut mirrors {
             let Some(monitor) = monitors.iter().find(|m| (m.position().x, m.position().y) == mirror.at) else {
                 // Its screen is gone: the next sync takes the copy away.
-                self.mirrors_wanted = true;
+                self.mirrors.wanted = true;
                 continue;
             };
             let (pos, size) = (monitor.position(), monitor.size());
@@ -176,6 +192,6 @@ impl App {
                 }
             }
         }
-        self.mirrors = mirrors;
+        self.mirrors.list = mirrors;
     }
 }

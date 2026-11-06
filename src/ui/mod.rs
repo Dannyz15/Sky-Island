@@ -32,7 +32,7 @@ pub(crate) use clock::*;
 pub(crate) use companion::*;
 pub(crate) use events::*;
 pub(crate) use icons::*;
-pub(crate) use mirrors::Mirror;
+pub(crate) use mirrors::Mirrors;
 pub(crate) use notice::*;
 pub(crate) use player::*;
 pub(crate) use prayer::PrayerTab;
