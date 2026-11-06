@@ -336,10 +336,8 @@ struct App {
     /// The prayer times the Prayer tab shows, the same bookkeeping as the weather, the prayer a notice was last
     /// shown for (day and index), and the minute the Prayer view was last drawn.
     prayer: ui::PrayerTab,
-    /// The volume of the default output device and whether it is muted, as last heard, for the Music view's slider;
-    /// and whether that slider is being dragged.
-    sys_volume: Option<(u32, bool)>,
-    volume_drag: bool,
+    /// The Music view's volume slider.
+    volume: ui::Volume,
     /// Whether the hotkey's combination is registered.
     hotkey_ok: bool,
     /// What the Stats tab keeps.
@@ -490,8 +488,7 @@ impl App {
             follow: None,
             hotkey_ok: true,
             stats: ui::StatsTab::default(),
-            sys_volume: None,
-            volume_drag: false,
+            volume: ui::Volume::default(),
             weather: ui::WeatherTab::default(),
             prayer: ui::PrayerTab::default(),
             changelog: update::Changelog::Idle,

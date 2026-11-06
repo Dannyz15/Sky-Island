@@ -65,7 +65,7 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             UserEvent::Notice(notice) => {
                 if let sys::Notice::Volume { percent, muted } = &notice {
-                    self.sys_volume = Some((*percent, *muted));
+                    self.volume.level = Some((*percent, *muted));
                     // The open notch has its own volume slider: no popup for a change made there.
                     if self.progress > 0.5 {
                         if let Some(w) = &self.window {
@@ -84,7 +84,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             UserEvent::SysVolume { percent, muted } => {
-                self.sys_volume = Some((percent, muted));
+                self.volume.level = Some((percent, muted));
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }
@@ -325,7 +325,7 @@ impl ApplicationHandler<UserEvent> for App {
                     let s = self.ui_scale();
                     self.scrub = Some(self.scrub_at((position.x / s) as f32));
                 }
-                if self.volume_drag {
+                if self.volume.drag {
                     let s = self.ui_scale();
                     self.set_volume_at((position.x / s) as f32);
                 }
@@ -357,7 +357,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
-                self.volume_drag = false;
+                self.volume.drag = false;
                 if let Some(at) = self.scrub.take() {
                     if let Some(handle) = &self.media_handle {
                         handle.send(Command::Seek(at));
@@ -402,9 +402,9 @@ impl ApplicationHandler<UserEvent> for App {
                 // The wheel over the volume control changes the volume, five percent a notch.
                 let dy = wheel(&delta, 1.0, 1.0);
                 if dy != 0.0 {
-                    let now = self.sys_volume.map_or(0, |(p, _)| p) as i32;
+                    let now = self.volume.level.map_or(0, |(p, _)| p) as i32;
                     let next = (now + if dy > 0.0 { 5 } else { -5 }).clamp(0, 100) as u32;
-                    self.sys_volume = Some((next, false));
+                    self.volume.level = Some((next, false));
                     sys::set_volume(next);
                     if let Some(w) = &self.window {
                         w.request_redraw();

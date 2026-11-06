@@ -150,6 +150,14 @@ pub(crate) fn player_geo(t: f32) -> PlayerGeo {
     PlayerGeo { art: (24.0, 30.0, 64.0), text_x: 104.0, left: 24.0, right, bar: (64.0, 106.0, right - 104.0), ctrl_x: [mid - 100.0, mid - 50.0, mid, mid + 50.0] }
 }
 
+/// The Music view's volume slider: the volume of the default output device and whether it is muted, as last heard
+/// (`None` until it was heard), and whether the slider is being dragged.
+#[derive(Default)]
+pub(crate) struct Volume {
+    pub(crate) level: Option<(u32, bool)>,
+    pub(crate) drag: bool,
+}
+
 impl App {
     /// The line the lyrics view is heading for: where the wheel took it, otherwise the line being sung
     /// (-1 before the first one starts).
@@ -220,7 +228,7 @@ impl App {
         }
         let percent = (((cx - vol.track_x) / vol.track_w).clamp(0.0, 1.0) * 100.0).round() as u32;
         // The slider follows the mouse at once; Windows' own report comes after.
-        self.sys_volume = Some((percent, false));
+        self.volume.level = Some((percent, false));
         sys::set_volume(percent);
         if let Some(w) = &self.window {
             w.request_redraw();
@@ -475,18 +483,18 @@ impl App {
         draw_lyrics_icon(pm, lyrics_x * s, py, s, gfx::mix(grey, white, open));
         // The volume of the speakers: a speaker that mutes, and a slider.
         let vol = geo.volume();
-        let (percent, muted) = self.sys_volume.unwrap_or((0, false));
+        let (percent, muted) = self.volume.level.unwrap_or((0, false));
         let icon_hot = self.hot_t((vol.icon_x - 18.0, CTRL_Y - 18.0, 36.0, 36.0), s);
         if icon_hot > 0.01 {
             fill_circle(pm, vol.icon_x * s, py, 18.0 * s, [255, 255, 255, (alpha * 24.0 * icon_hot) as u8]);
         }
-        let speaker = if muted || self.sys_volume.is_none() { grey } else { gfx::mix(grey, white, 0.5 + 0.5 * icon_hot) };
+        let speaker = if muted || self.volume.level.is_none() { grey } else { gfx::mix(grey, white, 0.5 + 0.5 * icon_hot) };
         draw_speaker(pm, vol.icon_x * s, py, s * 0.8, speaker, muted);
         if vol.track_w > 0.0 {
             let shown = if muted { 0.0 } else { percent as f32 / 100.0 };
             let over = self.hot_t((vol.track_x - 4.0, CTRL_Y - 12.0, vol.track_w + 8.0, 24.0), s);
             draw_bar(pm, vol.track_x * s, py, vol.track_w * s, shown, accent, s * (0.8 + 0.2 * over), a);
-            if over > 0.01 || self.volume_drag {
+            if over > 0.01 || self.volume.drag {
                 fill_circle(pm, (vol.track_x + vol.track_w * shown) * s, py, 4.5 * s, white);
             }
         }
@@ -514,13 +522,13 @@ impl App {
         // The volume: the speaker mutes, and the slider is pressed and dragged to set the level.
         let vol = geo.volume();
         if (cx - vol.icon_x).hypot(cy - CTRL_Y) <= CTRL_R {
-            if self.sys_volume.is_some() {
+            if self.volume.level.is_some() {
                 sys::toggle_mute();
             }
             return;
         }
         if vol.track_w > 0.0 && cx >= vol.track_x - 6.0 && cx <= vol.track_x + vol.track_w + 6.0 && (cy - CTRL_Y).abs() <= 12.0 {
-            self.volume_drag = true;
+            self.volume.drag = true;
             self.set_volume_at(cx);
             return;
         }
