@@ -39,7 +39,7 @@ pub(crate) use prayer::PrayerTab;
 pub(crate) use render::BodyKey;
 pub(crate) use shapes::*;
 pub(crate) use shelf::*;
-pub(crate) use stats::StatsBackdrops;
+pub(crate) use stats::StatsTab;
 pub(crate) use tabs::*;
 pub(crate) use text::*;
 pub(crate) use timer::*;

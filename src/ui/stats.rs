@@ -14,6 +14,17 @@ use tiny_skia::{GradientStop, LinearGradient, Point, SpreadMode};
 
 type Area = (f32, f32, f32, f32);
 
+/// What the Stats tab keeps: the numbers, when they were last looked at, when the view was last drawn for its gliding
+/// graphs (the next is a frame later), and the parts of the view that do not change from one frame to the next, drawn
+/// once and copied in (see `blit_backdrop`).
+#[derive(Default)]
+pub(crate) struct StatsTab {
+    pub(crate) data: stats::Stats,
+    pub(crate) at: Option<Instant>,
+    pub(crate) frame: Option<Instant>,
+    pub(crate) backdrops: std::cell::RefCell<StatsBackdrops>,
+}
+
 /// The pictures of the parts of the view that stay the same from one frame to the next, one for each card, each with
 /// what it was drawn for. Drawing them is most of what a frame of the view costs, so they are drawn once and copied.
 #[derive(Default)]
@@ -208,7 +219,7 @@ impl App {
         if self.view != View::Stats {
             return 0.0;
         }
-        let p = plan(2 + self.stats.last.gpus.len().min(stats::MAX_CHIPS), self.stats.last.disks.len());
+        let p = plan(2 + self.stats.data.last.gpus.len().min(stats::MAX_CHIPS), self.stats.data.last.disks.len());
         extra_height(p.end) as f64
     }
 
@@ -218,52 +229,52 @@ impl App {
     /// it starts afresh next time.
     pub(crate) fn stats_tick(&mut self, now: Instant) -> Option<Instant> {
         if self.progress < 1.0 || self.view != View::Stats {
-            if self.stats.started {
+            if self.stats.data.started {
                 // The drives and the names of the graphics chips stay, so the view keeps its shape while it slides out
                 // and opens at the right height.
-                let disks = std::mem::take(&mut self.stats.last.disks);
-                let chips: Vec<stats::Chip> = self.stats.last.gpus.iter().map(|c| stats::Chip { name: c.name.clone(), load: None }).collect();
-                self.stats = stats::Stats::default();
-                self.stats.disks_known = !disks.is_empty();
-                self.stats.last.disks = disks;
-                self.stats.last.gpus = chips;
-                self.stats_at = None;
-                self.stats_frame = None;
+                let disks = std::mem::take(&mut self.stats.data.last.disks);
+                let chips: Vec<stats::Chip> = self.stats.data.last.gpus.iter().map(|c| stats::Chip { name: c.name.clone(), load: None }).collect();
+                self.stats.data = stats::Stats::default();
+                self.stats.data.disks_known = !disks.is_empty();
+                self.stats.data.last.disks = disks;
+                self.stats.data.last.gpus = chips;
+                self.stats.at = None;
+                self.stats.frame = None;
             }
             return None;
         }
-        let gap = if self.stats.ready() { stats::EVERY } else { stats::FIRST_AGAIN };
-        let due = self.stats_at.map_or(now, |at| at + gap);
+        let gap = if self.stats.data.ready() { stats::EVERY } else { stats::FIRST_AGAIN };
+        let due = self.stats.at.map_or(now, |at| at + gap);
         let mut frame_due = false;
         if now >= due {
-            self.stats.sample(now);
-            self.stats_at = Some(now);
+            self.stats.data.sample(now);
+            self.stats.at = Some(now);
             // The numbers have just changed: draw at once, so that the glide starts.
             frame_due = true;
         }
-        let Some(looked_at) = self.stats_at else { return Some(due) };
+        let Some(looked_at) = self.stats.at else { return Some(due) };
         // A frame is drawn only when one is due: drawing makes the event loop look again at once, and asking every time
         // would draw as fast as the machine can. Frames follow each other until one has been drawn at the end of the
         // glide (the last of them shows the final picture), and then there are none until the next look.
-        let glided = self.stats_frame.is_some_and(|at| at.saturating_duration_since(looked_at) >= GLIDE);
-        let next_frame = self.stats_frame.map_or(now, |at| at + FRAME);
+        let glided = self.stats.frame.is_some_and(|at| at.saturating_duration_since(looked_at) >= GLIDE);
+        let next_frame = self.stats.frame.map_or(now, |at| at + FRAME);
         if frame_due || (!glided && now >= next_frame) {
-            self.stats_frame = Some(now);
+            self.stats.frame = Some(now);
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
         }
-        let glided = self.stats_frame.is_some_and(|at| at.saturating_duration_since(looked_at) >= GLIDE);
+        let glided = self.stats.frame.is_some_and(|at| at.saturating_duration_since(looked_at) >= GLIDE);
         if glided {
             return Some(due);
         }
         // The next frame of the glide, or the next look if that comes first.
-        Some(self.stats_frame.map_or(now, |at| at + FRAME).min(due).max(now))
+        Some(self.stats.frame.map_or(now, |at| at + FRAME).min(due).max(now))
     }
 
     /// How far the glide from the look before to the last one has got, 0.0 just after a look and 1.0 when it is over.
     fn glide_progress(&self) -> f32 {
-        self.stats_at.map_or(1.0, |at| (at.elapsed().as_secs_f32() / GLIDE.as_secs_f32()).clamp(0.0, 1.0))
+        self.stats.at.map_or(1.0, |at| (at.elapsed().as_secs_f32() / GLIDE.as_secs_f32()).clamp(0.0, 1.0))
     }
 
     /// Copy a picture of the part of a card that does not move onto `target` at (`x`, `y`) (in pixels), drawing it first
@@ -271,7 +282,7 @@ impl App {
     #[allow(clippy::too_many_arguments)]
     fn blit_backdrop(&self, target: &mut Pixmap, slot: usize, (x, y): (i32, i32), size: (u32, u32), variant: u32, alpha: f32, paint: impl FnOnce(&mut Pixmap)) {
         let key = (size.0, size.1, theme::is_light(), variant);
-        let mut cache = self.stats_backdrops.borrow_mut();
+        let mut cache = self.stats.backdrops.borrow_mut();
         if cache.slots.len() <= slot {
             cache.slots.resize_with(slot + 1, || None);
         }
@@ -342,10 +353,10 @@ impl App {
 
         // The key to the two lines, on the right.
         let percent = |load: f32| format!("{}%", (load * 100.0).round() as u32);
-        let gpu_now = self.stats.last.gpus.iter().filter_map(|chip| chip.load).reduce(f32::max);
+        let gpu_now = self.stats.data.last.gpus.iter().filter_map(|chip| chip.load).reduce(f32::max);
         let keys = [
-            ("GPU", GPU_LINE, (!self.stats.gpu_history.is_empty()).then(|| gpu_now.map_or("...".to_string(), percent))),
-            ("CPU", CPU_LINE, Some(self.stats.last.cpu.map_or("...".to_string(), percent))),
+            ("GPU", GPU_LINE, (!self.stats.data.gpu_history.is_empty()).then(|| gpu_now.map_or("...".to_string(), percent))),
+            ("CPU", CPU_LINE, Some(self.stats.data.last.cpu.map_or("...".to_string(), percent))),
         ];
         let mut kx = x + w - 12.0;
         for (name, rgb, value) in keys {
@@ -373,7 +384,7 @@ impl App {
             let pts = graph_points(&v, frac, step, pw, 0.0);
             smooth(&pts, 2).into_iter().map(|(gx, value)| (gx * s, (ph - 2.0 - value.clamp(0.0, 1.0) * (ph - 4.0)) * s)).collect()
         };
-        for (values, rgb) in [(&self.stats.gpu_history, GPU_LINE), (&self.stats.history, CPU_LINE)] {
+        for (values, rgb) in [(&self.stats.data.gpu_history, GPU_LINE), (&self.stats.data.history, CPU_LINE)] {
             let pts = line(values);
             if pts.len() < 2 {
                 continue;
@@ -387,7 +398,7 @@ impl App {
             }
         }
         pm.draw_pixmap((px * s).round() as i32, (py * s).round() as i32, plot.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
-        if self.stats.history.len() < 2 {
+        if self.stats.data.history.len() < 2 {
             draw_text_centered(pm, font, "Looking...", (px + pw / 2.0) * s, (py + ph / 2.0 + 3.0) * s, 10.5 * s, grey, pw * s);
         }
     }
@@ -404,7 +415,7 @@ impl App {
         });
         draw_text(pm, heading, "Network", (x + 12.0) * s, (y + 19.0) * s, 11.0 * s, [255, 255, 255, a], 100.0 * s);
 
-        let speeds = self.stats.last.network.map(|(d, u)| (stats::speed(d), stats::speed(u)));
+        let speeds = self.stats.data.last.network.map(|(d, u)| (stats::speed(d), stats::speed(u)));
         let (down, up) = speeds.unwrap_or(("...".to_string(), "...".to_string()));
         for (i, (arrow, text, rgb)) in [("\u{2193}", down, DOWN), ("\u{2191}", up, UP)].into_iter().enumerate() {
             let by = y + 38.0 + i as f32 * 17.0;
@@ -414,13 +425,13 @@ impl App {
         }
 
         // Both directions on one scale that eases to what the last minute needed, never below a quiet link.
-        let scale = glide(Some(self.stats.net_scale_prev), Some(self.stats.net_scale), self.glide_progress()).unwrap_or(stats::QUIET_LINK).max(stats::QUIET_LINK);
+        let scale = glide(Some(self.stats.data.net_scale_prev), Some(self.stats.data.net_scale), self.glide_progress()).unwrap_or(stats::QUIET_LINK).max(stats::QUIET_LINK);
         let (px, py, pw, ph) = (x + 12.0, y + 68.0, w - 24.0, 20.0);
         let Some(mut plot) = Pixmap::new((pw * s).ceil().max(1.0) as u32, (ph * s).ceil().max(1.0) as u32) else { return };
         let step = pw / (stats::HISTORY - 1) as f32;
         let frac = glide(Some(0.0), Some(1.0), self.glide_progress()).unwrap_or(1.0);
         for (pick_up, rgb) in [(false, DOWN), (true, UP)] {
-            let v: Vec<f32> = self.stats.net_history.iter().map(|(d, u)| (if pick_up { *u } else { *d }) / scale).collect();
+            let v: Vec<f32> = self.stats.data.net_history.iter().map(|(d, u)| (if pick_up { *u } else { *d }) / scale).collect();
             let pts: Vec<(f32, f32)> =
                 smooth(&graph_points(&v, frac, step, pw, 0.0), 2).into_iter().map(|(gx, value)| (gx * s, (ph - 1.5 - value.clamp(0.0, 1.0) * (ph - 3.0)) * s)).collect();
             if pts.len() < 2 {
@@ -432,7 +443,7 @@ impl App {
             stroke_poly(&mut plot, &pts, 1.4 * s, [rgb[0], rgb[1], rgb[2], a], false);
         }
         pm.draw_pixmap((px * s).round() as i32, (py * s).round() as i32, plot.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
-        if self.stats.net_history.len() < 2 {
+        if self.stats.data.net_history.len() < 2 {
             draw_text_centered(pm, font, "...", (px + pw / 2.0) * s, (py + ph / 2.0 + 3.0) * s, 10.0 * s, grey, pw * s);
         }
     }
@@ -444,16 +455,16 @@ impl App {
         let a = (alpha * 255.0) as u8;
         let (white, grey) = ([255, 255, 255, a], [165, 165, 175, a]);
         draw_text(pm, heading, "Storage", (MARGIN + 2.0) * s, (top + 12.0) * s, 11.0 * s, white, 120.0 * s);
-        let last = &self.stats.last;
+        let last = &self.stats.data.last;
         if last.disks.is_empty() {
-            let text = if self.stats.disks_known { "No drives found" } else { "..." };
+            let text = if self.stats.data.disks_known { "No drives found" } else { "..." };
             draw_text(pm, font, text, (MARGIN + 2.0) * s, (top + STORAGE_HEAD + 16.0) * s, 11.0 * s, grey, 200.0 * s);
             return;
         }
         for (i, d) in last.disks.iter().enumerate() {
             let y = top + STORAGE_HEAD + DRIVE_ROW * i as f32;
             let frac = if d.total > 0 { d.used as f32 / d.total as f32 } else { 0.0 };
-            let before = self.stats.prev.disks.get(i).filter(|p| p.letter == d.letter && p.total > 0).map(|p| p.used as f32 / p.total as f32);
+            let before = self.stats.data.prev.disks.get(i).filter(|p| p.letter == d.letter && p.total > 0).map(|p| p.used as f32 / p.total as f32);
             let shown = glide(before, Some(frac), self.glide_progress()).unwrap_or(frac).clamp(0.0, 1.0);
             // The letter in a small tile that takes the colour of how full the drive is.
             let col = load_color(shown, a);
@@ -472,13 +483,13 @@ impl App {
         if self.font.is_none() {
             return;
         }
-        let last = &self.stats.last;
+        let last = &self.stats.data.last;
         let chips = last.gpus.len().min(stats::MAX_CHIPS);
         let p = plan(2 + chips, last.disks.len());
 
         // The gauges: the processor, the memory and each graphics chip.
         let t = self.glide_progress();
-        let prev = &self.stats.prev;
+        let prev = &self.stats.data.prev;
         let cpu = glide(prev.cpu, last.cpu, t);
         let cpu_sub = format!("{} threads", stats::threads());
         let percent = |frac: Option<f32>| frac.map_or("...".to_string(), |f| format!("{}%", (f * 100.0).round() as u32));

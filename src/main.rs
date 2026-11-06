@@ -353,14 +353,8 @@ struct App {
     volume_drag: bool,
     /// Whether the hotkey's combination is registered.
     hotkey_ok: bool,
-    /// The Stats view's numbers and when they were last looked at.
-    stats: stats::Stats,
-    stats_at: Option<Instant>,
-    /// When the Stats view was last drawn for its gliding graphs; the next is a frame later.
-    stats_frame: Option<Instant>,
-    /// The parts of the Stats view that do not change from one frame to the next, drawn once and copied in (see
-    /// `blit_backdrop` in `ui/stats.rs`).
-    stats_backdrops: std::cell::RefCell<ui::StatsBackdrops>,
+    /// What the Stats tab keeps.
+    stats: ui::StatsTab,
     /// With Show on All screens: the number of the screen the notch last followed the mouse to (none until it has).
     follow: Option<u32>,
     /// The version the notch has already told the user about, so the notice comes once per version.
@@ -513,10 +507,7 @@ impl App {
             update_told: None,
             follow: None,
             hotkey_ok: true,
-            stats: stats::Stats::default(),
-            stats_at: None,
-            stats_frame: None,
-            stats_backdrops: Default::default(),
+            stats: ui::StatsTab::default(),
             sys_volume: None,
             volume_drag: false,
             weather: ui::WeatherTab::default(),
