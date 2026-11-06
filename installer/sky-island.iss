@@ -91,23 +91,31 @@ end;
 function AppIsRunning: Boolean;
 var
   ResultCode: Integer;
+  Started: Boolean;
   ListFile: String;
   Listing: AnsiString;
 begin
   Result := False;
+  ResultCode := -1;
   ListFile := ExpandConstant('{tmp}\running.txt');
   DeleteFile(ListFile);
   { tasklist is the one in Windows' own folder: a tasklist in the folder Setup was started from, or an earlier one on
     the PATH, is never run. The whole command sits in one more pair of quotes, which cmd takes off, so the quotes
     around the paths stay. }
-  if Exec(ExpandConstant('{cmd}'),
+  Started := Exec(ExpandConstant('{cmd}'),
     '/C ""' + ExpandConstant('{sys}\tasklist.exe') + '" /FI "IMAGENAME eq {#AppExe}"' + WhichCopies + ' /NH > "' + ListFile + '""',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if Started and (ResultCode = 0) then
   begin
     { tasklist lists the program by name when it runs, and says nothing of the kind when it does not. }
     if LoadStringFromFile(ListFile, Listing) then
-      Result := Pos(Lowercase('{#AppExe}'), Lowercase(String(Listing))) > 0;
+      Result := Pos(Lowercase('{#AppExe}'), Lowercase(String(Listing))) > 0
+    else
+      Log('Could not read the list of programs');
   end;
+  { Only written when Setup runs with /LOG: what the look for a running copy found. }
+  Log('Looked for a running {#AppExe}: tasklist started ' + IntToStr(Ord(Started)) + ', exit code ' + IntToStr(ResultCode) +
+    ', running ' + IntToStr(Ord(Result)));
   DeleteFile(ListFile);
 end;
 
