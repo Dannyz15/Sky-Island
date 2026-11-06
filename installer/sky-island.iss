@@ -85,18 +85,30 @@ begin
     Result := ' /FI "USERNAME eq ' + ExpandConstant('{username}') + '"';
 end;
 
-{ True while a copy of the app is running (find answers 0 when tasklist lists it). }
+{ True while a copy of the app is running in the session Setup runs in (see WhichCopies): tasklist lists it. The
+  list is written to a file and read back. (An older version piped it into "find" instead, which works, but a command
+  line that pipes tasklist into find is what security scanners report as reconnaissance.) }
 function AppIsRunning: Boolean;
 var
   ResultCode: Integer;
+  ListFile: String;
+  Listing: AnsiString;
 begin
-  { Both programs are the ones in Windows' own folder: a tasklist or find in the folder Setup was started from, or an
-    earlier one on the PATH, is never run. The whole command sits in one more pair of quotes, which cmd takes off, so
-    the quotes around the two paths stay. }
-  Result := Exec(ExpandConstant('{cmd}'),
-    '/C ""' + ExpandConstant('{sys}\tasklist.exe') + '" /FI "IMAGENAME eq {#AppExe}"' + WhichCopies + ' /NH | "' +
-    ExpandConstant('{sys}\find.exe') + '" /I "{#AppExe}""',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+  Result := False;
+  ListFile := ExpandConstant('{tmp}\running.txt');
+  DeleteFile(ListFile);
+  { tasklist is the one in Windows' own folder: a tasklist in the folder Setup was started from, or an earlier one on
+    the PATH, is never run. The whole command sits in one more pair of quotes, which cmd takes off, so the quotes
+    around the paths stay. }
+  if Exec(ExpandConstant('{cmd}'),
+    '/C ""' + ExpandConstant('{sys}\tasklist.exe') + '" /FI "IMAGENAME eq {#AppExe}"' + WhichCopies + ' /NH > "' + ListFile + '""',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    { tasklist lists the program by name when it runs, and says nothing of the kind when it does not. }
+    if LoadStringFromFile(ListFile, Listing) then
+      Result := Pos(Lowercase('{#AppExe}'), Lowercase(String(Listing))) > 0;
+  end;
+  DeleteFile(ListFile);
 end;
 
 { A running copy would keep the exe locked, so close it before installing or removing. It is asked to

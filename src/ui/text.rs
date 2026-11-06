@@ -28,16 +28,34 @@ pub(crate) fn text_width(font: &Font, text: &str, px: f32) -> f32 {
     text.chars().map(|c| font.metrics(c, px).advance_width).sum()
 }
 
+/// The most characters one `draw_text` call looks at: far more than any row can show, so a huge string (a
+/// media title from a web page, a lyric line) can never make one frame slow.
+const MAX_DRAW_CHARS: usize = 1000;
+
+/// `text` as it is drawn in `max_w`: unchanged when it fits, else its longest start that fits together with an
+/// ellipsis. One pass over the characters (cutting one character at a time and measuring the whole text again
+/// each time took time that grew with the square of the length).
+fn fit(font: &Font, text: &str, px: f32, max_w: f32) -> String {
+    let text = crate::lyrics::clip(text, MAX_DRAW_CHARS);
+    if text_width(font, text, px) <= max_w {
+        return text.to_string();
+    }
+    let ellipsis = text_width(font, "…", px);
+    let (mut width, mut end) = (0.0_f32, 0);
+    for (at, c) in text.char_indices() {
+        let next = width + font.metrics(c, px).advance_width;
+        if next + ellipsis > max_w {
+            break;
+        }
+        (width, end) = (next, at + c.len_utf8());
+    }
+    format!("{}…", &text[..end])
+}
+
 /// Draw `text` with its baseline at `y`, truncating with an ellipsis past `max_w`.
 pub(crate) fn draw_text(pm: &mut Pixmap, font: &Font, text: &str, x: f32, y: f32, px: f32, rgba: [u8; 4], max_w: f32) {
     let rgba = theme::map(rgba);
-    let mut s = text.to_string();
-    if text_width(font, &s, px) > max_w {
-        while !s.is_empty() && text_width(font, &format!("{s}…"), px) > max_w {
-            s.pop();
-        }
-        s.push('…');
-    }
+    let s = fit(font, text, px, max_w);
 
     let (pw, ph) = (pm.width() as i32, pm.height() as i32);
     let data = pm.pixels_mut();
@@ -123,5 +141,50 @@ mod tests {
             .filter(|&c| font.lookup_glyph_index(c) == 0)
             .collect();
         assert!(missing.is_empty(), "missing glyphs: {missing:?}");
+    }
+
+    /// The loop `fit` replaced, kept here to prove both give the same text.
+    fn fit_by_popping(font: &Font, text: &str, px: f32, max_w: f32) -> String {
+        let mut s = text.to_string();
+        if text_width(font, &s, px) > max_w {
+            while !s.is_empty() && text_width(font, &format!("{s}…"), px) > max_w {
+                s.pop();
+            }
+            s.push('…');
+        }
+        s
+    }
+
+    #[test]
+    fn the_one_pass_cut_gives_the_same_text_as_cutting_one_character_at_a_time() {
+        let font = load_font().expect("a system font");
+        let texts = [
+            "",
+            "Hi",
+            "A fairly long song title that does not fit",
+            "Artist \u{00B7} Album with a very long name that goes on and on",
+            "\u{4E2D}\u{6587}\u{6B4C}\u{8BCD}\u{4E2D}\u{6587}\u{6B4C}\u{8BCD}\u{4E2D}\u{6587}\u{6B4C}\u{8BCD}",
+            "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+            "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+        ];
+        for text in texts {
+            for px in [11.0, 15.0, 17.0, 24.0] {
+                for max_w in [0.0, 5.0, 12.0, 40.0, 100.0, 250.0, 344.0, 2000.0] {
+                    assert_eq!(fit(&font, text, px, max_w), fit_by_popping(&font, text, px, max_w), "{text:?} px {px} max_w {max_w}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_huge_string_is_cut_to_a_small_one_quickly() {
+        let font = load_font().expect("a system font");
+        let started = std::time::Instant::now();
+        let out = fit(&font, &"W".repeat(1_000_000), 17.0, 250.0);
+        assert!(out.ends_with('…') && out.chars().count() < 40, "{out:?}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "took {:?}", started.elapsed());
+        // Even zero-width characters are looked at only up to the limit.
+        let zero = fit(&font, &"\u{200B}".repeat(5000), 17.0, 250.0);
+        assert!(zero.chars().count() <= MAX_DRAW_CHARS);
     }
 }

@@ -257,6 +257,13 @@ impl Drop for Subscription {
     }
 }
 
+/// The most characters of a title, artist or album that are kept.
+const MAX_META_CHARS: usize = 256;
+
+fn clip_meta(s: &str) -> String {
+    crate::lyrics::clip(s, MAX_META_CHARS).to_string()
+}
+
 /// `reuse`: the state sent last, on a plain resync. Its cover is kept for the same song instead of being
 /// read and decoded again.
 fn read_state(session: &Session, reuse: Option<&MediaState>) -> Result<MediaState> {
@@ -265,8 +272,9 @@ fn read_state(session: &Session, reuse: Option<&MediaState>) -> Result<MediaStat
     let playing = info.PlaybackStatus()? == Status::Playing;
     let next_enabled = info.Controls()?.IsNextEnabled()?;
     let timeline = session.GetTimelineProperties()?;
-    let title = props.Title()?.to_string();
-    let artist = props.Artist()?.to_string();
+    // A player or a web page decides these texts, so they are cut at once; nothing shows more than a few dozen.
+    let title = clip_meta(&props.Title()?.to_string());
+    let artist = clip_meta(&props.Artist()?.to_string());
 
     // The picture is read on every look except a plain resync of the same song: for a moment after a skip
     // a browser offers its own logo, and the real cover only arrives later (the settle reads catch it).
@@ -289,7 +297,7 @@ fn read_state(session: &Session, reuse: Option<&MediaState>) -> Result<MediaStat
     Ok(MediaState {
         title,
         artist,
-        album: props.AlbumTitle().map(|a| a.to_string()).unwrap_or_default(),
+        album: props.AlbumTitle().map(|a| clip_meta(&a.to_string())).unwrap_or_default(),
         playing,
         position,
         duration,
@@ -477,5 +485,12 @@ mod tests {
     fn a_future_or_ancient_update_time_adds_nothing() {
         assert_eq!(since(filetime_now() + 50_000_000), Duration::ZERO);
         assert_eq!(since(0), Duration::ZERO);
+    }
+
+    #[test]
+    fn long_titles_from_a_player_are_cut_to_a_small_size() {
+        assert_eq!(clip_meta("Short"), "Short");
+        let cut = clip_meta(&"\u{4E2D}".repeat(100_000));
+        assert_eq!(cut.chars().count(), MAX_META_CHARS);
     }
 }
