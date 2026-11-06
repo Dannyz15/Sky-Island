@@ -22,6 +22,7 @@ mod tabs;
 mod text;
 mod timer;
 mod todo;
+mod tray;
 mod water;
 mod weather;
 mod window;
@@ -42,6 +43,7 @@ pub(crate) use tabs::*;
 pub(crate) use text::*;
 pub(crate) use timer::*;
 pub(crate) use todo::*;
+pub(crate) use tray::*;
 pub(crate) use weather::draw_moon;
 pub(crate) use window::display_number;
 #[cfg(test)]

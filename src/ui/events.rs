@@ -45,7 +45,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.media_handle = Some(media::spawn(self.proxy.clone()));
         sys::spawn_all(self.proxy.clone());
         self.make_non_activating();
-        self.build_tray();
+        self.tray = Tray::build(&self.proxy);
         sys::install_lock_hook(self.proxy.clone());
         presence::spawn(self.proxy.clone(), self.native_handle().unwrap_or(0));
         shelf::check_in_background(self.shelf.items.clone(), self.proxy.clone());
@@ -101,15 +101,18 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Menu(id) => {
                 let now = Instant::now();
-                if Some(&id) == self.tray_quit_id.as_ref() {
-                    self.quit = true;
-                } else if Some(&id) == self.tray_about_id.as_ref() {
-                    self.panel_wanted = true;
-                    self.panel_page = Some(panel::Page::About);
-                    self.last_tick = now;
-                } else if Some(&id) == self.tray_settings_id.as_ref() {
-                    self.panel_wanted = true;
-                    self.last_tick = now;
+                match self.tray.entry(&id) {
+                    Some(TrayEntry::Quit) => self.quit = true,
+                    Some(TrayEntry::About) => {
+                        self.panel_wanted = true;
+                        self.panel_page = Some(panel::Page::About);
+                        self.last_tick = now;
+                    }
+                    Some(TrayEntry::Settings) => {
+                        self.panel_wanted = true;
+                        self.last_tick = now;
+                    }
+                    None => {}
                 }
             }
             UserEvent::Presence { presence, fullscreen } => {

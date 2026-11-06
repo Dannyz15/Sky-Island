@@ -220,11 +220,8 @@ struct App {
     /// When the cursor entering/leaving takes effect (see `hover_open`, `hover_close`).
     enter_at: Option<Instant>,
     leave_at: Option<Instant>,
-    tray: Option<TrayIcon>,
-    tray_settings_id: Option<MenuId>,
-    tray_quit_id: Option<MenuId>,
-    /// The tray's Show / Hide island entry, whose text follows the setting.
-    tray_about_id: Option<MenuId>,
+    /// The tray icon and its menu.
+    tray: ui::Tray,
     todo: Todo,
     cal: calendar::Calendar,
     /// Typing a new task. While true the notch stays open and keys go to `input`.
@@ -445,10 +442,7 @@ impl App {
             clip_flash: None,
             enter_at: None,
             leave_at: None,
-            tray: None,
-            tray_settings_id: None,
-            tray_quit_id: None,
-            tray_about_id: None,
+            tray: ui::Tray::default(),
             todo: Todo::new(),
             cal: calendar::Calendar::new(today_day()),
             editing: false,

@@ -368,30 +368,6 @@ impl App {
         Duration::from_millis(self.settings.close_delay as u64)
     }
 
-    /// Tray icon with a small menu, so the app can be closed without opening the notch.
-    pub(crate) fn build_tray(&mut self) {
-        let menu = Menu::new();
-        let open = MenuItem::new("Settings\u{2026}", true, None);
-        let about = MenuItem::new("About Sky Island", true, None);
-        let quit = MenuItem::new("Exit", true, None);
-        if menu.append_items(&[&open, &PredefinedMenuItem::separator(), &about, &quit]).is_err() {
-            return;
-        }
-        let Ok(icon) = Icon::from_rgba(appicon::rgba(32), 32, 32) else { return };
-        let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("Sky Island").with_icon(icon).build();
-
-        let proxy = std::sync::Mutex::new(self.proxy.clone());
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            if let Ok(p) = proxy.lock() {
-                let _ = p.send_event(UserEvent::Menu(event.id));
-            }
-        }));
-        self.tray_about_id = Some(about.id().clone());
-        self.tray_settings_id = Some(open.id().clone());
-        self.tray_quit_id = Some(quit.id().clone());
-        self.tray = tray.ok();
-    }
-
     /// The notch window's Win32 handle, as a number so it can go to another thread.
     pub(crate) fn native_handle(&self) -> Option<isize> {
         use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
