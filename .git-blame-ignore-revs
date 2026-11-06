@@ -1,0 +1,5 @@
+# Commits that only changed formatting. `git blame` skips them when it is told to (GitHub does this by itself):
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Format the code once with rustfmt (width 180)
+25404b3526409c765ab4a37e70212bc4800e8918

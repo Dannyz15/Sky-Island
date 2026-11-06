@@ -184,7 +184,8 @@ cargo run --release
 | To do this | Run |
 |---|---|
 | Run the tests | `cargo test` |
-| Check the code the way the project's CI does | `cargo clippy --all-targets -- -D warnings` |
+| Check the code the way the project's CI does | `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` |
+| Format the code (one style for everything, set in `rustfmt.toml`) | `cargo fmt` |
 | Check the crates for known problems, licences and sources | `cargo install cargo-deny --locked`, then `cargo deny check` (settings in `deny.toml`) |
 | Make the setup program, `dist\Sky-Island-Setup-<version>.exe` | `powershell -ExecutionPolicy Bypass -File scripts\package.ps1` |
 

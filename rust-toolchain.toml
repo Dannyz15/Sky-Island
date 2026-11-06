@@ -1,6 +1,6 @@
 [toolchain]
 # One exact compiler, so a build today and a build in a year come out of the same Rust (the code uses edition 2024, which
-# needs a recent one), with clippy for the lint check that is run before a release. To move to a newer one, change the
+# needs a recent one), with clippy for the lint check and rustfmt for the style check that are run before a release. To move to a newer one, change the
 # number here and in `rust-version` in Cargo.toml if the code needs it, then run the tests.
 channel = "1.99.1"
-components = ["clippy"]
+components = ["clippy", "rustfmt"]
