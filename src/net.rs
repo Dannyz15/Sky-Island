@@ -65,8 +65,7 @@ mod tests {
     #[ignore = "needs a local test server"]
     fn a_gzip_bomb_from_a_real_server_is_cut() {
         let base = std::env::var("SKY_NET_TEST_URL").expect("SKY_NET_TEST_URL");
-        let agent: ureq::Agent =
-            ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(30))).build().into();
+        let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(30))).build().into();
         let ok = agent.get(format!("{base}/ok")).call().unwrap().body_mut().read_limited_json().unwrap();
         assert_eq!(ok["hello"], "gzip", "a gzip answer is decoded before it is read");
         let started = std::time::Instant::now();

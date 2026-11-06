@@ -142,18 +142,8 @@ pub(crate) enum Page {
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 10] = [
-        Page::General,
-        Page::Notch,
-        Page::Appearance,
-        Page::Tabs,
-        Page::Location,
-        Page::Sounds,
-        Page::Calendar,
-        Page::Shelf,
-        Page::Notices,
-        Page::About,
-    ];
+    pub(super) const ALL: [Page; 10] =
+        [Page::General, Page::Notch, Page::Appearance, Page::Tabs, Page::Location, Page::Sounds, Page::Calendar, Page::Shelf, Page::Notices, Page::About];
 
     pub(super) fn index(self) -> usize {
         Self::ALL.iter().position(|p| *p == self).unwrap_or(0)
@@ -246,10 +236,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Minimal notch", "A smaller pill when nothing is playing", T(Toggle::Minimal), ""),
                 ],
             ),
-            (
-                "Screen",
-                vec![("Show on", "Click a screen. All follows your mouse; Every keeps a closed notch on each screen", ScreenMap, "")],
-            ),
+            ("Screen", vec![("Show on", "Click a screen. All follows your mouse; Every keeps a closed notch on each screen", ScreenMap, "")]),
             (
                 "Closed notch",
                 vec![
@@ -259,7 +246,12 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Moving bars", "Five bars that rise and fall beside the clock (with Show music)", T(Toggle::ClosedBars), ""),
                     ("Spinning record", "The cover turns like a record; off keeps it still (with Show music)", T(Toggle::ClosedSpin), ""),
                     ("Edge glow", "A thin line along the notch in the cover's colour that breathes (with Show music)", T(Toggle::ClosedEdge), ""),
-                    ("Bars follow the sound", "Listens to the sound this PC plays, only while the bars show and only on this PC, so they rise with the music. Off, they move to a made-up beat", T(Toggle::ClosedSound), ""),
+                    (
+                        "Bars follow the sound",
+                        "Listens to the sound this PC plays, only while the bars show and only on this PC, so they rise with the music. Off, they move to a made-up beat",
+                        T(Toggle::ClosedSound),
+                        "",
+                    ),
                 ],
             ),
             (
@@ -271,21 +263,20 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 ],
             ),
         ],
-        Page::Appearance => vec![
-            (
-                "Look",
-                vec![
-                    ("Theme", "Dark, light, or the same as Windows", S(Seg::Theme), ""),
-                    ("Animation", "How lively the movement is", S(Seg::Motion), ""),
-                ],
-            ),
-        ],
+        Page::Appearance => {
+            vec![("Look", vec![("Theme", "Dark, light, or the same as Windows", S(Seg::Theme), ""), ("Animation", "How lively the movement is", S(Seg::Motion), "")])]
+        }
         Page::Tabs => vec![
             (
                 "Tabs",
                 vec![
                     ("Music", "What is playing, its controls and the lyrics", T(Toggle::TabMusic), ""),
-                    ("Find lyrics online", "Sends the title and artist of what plays to LRCLIB to find its lyrics. Off, only lyrics saved on this PC show", T(Toggle::LyricsOnline), ""),
+                    (
+                        "Find lyrics online",
+                        "Sends the title and artist of what plays to LRCLIB to find its lyrics. Off, only lyrics saved on this PC show",
+                        T(Toggle::LyricsOnline),
+                        "",
+                    ),
                     ("Timer", "A countdown timer with an alarm", T(Toggle::Timer), ""),
                     ("Water tracker", "A daily glass counter with reminders", T(Toggle::Water), ""),
                     ("Weather", "The weather now and the days ahead for your city", T(Toggle::Weather), ""),
@@ -325,13 +316,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
             ),
         ],
         Page::Sounds => vec![
-            (
-                "Chimes",
-                vec![
-                    ("Sounds", "Chimes for the timer, to-do and water reminders", T(Toggle::Sound), ""),
-                    ("Volume", "How loud they are", Slider(Slide::Volume), ""),
-                ],
-            ),
+            ("Chimes", vec![("Sounds", "Chimes for the timer, to-do and water reminders", T(Toggle::Sound), ""), ("Volume", "How loud they are", Slider(Slide::Volume), "")]),
             (
                 "Timer alarm",
                 vec![
@@ -341,17 +326,10 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 ],
             ),
         ],
-        Page::Calendar => vec![(
-            "Options",
-            vec![
-                ("Week starts on", "The first column of the month", S(Seg::WeekStart), ""),
-                ("Default view", "A month, or just one week", S(Seg::CalView), ""),
-            ],
-        )],
-        Page::Shelf => vec![(
-            "Shelf",
-            vec![("Start with an empty shelf", "Files from your last session are cleared when Sky Island starts", T(Toggle::EmptyShelf), "")],
-        )],
+        Page::Calendar => {
+            vec![("Options", vec![("Week starts on", "The first column of the month", S(Seg::WeekStart), ""), ("Default view", "A month, or just one week", S(Seg::CalView), "")])]
+        }
+        Page::Shelf => vec![("Shelf", vec![("Start with an empty shelf", "Files from your last session are cleared when Sky Island starts", T(Toggle::EmptyShelf), "")])],
         Page::Notices => vec![
             (
                 "Indicators",
@@ -370,10 +348,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Prayer time", "When a prayer time comes, with the Prayer tab on", T(Toggle::HudPrayer), ""),
                 ],
             ),
-            (
-                "Updates",
-                vec![("New version", "Looks on GitHub at start and every 6 hours, and tells you when there is one", T(Toggle::HudUpdate), "")],
-            ),
+            ("Updates", vec![("New version", "Looks on GitHub at start and every 6 hours, and tells you when there is one", T(Toggle::HudUpdate), "")]),
         ],
         Page::About => vec![
             (
@@ -386,13 +361,7 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Reset to defaults", "Put every setting back to what a fresh install has", Button(Act::Reset), "Reset"),
                 ],
             ),
-            (
-                "Info",
-                vec![
-                    ("Website", "", Link("https://github.com/Dannyz15/Sky-Island"), "github.com/Dannyz15/Sky-Island"),
-                    ("Made by", "", Link(""), "Dannyz15"),
-                ],
-            ),
+            ("Info", vec![("Website", "", Link("https://github.com/Dannyz15/Sky-Island"), "github.com/Dannyz15/Sky-Island"), ("Made by", "", Link(""), "Dannyz15")]),
             (
                 "Thanks",
                 vec![

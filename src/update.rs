@@ -40,12 +40,23 @@ pub enum Status {
     /// This is the newest version.
     Latest,
     /// A newer version exists. `page` is its release page; `asset` is the installer, if it has one.
-    Available { version: String, page: String, asset: Option<Asset> },
+    Available {
+        version: String,
+        page: String,
+        asset: Option<Asset>,
+    },
     /// The installer is coming down.
-    Downloading { version: String, percent: u32 },
+    Downloading {
+        version: String,
+        percent: u32,
+    },
     /// The installer is on disk and checked, waiting for the user to press Install. `asset` is what it was
     /// checked against, to check it again when it is run.
-    Ready { version: String, path: PathBuf, asset: Asset },
+    Ready {
+        version: String,
+        path: PathBuf,
+        asset: Asset,
+    },
     /// The check did not work, for example because there is no internet.
     Failed,
     /// The newest release is not named exactly like `v1.2.3` (a stray dot, a space, a capital V, a missing
@@ -496,8 +507,27 @@ mod tests {
             assert_eq!(release_version(good), Some(&good[1..]), "{good:?}");
         }
         for bad in [
-            "", "v", "1.4.8", "V1.4.8", "v.1.4.8", "v1.4.8.", " v1.4.8", "v1.4.8 ", "v 1.4.8", "v1.4", "v1.4.8.1", "v1..8", "v1.4.x",
-            "v1.4.8-beta", "v01.4.8", "v1.04.8", "v1,4,8", "vv1.4.8", "v1.4.8\n", "v1.4.1234567890", "v-1.4.8",
+            "",
+            "v",
+            "1.4.8",
+            "V1.4.8",
+            "v.1.4.8",
+            "v1.4.8.",
+            " v1.4.8",
+            "v1.4.8 ",
+            "v 1.4.8",
+            "v1.4",
+            "v1.4.8.1",
+            "v1..8",
+            "v1.4.x",
+            "v1.4.8-beta",
+            "v01.4.8",
+            "v1.04.8",
+            "v1,4,8",
+            "vv1.4.8",
+            "v1.4.8\n",
+            "v1.4.1234567890",
+            "v-1.4.8",
         ] {
             assert_eq!(release_version(bad), None, "{bad:?} must not be read as a version");
         }
@@ -604,12 +634,7 @@ mod tests {
         let body = "# Sky Island 1.3.0\n\n## What's new\n\n- **Smaller notch.** It is 148 x 28.\n- Eyes\n\n---\n\nA closing line.\n\n**Full changelog:** [x](y)";
         assert_eq!(
             notes_of(body),
-            vec![
-                Note::Heading("What's new".into()),
-                Note::Bullet("Smaller notch. It is 148 x 28.".into()),
-                Note::Bullet("Eyes".into()),
-                Note::Text("A closing line.".into()),
-            ]
+            vec![Note::Heading("What's new".into()), Note::Bullet("Smaller notch. It is 148 x 28.".into()), Note::Bullet("Eyes".into()), Note::Text("A closing line.".into()),]
         );
     }
 

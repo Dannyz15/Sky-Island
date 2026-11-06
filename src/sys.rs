@@ -1,8 +1,8 @@
 //! System watchers (volume, audio device, brightness, lock keys, battery, network).
 //! Each pushes a `Notice` to the UI only when something actually changes.
 
-use std::sync::mpsc::{self, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -13,22 +13,18 @@ use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioEndpointVolumeCallback, IAudioEndpointVolumeCallback_Impl};
 use windows::Win32::Media::Audio::{
-    AUDIO_VOLUME_NOTIFICATION_DATA, DEVICE_STATE, EDataFlow, ERole, IMMDevice, IMMDeviceEnumerator, IMMNotificationClient,
-    IMMNotificationClient_Impl, MMDeviceEnumerator, PKEY_AudioEndpoint_FormFactor, eConsole, eRender,
+    AUDIO_VOLUME_NOTIFICATION_DATA, DEVICE_STATE, EDataFlow, ERole, IMMDevice, IMMDeviceEnumerator, IMMNotificationClient, IMMNotificationClient_Impl, MMDeviceEnumerator,
+    PKEY_AudioEndpoint_FormFactor, eConsole, eRender,
 };
 use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, GetDriveTypeW, OPEN_EXISTING};
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, STGM_READ};
 use windows::Win32::System::IO::DeviceIoControl;
-use windows::Win32::System::Power::{
-    GetSystemPowerStatus, RegisterPowerSettingNotification, SYSTEM_POWER_STATUS,
-};
-use windows::Win32::System::SystemServices::{
-    GUID_ACDC_POWER_SOURCE, GUID_BATTERY_PERCENTAGE_REMAINING, GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS,
-};
+use windows::Win32::System::Power::{GetSystemPowerStatus, RegisterPowerSettingNotification, SYSTEM_POWER_STATUS};
+use windows::Win32::System::SystemServices::{GUID_ACDC_POWER_SOURCE, GUID_BATTERY_PERCENTAGE_REMAINING, GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL, VK_NUMLOCK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DispatchMessageW, GetMessageW, KBDLLHOOKSTRUCT, MSG,
-    PBT_POWERSETTINGCHANGE, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_POWERBROADCAST, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    CallNextHookEx, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DispatchMessageW, GetMessageW, KBDLLHOOKSTRUCT, MSG, PBT_POWERSETTINGCHANGE, SetWindowsHookExW, TranslateMessage,
+    WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_POWERBROADCAST, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 use windows::core::{PCWSTR, Result, implement, w};
 use winit::event_loop::EventLoopProxy;
@@ -38,16 +34,39 @@ use crate::{UserEvent, msgwin};
 /// Something worth showing briefly in the notch.
 #[derive(Clone)]
 pub enum Notice {
-    Volume { percent: u32, muted: bool },
-    Brightness { percent: u32 },
-    Lock { name: &'static str, on: bool },
-    Battery { percent: u32, kind: BatteryKind },
-    Network { connected: bool, name: String, wifi: bool },
-    Audio { name: String, headphones: bool },
+    Volume {
+        percent: u32,
+        muted: bool,
+    },
+    Brightness {
+        percent: u32,
+    },
+    Lock {
+        name: &'static str,
+        on: bool,
+    },
+    Battery {
+        percent: u32,
+        kind: BatteryKind,
+    },
+    Network {
+        connected: bool,
+        name: String,
+        wifi: bool,
+    },
+    Audio {
+        name: String,
+        headphones: bool,
+    },
     /// A newer version of Sky Island exists.
-    Update { version: String },
+    Update {
+        version: String,
+    },
     /// A prayer time has come: its name and the minute of the day.
-    Prayer { name: &'static str, minute: u32 },
+    Prayer {
+        name: &'static str,
+        minute: u32,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -108,10 +127,7 @@ struct VolumeWatch {
 impl IAudioEndpointVolumeCallback_Impl for VolumeWatch_Impl {
     fn OnNotify(&self, pnotify: *mut AUDIO_VOLUME_NOTIFICATION_DATA) -> Result<()> {
         if let Some(data) = unsafe { pnotify.as_ref() } {
-            let notice = Notice::Volume {
-                percent: (data.fMasterVolume * 100.0).round() as u32,
-                muted: data.bMuted.as_bool(),
-            };
+            let notice = Notice::Volume { percent: (data.fMasterVolume * 100.0).round() as u32, muted: data.bMuted.as_bool() };
             if let Ok(p) = self.proxy.lock() {
                 send(&p, notice);
             }
@@ -136,10 +152,12 @@ impl IMMNotificationClient_Impl for DeviceWatch_Impl {
         Ok(())
     }
     fn OnDefaultDeviceChanged(&self, flow: EDataFlow, role: ERole, _: &PCWSTR) -> Result<()> {
-        if flow == eRender && role == eConsole
-            && let Ok(tx) = self.tx.lock() {
-                let _ = tx.send(AudioMsg::DefaultChanged);
-            }
+        if flow == eRender
+            && role == eConsole
+            && let Ok(tx) = self.tx.lock()
+        {
+            let _ = tx.send(AudioMsg::DefaultChanged);
+        }
         Ok(())
     }
     fn OnPropertyValueChanged(&self, _: &PCWSTR, _: &windows::Win32::Foundation::PROPERTYKEY) -> Result<()> {
@@ -153,11 +171,7 @@ fn describe(device: &IMMDevice) -> Option<(String, bool)> {
         let store = device.OpenPropertyStore(STGM_READ).ok()?;
         let name = store.GetValue(&PKEY_Device_FriendlyName).ok()?.to_string();
         // EndpointFormFactor: 3 = Headphones, 5 = Headset.
-        let form = store
-            .GetValue(&PKEY_AudioEndpoint_FormFactor)
-            .ok()
-            .and_then(|v| u32::try_from(&v).ok())
-            .unwrap_or(0);
+        let form = store.GetValue(&PKEY_AudioEndpoint_FormFactor).ok().and_then(|v| u32::try_from(&v).ok()).unwrap_or(0);
         Some((name, matches!(form, 3 | 5)))
     }
 }
@@ -414,9 +428,7 @@ fn look_at_brightness() -> Option<bool> {
     let panel = guard.as_mut()?;
     let now = read_brightness(HANDLE(panel.lcd as *mut _))?;
     let announce = panel.seen.look(now, Instant::now());
-    if announce
-        && let Some(proxy) = BRIGHTNESS_PROXY.get()
-    {
+    if announce && let Some(proxy) = BRIGHTNESS_PROXY.get() {
         send(proxy, Notice::Brightness { percent: now });
     }
     Some(announce || panel.seen.held.is_some())
@@ -505,10 +517,11 @@ fn network(proxy: Proxy) {
     let handler = NetworkStatusChangedEventHandler::new(move |_| {
         let now = current();
         if let Ok(mut prev) = last.lock()
-            && (prev.0, &prev.1) != (now.0, &now.1) {
-                send(&proxy, Notice::Network { connected: now.0, name: now.1.clone(), wifi: now.2 });
-                *prev = now;
-            }
+            && (prev.0, &prev.1) != (now.0, &now.1)
+        {
+            send(&proxy, Notice::Network { connected: now.0, name: now.1.clone(), wifi: now.2 });
+            *prev = now;
+        }
         Ok(())
     });
     if NetworkInformation::NetworkStatusChanged(&handler).is_err() {

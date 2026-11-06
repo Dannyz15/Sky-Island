@@ -7,10 +7,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
-    GlobalSystemMediaTransportControlsSession as Session,
-    GlobalSystemMediaTransportControlsSessionManager as Manager,
-    GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
-    MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs,
+    GlobalSystemMediaTransportControlsSession as Session, GlobalSystemMediaTransportControlsSessionManager as Manager,
+    GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs,
 };
 use windows::Storage::Streams::{Buffer, DataReader, IRandomAccessStreamReference, InputStreamOptions};
 use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
@@ -35,11 +33,7 @@ unsafe impl<T> Send for Carried<T> {}
 
 /// The result of a Windows call (`when` hands over a function that is called with it), waited for at most `limit`.
 /// After that `cancel` is called and an error comes back.
-fn within<T: 'static>(
-    when: impl FnOnce(Box<dyn FnOnce(Result<T>) + Send>) -> Result<()>,
-    cancel: impl FnOnce(),
-    limit: Duration,
-) -> Result<T> {
+fn within<T: 'static>(when: impl FnOnce(Box<dyn FnOnce(Result<T>) + Send>) -> Result<()>, cancel: impl FnOnce(), limit: Duration) -> Result<T> {
     let (tx, rx) = mpsc::channel();
     when(Box::new(move |result| {
         let _ = tx.send(Carried(result));
@@ -61,7 +55,6 @@ macro_rules! join_within {
     }};
 }
 
-
 const ART_SIZE: u32 = 96;
 
 /// How often the player is read again even if Windows said nothing, to catch a missed change and
@@ -74,13 +67,7 @@ const RESYNC_IDLE: Duration = Duration::from_secs(15);
 const START_RETRY: Duration = Duration::from_secs(5);
 /// When a track changes, browsers (YouTube above all) fill in its title, length, picture and time one
 /// piece at a time. The player is read again after these delays so the settled values win.
-const SETTLE: [Duration; 5] = [
-    Duration::from_millis(500),
-    Duration::from_millis(1500),
-    Duration::from_millis(3500),
-    Duration::from_millis(6000),
-    Duration::from_millis(10000),
-];
+const SETTLE: [Duration; 5] = [Duration::from_millis(500), Duration::from_millis(1500), Duration::from_millis(3500), Duration::from_millis(6000), Duration::from_millis(10000)];
 
 #[derive(Clone, Default)]
 pub struct MediaState {
@@ -124,8 +111,7 @@ impl MediaState {
 
     /// Nothing the UI shows differs between the two.
     fn same_as(&self, o: &MediaState) -> bool {
-        (&self.title, &self.artist, &self.album, self.playing, self.position, self.duration)
-            == (&o.title, &o.artist, &o.album, o.playing, o.position, o.duration)
+        (&self.title, &self.artist, &self.album, self.playing, self.position, self.duration) == (&o.title, &o.artist, &o.album, o.playing, o.position, o.duration)
             && (self.has_session, self.next_enabled, self.can_seek, &self.art) == (o.has_session, o.next_enabled, o.can_seek, &o.art)
     }
 }
@@ -204,9 +190,7 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
                             Command::TogglePlay => s.TryTogglePlayPauseAsync().map(|_| ()),
                             Command::Next => s.TrySkipNextAsync().map(|_| ()),
                             Command::Previous => skip_previous(s),
-                            Command::Seek(d) => s
-                                .TryChangePlaybackPositionAsync((d.as_nanos() / 100) as i64)
-                                .map(|_| ()),
+                            Command::Seek(d) => s.TryChangePlaybackPositionAsync((d.as_nanos() / 100) as i64).map(|_| ()),
                         };
                     }
                     // The answer to a command comes a moment later; read it again then.
@@ -265,26 +249,17 @@ struct Subscription {
 impl Subscription {
     fn new(session: &Session, tx: Sender<Msg>) -> Result<Self> {
         let t = tx.clone();
-        let props = session.MediaPropertiesChanged(&TypedEventHandler::<
-            Session,
-            MediaPropertiesChangedEventArgs,
-        >::new(move |_, _| {
+        let props = session.MediaPropertiesChanged(&TypedEventHandler::<Session, MediaPropertiesChangedEventArgs>::new(move |_, _| {
             let _ = t.send(Msg::Refresh);
             Ok(())
         }))?;
         let t = tx.clone();
-        let playback = session.PlaybackInfoChanged(&TypedEventHandler::<
-            Session,
-            PlaybackInfoChangedEventArgs,
-        >::new(move |_, _| {
+        let playback = session.PlaybackInfoChanged(&TypedEventHandler::<Session, PlaybackInfoChangedEventArgs>::new(move |_, _| {
             let _ = t.send(Msg::Refresh);
             Ok(())
         }))?;
         let t = tx;
-        let timeline = session.TimelinePropertiesChanged(&TypedEventHandler::<
-            Session,
-            TimelinePropertiesChangedEventArgs,
-        >::new(move |_, _| {
+        let timeline = session.TimelinePropertiesChanged(&TypedEventHandler::<Session, TimelinePropertiesChangedEventArgs>::new(move |_, _| {
             let _ = t.send(Msg::Refresh);
             Ok(())
         }))?;

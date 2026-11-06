@@ -46,11 +46,7 @@ pub(super) fn arrange(raw: &[Raw]) -> Vec<Detected> {
 
 /// What choosing this screen saves: the main screen is always Main, the others are counted.
 pub(super) fn setting_for(d: &Detected) -> Screen {
-    if d.primary {
-        Screen::Main
-    } else {
-        Screen::Display(d.order.clamp(1, Screen::MAX_DISPLAY))
-    }
+    if d.primary { Screen::Main } else { Screen::Display(d.order.clamp(1, Screen::MAX_DISPLAY)) }
 }
 
 /// Whether the notch is on this screen according to the setting (All lights the All tile, not one screen).
@@ -248,7 +244,10 @@ mod tests {
             ("two by two", vec![(1, 0, 0, 1920, 1080, true), (2, 1920, 0, 1920, 1080, false), (3, 0, 1080, 1920, 1080, false), (4, 1920, 1080, 1920, 1080, false)]),
             ("one above two", vec![(1, 960, 0, 1920, 1080, true), (2, 0, 1080, 1920, 1080, false), (3, 1920, 1080, 1920, 1080, false)]),
             ("laptop with two tall ones", vec![(1, 0, 0, 1920, 1200, true), (2, -1080, -400, 1080, 1920, false), (3, 1920, -400, 1080, 1920, false)]),
-            ("names that are not in order", vec![(7, 0, 0, 2560, 1440, true), (2, -1920, 100, 1920, 1080, false), (12, 2560, 0, 1920, 1080, false), (4, 0, -1080, 1920, 1080, false)]),
+            (
+                "names that are not in order",
+                vec![(7, 0, 0, 2560, 1440, true), (2, -1920, 100, 1920, 1080, false), (12, 2560, 0, 1920, 1080, false), (4, 0, -1080, 1920, 1080, false)],
+            ),
         ]
     }
 

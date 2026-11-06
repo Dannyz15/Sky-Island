@@ -136,7 +136,11 @@ impl App {
         let (today, secs) = (today_day(), now_secs());
         let day = self.prayer.as_ref().and_then(|t| t.day(today));
         let (Some(table), Some(day)) = (&self.prayer, day) else {
-            let text = if self.prayer_failed || (self.prayer.is_some() && !self.prayer_loading) { "Prayer times are not available. Are you online?" } else { "Loading the prayer times..." };
+            let text = if self.prayer_failed || (self.prayer.is_some() && !self.prayer_loading) {
+                "Prayer times are not available. Are you online?"
+            } else {
+                "Loading the prayer times..."
+            };
             draw_moon(pm, 210.0 * s, 66.0 * s, 20.0 * s, [236, 236, 210, a]);
             centred(pm, text, 108.0, grey);
             draw_text_centered(pm, font, &place.name, 210.0 * s, 126.0 * s, 10.5 * s, [130, 130, 144, a], 340.0 * s);

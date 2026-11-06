@@ -161,9 +161,7 @@ impl App {
                 // nothing) back.
                 self.blink_step(now, wake, &mut redraw);
                 earliest(wake, until);
-                if redraw
-                    && let Some(w) = &self.window
-                {
+                if redraw && let Some(w) = &self.window {
                     w.request_redraw();
                 }
                 return;
@@ -203,10 +201,9 @@ impl App {
             _ => {}
         }
 
-        if redraw
-            && let Some(w) = &self.window {
-                w.request_redraw();
-            }
+        if redraw && let Some(w) = &self.window {
+            w.request_redraw();
+        }
     }
 
     /// What the closed notch shows when nothing else needs it: eyes when idle, otherwise the clock.

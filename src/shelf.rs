@@ -54,10 +54,8 @@ pub struct Shelf {
 
 impl Shelf {
     pub fn new() -> Self {
-        let items = Self::path()
-            .and_then(|p| store::read_json(&p))
-            .and_then(|v| v.as_array().map(|a| a.iter().filter_map(Value::as_str).map(PathBuf::from).collect()))
-            .unwrap_or_default();
+        let items =
+            Self::path().and_then(|p| store::read_json(&p)).and_then(|v| v.as_array().map(|a| a.iter().filter_map(Value::as_str).map(PathBuf::from).collect())).unwrap_or_default();
         Self { items, scroll: 0 }
     }
 

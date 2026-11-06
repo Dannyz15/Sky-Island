@@ -11,8 +11,8 @@ mod editor;
 mod gfx;
 mod hotkey;
 mod icon;
-mod location;
 mod localtime;
+mod location;
 mod loopback;
 mod lyrics;
 mod media;
@@ -46,47 +46,57 @@ use std::time::{Duration, Instant};
 
 use fontdue::{Font, FontSettings};
 use softbuffer::{Context, Surface};
-use tiny_skia::{
-    Color, FillRule, FilterQuality, LineCap, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke,
-    Transform,
-};
+use tiny_skia::{Color, FillRule, FilterQuality, LineCap, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, Transform};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::keyboard::{Key, NamedKey};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::keyboard::{Key, NamedKey};
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Theme, Window, WindowId, WindowLevel};
 
+use clipboard::History;
 use lyrics::Line;
 use media::{Command, MediaHandle, MediaState};
-use clipboard::History;
-use timer::{Timer, Unit};
-use presence::Presence;
+use motion::{Glows, spring};
 use panel::Panel;
+use presence::Presence;
 use settings::{EyeStyle, Settings, ThemeMode};
 use shelf::{COLS, ROWS, Shelf};
+use timer::{Timer, Unit};
 use todo::Todo;
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
-use water::Water;
-use motion::{Glows, spring};
 use ui::*;
+use water::Water;
 
 pub enum UserEvent {
     Media(MediaState),
     /// `online` is whether looking lyrics up online was on when the look began; an answer that began under the other
     /// setting is not shown.
-    Lyrics { key: String, fetched: lyrics::Fetched, online: bool },
+    Lyrics {
+        key: String,
+        fetched: lyrics::Fetched,
+        online: bool,
+    },
     Notice(sys::Notice),
     /// A lock key was pressed; its state is read on the UI thread.
-    LockKey { name: &'static str, vk: i32 },
-    Presence { presence: Presence, fullscreen: presence::Fullscreen },
+    LockKey {
+        name: &'static str,
+        vk: i32,
+    },
+    Presence {
+        presence: Presence,
+        fullscreen: presence::Fullscreen,
+    },
     Menu(MenuId),
     /// Text or a picture was copied to the clipboard.
     Clip(clipboard::Content),
     /// How loud the default output device is (percent, muted), without a notice: for the volume slider.
-    SysVolume { percent: u32, muted: bool },
+    SysVolume {
+        percent: u32,
+        muted: bool,
+    },
     /// With Show on All screens: the mouse touched the top edge of this screen (its number) where the notch would be.
     FollowTo(u32),
     /// The global hotkey was pressed.
@@ -98,7 +108,10 @@ pub enum UserEvent {
     /// Shelf files that were found missing when the app started.
     ShelfMissing(Vec<PathBuf>),
     /// A shelf file's icon, loaded off the UI thread; `None` when the shell has none.
-    Icon { path: PathBuf, icon: Option<Pixmap> },
+    Icon {
+        path: PathBuf,
+        icon: Option<Pixmap>,
+    },
     /// The answer to "Check for updates".
     Update(update::Status),
     /// The answer to a check the app made by itself (start, every few hours).
@@ -605,10 +618,7 @@ fn install_crash_log() {
 /// The name of the lock that says "a copy is running": one per data folder, so two copies never write the
 /// same files, while a copy pointed at another folder (for testing) is its own.
 fn instance_name(data_dir: &str) -> String {
-    let hash = data_dir
-        .to_lowercase()
-        .bytes()
-        .fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+    let hash = data_dir.to_lowercase().bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
     format!("Local\\SkyIsland-{hash:016x}")
 }
 

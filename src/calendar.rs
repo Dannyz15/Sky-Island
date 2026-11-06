@@ -1,8 +1,7 @@
 //! Month calendar maths and the state of the Calendar tab. A date is a day number: the days
 //! since 1970-01-01 in local time, so tasks can store one plain integer.
 
-const MONTHS: [&str; 12] =
-    ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 /// Column heads of the grid when weeks start on Monday, and when they start on Sunday.
 const HEADS_MONDAY: [&str; 7] = ["M", "T", "W", "T", "F", "S", "S"];
@@ -31,11 +30,7 @@ pub fn week_start(days: i64, monday: bool) -> i64 {
 pub fn week_title(start: i64) -> String {
     let (_, m1, d1) = civil_from_days(start);
     let (_, m2, d2) = civil_from_days(start + 6);
-    if m1 == m2 {
-        format!("{d1} - {d2} {}", &MONTHS[m2 as usize - 1][..3])
-    } else {
-        format!("{d1} {} - {d2} {}", &MONTHS[m1 as usize - 1][..3], &MONTHS[m2 as usize - 1][..3])
-    }
+    if m1 == m2 { format!("{d1} - {d2} {}", &MONTHS[m2 as usize - 1][..3]) } else { format!("{d1} {} - {d2} {}", &MONTHS[m1 as usize - 1][..3], &MONTHS[m2 as usize - 1][..3]) }
 }
 /// Six weeks always cover a month.
 pub const CELLS: usize = 42;

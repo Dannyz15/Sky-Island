@@ -184,10 +184,7 @@ impl App {
         let Ok(mut buffer) = surface.buffer_mut() else { return };
         // tiny-skia is premultiplied RGBA; softbuffer wants 0RGB/ARGB u32.
         for (dst, src) in buffer.iter_mut().zip(out.pixels()) {
-            *dst = (src.alpha() as u32) << 24
-                | (src.red() as u32) << 16
-                | (src.green() as u32) << 8
-                | src.blue() as u32;
+            *dst = (src.alpha() as u32) << 24 | (src.red() as u32) << 16 | (src.green() as u32) << 8 | src.blue() as u32;
         }
         buffer.present().ok();
         // The copies of this notch on other screens are drawn with it, so they always show the same.
@@ -255,13 +252,8 @@ impl App {
                 tiny_skia::GradientStop::new(0.5, Color::from_rgba8(body[1][0], body[1][1], body[1][2], 255)),
                 tiny_skia::GradientStop::new(1.0, Color::from_rgba8(body[2][0], body[2][1], body[2][2], 255)),
             ];
-            let shader = tiny_skia::LinearGradient::new(
-                tiny_skia::Point::from_xy(0.0, 0.0),
-                tiny_skia::Point::from_xy(0.0, fh),
-                stops,
-                tiny_skia::SpreadMode::Pad,
-                Transform::identity(),
-            );
+            let shader =
+                tiny_skia::LinearGradient::new(tiny_skia::Point::from_xy(0.0, 0.0), tiny_skia::Point::from_xy(0.0, fh), stops, tiny_skia::SpreadMode::Pad, Transform::identity());
             let mut paint = Paint::default();
             match shader {
                 Some(shader) => paint.shader = shader,
@@ -330,12 +322,13 @@ impl App {
             None
         };
         if let (true, Some(old)) = (moving, self.prev_view)
-            && let Some(mut layer) = Pixmap::new(size.0, size.1) {
-                self.draw_view(&mut layer, s, alpha, old);
-                let paint = PixmapPaint { opacity: 1.0 - 0.6 * t, quality: FilterQuality::Bilinear, ..Default::default() };
-                let at = Transform::from_translate(-self.switch_dir * width * t, 0.0);
-                pm.draw_pixmap(0, 0, layer.as_ref(), &paint, at, clip.as_ref());
-            }
+            && let Some(mut layer) = Pixmap::new(size.0, size.1)
+        {
+            self.draw_view(&mut layer, s, alpha, old);
+            let paint = PixmapPaint { opacity: 1.0 - 0.6 * t, quality: FilterQuality::Bilinear, ..Default::default() };
+            let at = Transform::from_translate(-self.switch_dir * width * t, 0.0);
+            pm.draw_pixmap(0, 0, layer.as_ref(), &paint, at, clip.as_ref());
+        }
         if let Some(mut layer) = Pixmap::new(size.0, size.1) {
             self.draw_view(&mut layer, s, alpha, self.view);
             let fade_in = if self.prev_view.is_some() { 0.4 + 0.6 * t } else { t };

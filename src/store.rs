@@ -147,9 +147,7 @@ fn write_now(path: &Path, text: &str) -> std::io::Result<()> {
     let mut temp = path.as_os_str().to_owned();
     temp.push(".tmp");
     let temp = PathBuf::from(temp);
-    let done = fs::File::create(&temp)
-        .and_then(|mut f| f.write_all(text.as_bytes()).and_then(|()| f.sync_all()))
-        .and_then(|()| fs::rename(&temp, path));
+    let done = fs::File::create(&temp).and_then(|mut f| f.write_all(text.as_bytes()).and_then(|()| f.sync_all())).and_then(|()| fs::rename(&temp, path));
     if done.is_err() {
         let _ = fs::remove_file(&temp);
     }

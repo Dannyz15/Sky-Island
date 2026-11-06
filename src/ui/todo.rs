@@ -81,7 +81,17 @@ impl App {
         let (fx, fy, fw, fh) = field;
         let hot = self.hot_t(field, s);
         if self.alert_until.is_some() {
-            gfx::gradient_rounded(pm, fx * s, fy * s, fw * s, fh * s, 12.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 70.0) as u8], [rgb[0], rgb[1], rgb[2], (alpha * 36.0) as u8], false);
+            gfx::gradient_rounded(
+                pm,
+                fx * s,
+                fy * s,
+                fw * s,
+                fh * s,
+                12.0 * s,
+                [rgb[0], rgb[1], rgb[2], (alpha * 70.0) as u8],
+                [rgb[0], rgb[1], rgb[2], (alpha * 36.0) as u8],
+                false,
+            );
             gfx::stroke_rounded(pm, fx * s + 0.5 * s, fy * s + 0.5 * s, fw * s - s, fh * s - s, 12.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 120.0) as u8]);
             draw_text(pm, heading, &self.alert_msg, (fx + 12.0) * s, (fy + 16.0) * s, 12.0 * s, white, (fw - 24.0) * s);
         } else {
@@ -108,8 +118,27 @@ impl App {
                 let rect = (24.0, y + 1.0, 372.0, TODO_ROW_H - 2.0);
                 let hot = self.hot_t(rect, s);
                 if hot > 0.01 {
-                    gfx::gradient_rounded(pm, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 8.0 * s, [255, 255, 255, (alpha * 40.0 * hot) as u8], [255, 255, 255, (alpha * 20.0 * hot) as u8], false);
-                    gfx::stroke_rounded(pm, rect.0 * s + 0.5 * s, rect.1 * s + 0.5 * s, rect.2 * s - s, rect.3 * s - s, 8.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 70.0 * hot) as u8]);
+                    gfx::gradient_rounded(
+                        pm,
+                        rect.0 * s,
+                        rect.1 * s,
+                        rect.2 * s,
+                        rect.3 * s,
+                        8.0 * s,
+                        [255, 255, 255, (alpha * 40.0 * hot) as u8],
+                        [255, 255, 255, (alpha * 20.0 * hot) as u8],
+                        false,
+                    );
+                    gfx::stroke_rounded(
+                        pm,
+                        rect.0 * s + 0.5 * s,
+                        rect.1 * s + 0.5 * s,
+                        rect.2 * s - s,
+                        rect.3 * s - s,
+                        8.0 * s,
+                        s,
+                        [rgb[0], rgb[1], rgb[2], (alpha * 70.0 * hot) as u8],
+                    );
                 }
 
                 // Checkbox.
@@ -138,7 +167,15 @@ impl App {
                         ([255, 255, 255], [165, 165, 175, a])
                     };
                     let (tx, tw) = (346.0 - tag_w, tag_w);
-                    fill_rounded(pm, tx * s, (y + 4.5) * s, tw * s, 15.0 * s, 7.5 * s, [tint[0], tint[1], tint[2], (alpha * if tint == [255, 255, 255] { 16.0 } else { 40.0 }) as u8]);
+                    fill_rounded(
+                        pm,
+                        tx * s,
+                        (y + 4.5) * s,
+                        tw * s,
+                        15.0 * s,
+                        7.5 * s,
+                        [tint[0], tint[1], tint[2], (alpha * if tint == [255, 255, 255] { 16.0 } else { 40.0 }) as u8],
+                    );
                     draw_text_centered(pm, font, label, (tx + tw / 2.0) * s, (y + 15.5) * s, 10.0 * s, ink, tw * s);
                 }
 
@@ -231,12 +268,7 @@ impl App {
         draw_text(pm, font, "Remind", 24.0 * s, (editor::REMIND_Y + 16.0) * s, 11.0 * s, grey, 54.0 * s);
         draw_switch(pm, 82.0 * s, (editor::REMIND_Y + 3.0) * s, s, self.toggle_t(100, ed.remind), a);
         if ed.remind {
-            for (action, plus) in [
-                (editor::Action::HourDown, false),
-                (editor::Action::HourUp, true),
-                (editor::Action::MinuteDown, false),
-                (editor::Action::MinuteUp, true),
-            ] {
+            for (action, plus) in [(editor::Action::HourDown, false), (editor::Action::HourUp, true), (editor::Action::MinuteDown, false), (editor::Action::MinuteUp, true)] {
                 let r = editor::rect(action);
                 draw_step(pm, r, plus, s, alpha, self.hot_t(r, s));
             }

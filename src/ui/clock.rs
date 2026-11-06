@@ -67,11 +67,7 @@ pub(crate) fn task_when(task: &todo::Task, today: i64, now: u64, zone: Zone, clo
 /// mm:ss, rounded up so the display hits 0:00 exactly when the phase ends.
 pub(crate) fn fmt_remaining(d: Duration) -> String {
     let secs = d.as_secs() + (d.subsec_nanos() > 0) as u64;
-    if secs >= 3600 {
-        format!("{}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
-    } else {
-        format!("{:02}:{:02}", secs / 60, secs % 60)
-    }
+    if secs >= 3600 { format!("{}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60) } else { format!("{:02}:{:02}", secs / 60, secs % 60) }
 }
 
 pub(crate) fn fmt_time(d: Duration) -> String {

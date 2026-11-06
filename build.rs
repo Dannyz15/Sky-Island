@@ -42,12 +42,7 @@ END
 
 fn main() {
     let number = |name: &str| env::var(name).ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-    let numbers = [
-        number("CARGO_PKG_VERSION_MAJOR"),
-        number("CARGO_PKG_VERSION_MINOR"),
-        number("CARGO_PKG_VERSION_PATCH"),
-        0,
-    ];
+    let numbers = [number("CARGO_PKG_VERSION_MAJOR"), number("CARGO_PKG_VERSION_MINOR"), number("CARGO_PKG_VERSION_PATCH"), 0];
     let version = env::var("CARGO_PKG_VERSION").unwrap_or_default();
     let manifest = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     // The resource compiler reads backslashes in a string as escapes, so the path uses forward slashes.

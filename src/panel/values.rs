@@ -6,7 +6,6 @@ pub(super) const THEME_NAMES: [&str; 3] = ["Dark", "Light", "Follow System"];
 
 pub(super) const MOTION_NAMES: [&str; 4] = ["Calm", "Normal", "Snappy", "None"];
 
-
 pub(super) const SIZE_NAMES: [&str; 5] = ["Auto", "100%", "115%", "130%", "150%"];
 
 pub(super) const OPEN_NAMES: [&str; 2] = ["Hover", "Click"];

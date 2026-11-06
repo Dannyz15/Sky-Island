@@ -196,20 +196,8 @@ pub fn countdown(secs: i64) -> String {
 }
 
 /// The Hijri months' names.
-const HIJRI_MONTHS: [&str; 12] = [
-    "Muharram",
-    "Safar",
-    "Rabi al-awwal",
-    "Rabi al-thani",
-    "Jumada al-ula",
-    "Jumada al-akhirah",
-    "Rajab",
-    "Shaban",
-    "Ramadan",
-    "Shawwal",
-    "Dhu al-Qadah",
-    "Dhu al-Hijjah",
-];
+const HIJRI_MONTHS: [&str; 12] =
+    ["Muharram", "Safar", "Rabi al-awwal", "Rabi al-thani", "Jumada al-ula", "Jumada al-akhirah", "Rajab", "Shaban", "Ramadan", "Shawwal", "Dhu al-Qadah", "Dhu al-Hijjah"];
 
 /// "21 Jumada al-ula 1448".
 pub fn hijri_text(h: (u32, u32, u32)) -> String {
@@ -576,7 +564,8 @@ mod tests {
         for good in ["01-11-2026", "29-02-2028", "30-04-2026", "31-12-2200", "01-01-1970"] {
             assert!(parse_day(&aladhan_day(good)).is_some(), "{good}");
         }
-        for bad in ["31-02-2026", "29-02-2027", "29-02-2100", "31-04-2026", "00-05-2026", "10-13-2026", "10-00-2026", "01-01-1969", "01-01-2201", "01-01-4294967295", "01-01-99999"] {
+        for bad in ["31-02-2026", "29-02-2027", "29-02-2100", "31-04-2026", "00-05-2026", "10-13-2026", "10-00-2026", "01-01-1969", "01-01-2201", "01-01-4294967295", "01-01-99999"]
+        {
             assert!(parse_day(&aladhan_day(bad)).is_none(), "{bad}");
         }
     }
@@ -601,7 +590,25 @@ mod tests {
 
     #[test]
     fn the_months_are_known_in_english_and_in_malay() {
-        let names = [("Jan", 1), ("Feb", 2), ("Mac", 3), ("Mar", 3), ("Apr", 4), ("Mei", 5), ("May", 5), ("Jun", 6), ("Jul", 7), ("Ogo", 8), ("Aug", 8), ("Sep", 9), ("Okt", 10), ("Oct", 10), ("Nov", 11), ("Dis", 12), ("Dec", 12)];
+        let names = [
+            ("Jan", 1),
+            ("Feb", 2),
+            ("Mac", 3),
+            ("Mar", 3),
+            ("Apr", 4),
+            ("Mei", 5),
+            ("May", 5),
+            ("Jun", 6),
+            ("Jul", 7),
+            ("Ogo", 8),
+            ("Aug", 8),
+            ("Sep", 9),
+            ("Okt", 10),
+            ("Oct", 10),
+            ("Nov", 11),
+            ("Dis", 12),
+            ("Dec", 12),
+        ];
         for (name, number) in names {
             assert_eq!(month_of(name), Some(number), "{name}");
         }

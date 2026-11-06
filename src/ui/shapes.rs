@@ -248,7 +248,17 @@ fn solid(c: [u8; 4]) -> Paint<'static> {
 /// over it, `size` the text size and `baseline` where the text sits below the top of the pill.
 pub(crate) fn draw_clear_pill(pm: &mut Pixmap, font: &Font, (x, y, w, h): (f32, f32, f32, f32), s: f32, alpha: f32, hot: f32, size: f32, baseline: f32) {
     let red = [255, 96, 86];
-    gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [red[0], red[1], red[2], (alpha * pick(80.0, 48.0, hot)) as u8], [red[0], red[1], red[2], (alpha * pick(46.0, 22.0, hot)) as u8], false);
+    gfx::gradient_rounded(
+        pm,
+        x,
+        y,
+        w,
+        h,
+        h / 2.0,
+        [red[0], red[1], red[2], (alpha * pick(80.0, 48.0, hot)) as u8],
+        [red[0], red[1], red[2], (alpha * pick(46.0, 22.0, hot)) as u8],
+        false,
+    );
     gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [red[0], red[1], red[2], (alpha * 90.0) as u8]);
     draw_text_centered(pm, font, "Clear", x + w / 2.0, y + baseline, size, [255, 130, 120, (alpha * 255.0) as u8], w);
 }

@@ -31,7 +31,9 @@ impl App {
     pub(super) fn row_text(&self, panel: &Panel, kind: Kind, desc: &str) -> (String, [u8; 4]) {
         match kind {
             Kind::Button(Act::CheckUpdate) => self.update_note(),
-            Kind::Button(Act::Reset) if panel.reset_armed.is_some_and(|t| Instant::now() < t) => ("Click Reset again within 3 seconds to confirm".to_string(), [255, 150, 140, 255]),
+            Kind::Button(Act::Reset) if panel.reset_armed.is_some_and(|t| Instant::now() < t) => {
+                ("Click Reset again within 3 seconds to confirm".to_string(), [255, 150, 140, 255])
+            }
             Kind::Button(Act::ClearLyrics) if panel.cleared.is_some_and(|(_, t)| Instant::now() < t) => {
                 let n = panel.cleared.map_or(0, |(n, _)| n);
                 (format!("Removed {n} saved {}", if n == 1 { "song" } else { "songs" }), [120, 220, 150, 255])
@@ -128,19 +130,21 @@ impl App {
 
         // How far the changelog can scroll depends on its length, which is known once it has been laid out.
         if panel.show_changelog
-            && let Some(font) = &self.font {
-                let (_, total) = self.changelog_lines(font, self.heading_font().unwrap_or(font), frame.w - 44.0);
-                panel.changelog_max = (total - (lh - CHANGELOG_TOP - 28.0)).max(0.0);
-                panel.changelog_scroll = panel.changelog_scroll.clamp(0.0, panel.changelog_max);
-            }
+            && let Some(font) = &self.font
+        {
+            let (_, total) = self.changelog_lines(font, self.heading_font().unwrap_or(font), frame.w - 44.0);
+            panel.changelog_max = (total - (lh - CHANGELOG_TOP - 28.0)).max(0.0);
+            panel.changelog_scroll = panel.changelog_scroll.clamp(0.0, panel.changelog_max);
+        }
 
         if panel.surface.resize(w, h).is_ok()
-            && let Ok(mut buffer) = panel.surface.buffer_mut() {
-                for (dst, src) in buffer.iter_mut().zip(pm.pixels()) {
-                    *dst = (src.alpha() as u32) << 24 | (src.red() as u32) << 16 | (src.green() as u32) << 8 | src.blue() as u32;
-                }
-                buffer.present().ok();
+            && let Ok(mut buffer) = panel.surface.buffer_mut()
+        {
+            for (dst, src) in buffer.iter_mut().zip(pm.pixels()) {
+                *dst = (src.alpha() as u32) << 24 | (src.red() as u32) << 16 | (src.green() as u32) << 8 | src.blue() as u32;
             }
+            buffer.present().ok();
+        }
         panel.canvas = Some(pm);
         panel.busy = panel.glows.busy() || panel.opened.elapsed().mul_f32(speed) < ENTER || panel.page_since.elapsed().mul_f32(speed) < PAGE_FADE;
     }
@@ -216,7 +220,9 @@ impl App {
             let ink = crate::pick(white, [200, 200, 212, 255], near.max(hot * 0.6));
             crate::draw_text(pm, font, page.title(), (r.0 + 44.0) * s, (r.1 + r.3 / 2.0 + 4.5) * s, 13.0 * s, ink, (r.2 - 52.0) * s);
             // A dot on About while a new version is waiting.
-            if page == Page::About && matches!(self.update, crate::update::Status::Available { .. } | crate::update::Status::Downloading { .. } | crate::update::Status::Ready { .. }) {
+            if page == Page::About
+                && matches!(self.update, crate::update::Status::Available { .. } | crate::update::Status::Downloading { .. } | crate::update::Status::Ready { .. })
+            {
                 crate::fill_circle(pm, (r.0 + r.2 - 16.0) * s, (r.1 + r.3 / 2.0) * s, 4.0 * s, [255, 190, 60, 255]);
             }
         }
@@ -249,7 +255,15 @@ impl App {
             let row_hot = !matches!(item.kind, Kind::Link("")) && inside(item.row, cx, cy);
             let hot = panel.glows.fade(key, row_hot);
             if hot > 0.01 {
-                crate::fill_rounded(pm, (item.row.0 + 4.0) * s, (item.row.1 + 3.0) * s, (item.row.2 - 8.0) * s, (item.row.3 - 6.0) * s, 10.0 * s, [255, 255, 255, (11.0 * hot) as u8]);
+                crate::fill_rounded(
+                    pm,
+                    (item.row.0 + 4.0) * s,
+                    (item.row.1 + 3.0) * s,
+                    (item.row.2 - 8.0) * s,
+                    (item.row.3 - 6.0) * s,
+                    10.0 * s,
+                    [255, 255, 255, (11.0 * hot) as u8],
+                );
             }
             if item.after_row {
                 crate::fill_rect(pm, (item.row.0 + 18.0) * s, item.row.1 * s, (item.row.2 - 36.0) * s, s * 0.7, [255, 255, 255, 13]);

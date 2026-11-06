@@ -55,11 +55,8 @@ pub fn valid(mods: u32, vk: u32) -> bool {
 
 /// "Ctrl + Alt + N".
 pub fn name(mods: u32, vk: u32) -> String {
-    let mut parts: Vec<String> = [(CTRL, "Ctrl"), (ALT, "Alt"), (SHIFT, "Shift"), (WIN, "Win")]
-        .into_iter()
-        .filter(|(bit, _)| mods & bit != 0)
-        .map(|(_, n)| n.to_string())
-        .collect();
+    let mut parts: Vec<String> =
+        [(CTRL, "Ctrl"), (ALT, "Alt"), (SHIFT, "Shift"), (WIN, "Win")].into_iter().filter(|(bit, _)| mods & bit != 0).map(|(_, n)| n.to_string()).collect();
     parts.push(key_name(vk).unwrap_or_else(|| "?".to_string()));
     parts.join(" + ")
 }

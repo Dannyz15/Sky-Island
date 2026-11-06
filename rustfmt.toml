@@ -1,0 +1,4 @@
+# Sky Island's code style, kept the way the code was written: lines up to 180 characters, and short things (a call, a
+# struct, an array) stay on one line when they fit. Format with `cargo fmt`; CI checks it with `cargo fmt --check`.
+max_width = 180
+use_small_heuristics = "Max"

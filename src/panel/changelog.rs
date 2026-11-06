@@ -94,7 +94,17 @@ impl App {
         let back = changelog_back(frame);
         let hot = panel.glows.fade(KEY_SIDE + 30, inside(back, cx, cy));
         let (x, y, w, h) = (back.0 * s, back.1 * s, back.2 * s, back.3 * s);
-        gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [tint[0], tint[1], tint[2], crate::pick(110.0, 62.0, hot) as u8], [tint[0], tint[1], tint[2], crate::pick(66.0, 30.0, hot) as u8], false);
+        gfx::gradient_rounded(
+            pm,
+            x,
+            y,
+            w,
+            h,
+            h / 2.0,
+            [tint[0], tint[1], tint[2], crate::pick(110.0, 62.0, hot) as u8],
+            [tint[0], tint[1], tint[2], crate::pick(66.0, 30.0, hot) as u8],
+            false,
+        );
         gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [tint[0], tint[1], tint[2], 130]);
         let tip = [(x + 17.0 * s, y + h / 2.0 - 4.0 * s), (x + 13.0 * s, y + h / 2.0), (x + 17.0 * s, y + h / 2.0 + 4.0 * s)];
         stroke_points(pm, &tip, false, 1.6 * s, white);

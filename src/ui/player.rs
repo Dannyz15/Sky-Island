@@ -147,14 +147,7 @@ impl PlayerGeo {
 pub(crate) fn player_geo(t: f32) -> PlayerGeo {
     let right = 396.0 + (264.0 - 396.0) * t;
     let mid = (24.0 + right) / 2.0;
-    PlayerGeo {
-        art: (24.0, 30.0, 64.0),
-        text_x: 104.0,
-        left: 24.0,
-        right,
-        bar: (64.0, 106.0, right - 104.0),
-        ctrl_x: [mid - 100.0, mid - 50.0, mid, mid + 50.0],
-    }
+    PlayerGeo { art: (24.0, 30.0, 64.0), text_x: 104.0, left: 24.0, right, bar: (64.0, 106.0, right - 104.0), ctrl_x: [mid - 100.0, mid - 50.0, mid, mid + 50.0] }
 }
 
 impl App {
@@ -416,11 +409,7 @@ impl App {
         let geo = self.geo();
 
         let (title, sub) = if self.media.has_session && !self.media.title.is_empty() {
-            let sub = if self.media.album.is_empty() {
-                self.media.artist.clone()
-            } else {
-                format!("{} \u{b7} {}", self.media.artist, self.media.album)
-            };
+            let sub = if self.media.album.is_empty() { self.media.artist.clone() } else { format!("{} \u{b7} {}", self.media.artist, self.media.album) };
             (self.media.title.as_str(), sub)
         } else {
             ("Nothing playing", "Play something to see it here".to_string())
@@ -445,7 +434,6 @@ impl App {
 
         let (bx, by, bw) = geo.bar;
         if let Some(font) = &self.font {
-
             // Time played on the left of the bar, time left on the right.
             let pos = fmt_time(self.position());
             let left = format!("-{}", fmt_time(self.media.duration.saturating_sub(self.position())));
@@ -461,11 +449,7 @@ impl App {
         let bh = 5.0 + 2.0 * grow;
         let ty = by + 2.0 - bh / 2.0;
         fill_rounded(pm, bx * s, ty * s, bw * s, bh * s, bh * s / 2.0, [255, 255, 255, (alpha * 30.0) as u8]);
-        let frac = if self.media.duration.is_zero() {
-            0.0
-        } else {
-            (self.position().as_secs_f32() / self.media.duration.as_secs_f32()).clamp(0.0, 1.0)
-        };
+        let frac = if self.media.duration.is_zero() { 0.0 } else { (self.position().as_secs_f32() / self.media.duration.as_secs_f32()).clamp(0.0, 1.0) };
         if frac > 0.0 {
             let fill_w = (bw * frac).max(bh);
             gfx::gradient_rounded(pm, bx * s, ty * s, fill_w * s, bh * s, bh * s / 2.0, gfx::mix(accent, white, 0.15), gfx::mix(accent, white, 0.7), true);
@@ -522,13 +506,7 @@ impl App {
         let geo = self.geo();
         // Press on the bar (a taller target than the thin line) and drag to jump in the song.
         let (bx, by, bw) = geo.bar;
-        if !self.media.duration.is_zero()
-            && self.media.can_seek
-            && self.media_handle.is_some()
-            && cx >= bx - 6.0
-            && cx <= bx + bw + 6.0
-            && (by - 9.0..=by + 12.0).contains(&cy)
-        {
+        if !self.media.duration.is_zero() && self.media.can_seek && self.media_handle.is_some() && cx >= bx - 6.0 && cx <= bx + bw + 6.0 && (by - 9.0..=by + 12.0).contains(&cy) {
             self.scrub = Some(self.scrub_at(cx));
             window.request_redraw();
             return;
@@ -572,13 +550,7 @@ impl App {
             }
         }
         // Sync takes the lyrics back to the line being sung.
-        if self.view == View::Lyrics
-            && self.lyric_off_sync()
-            && cx >= SYNC_RECT.0
-            && cx <= SYNC_RECT.0 + SYNC_RECT.2
-            && cy >= SYNC_RECT.1
-            && cy <= SYNC_RECT.1 + SYNC_RECT.3
-        {
+        if self.view == View::Lyrics && self.lyric_off_sync() && cx >= SYNC_RECT.0 && cx <= SYNC_RECT.0 + SYNC_RECT.2 && cy >= SYNC_RECT.1 && cy <= SYNC_RECT.1 + SYNC_RECT.3 {
             self.lyric_manual = None;
             window.request_redraw();
             return;
@@ -592,10 +564,7 @@ impl App {
         if !self.media.can_seek {
             return;
         }
-        let hit = self
-            .layout_lyrics()
-            .into_iter()
-            .find(|it| cy >= it.top && cy <= it.top + it.rows.len() as f32 * it.lh);
+        let hit = self.layout_lyrics().into_iter().find(|it| cy >= it.top && cy <= it.top + it.rows.len() as f32 * it.lh);
         if let Some(at) = hit.and_then(|it| lines.get(it.idx)).map(|l| l.at) {
             if let Some(handle) = &self.media_handle {
                 handle.send(Command::Seek(at));

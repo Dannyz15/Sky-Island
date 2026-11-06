@@ -9,8 +9,7 @@ use std::f32::consts::PI;
 use std::time::Duration;
 
 use tiny_skia::{
-    Color, FillRule, GradientStop, LineCap, LineJoin, LinearGradient, Mask, Paint, Path, PathBuilder, Pixmap, Point, RadialGradient, Rect,
-    Shader, SpreadMode, Stroke, Transform,
+    Color, FillRule, GradientStop, LineCap, LineJoin, LinearGradient, Mask, Paint, Path, PathBuilder, Pixmap, Point, RadialGradient, Rect, Shader, SpreadMode, Stroke, Transform,
 };
 
 use crate::gfx;
@@ -309,23 +308,11 @@ fn sleepy(pm: &mut Pixmap, e: &Eye) {
     pb.cubic_to(e.x + rx, ctrl, e.x - rx, ctrl, e.x - rx, top);
     pb.close();
     let moon = pb.finish();
-    fill_shader(
-        pm,
-        moon.clone(),
-        linear((e.x, top), (e.x, top + depth), vec![stop(0.0, [255, 255, 255], a), stop(1.0, [200, 206, 238], a)]),
-        tf,
-        None,
-    );
+    fill_shader(pm, moon.clone(), linear((e.x, top), (e.x, top + depth), vec![stop(0.0, [255, 255, 255], a), stop(1.0, [200, 206, 238], a)]), tf, None);
     let Some(moon) = moon else { return };
     let mask = mask_of(pm, &moon, tf);
     let (lx, ly) = (e.x + p.look.0 * 1.4 * s, top + 4.1 * s + p.look.1 * 0.8 * s);
-    fill_shader(
-        pm,
-        oval(lx, ly, 2.7 * s, 2.7 * s),
-        radial((lx, ly), 2.7 * s, vec![stop(0.0, [70, 78, 150], a), stop(1.0, [18, 20, 52], a)]),
-        tf,
-        mask.as_ref(),
-    );
+    fill_shader(pm, oval(lx, ly, 2.7 * s, 2.7 * s), radial((lx, ly), 2.7 * s, vec![stop(0.0, [70, 78, 150], a), stop(1.0, [18, 20, 52], a)]), tf, mask.as_ref());
     fill_solid(pm, oval(lx - 0.8 * s, ly - 0.9 * s, 0.8 * s, 0.8 * s), [255, 255, 255], a, tf, mask.as_ref());
     // The lid line.
     let mut line = PathBuilder::new();
@@ -424,13 +411,7 @@ fn sparkle(pm: &mut Pixmap, e: &Eye) {
     let tf = scale_about(cx, cy, 1.0 - 0.25 * wave, 1.0 - 0.25 * wave).post_concat(turn);
     bloom(pm, cx, cy, 15.0 * s, [255, 205, 80], (0.32 + 0.3 * wave) * a);
     let r = 8.2 * s;
-    fill_shader(
-        pm,
-        star_path(cx, cy, r),
-        radial((cx, cy), r, vec![stop(0.0, [255, 255, 252], a), stop(0.38, [255, 241, 176], a), stop(1.0, [255, 196, 66], a)]),
-        tf,
-        None,
-    );
+    fill_shader(pm, star_path(cx, cy, r), radial((cx, cy), r, vec![stop(0.0, [255, 255, 252], a), stop(0.38, [255, 241, 176], a), stop(1.0, [255, 196, 66], a)]), tf, None);
     // The twin.
     let (tx, ty) = (cx + 6.8 * s, cy - 6.0 * s);
     let twin = Transform::from_rotate_at(-30.0 * wave, tx, ty);
@@ -453,32 +434,27 @@ fn robot(pm: &mut Pixmap, e: &Eye) {
     let tf = scale_about(cx, cy, 1.0 + (1.0 - open.min(1.0)) * 0.1, open);
     let half = 4.6 * s;
     let body = gfx::rounded_path(cx - half, cy - half, half * 2.0, half * 2.0, 2.3 * s);
-    fill_shader(
-        pm,
-        body.clone(),
-        linear((cx, cy - half), (cx, cy + half), vec![stop(0.0, [178, 255, 208], a), stop(1.0, [36, 204, 106], a)]),
-        tf,
-        None,
-    );
+    fill_shader(pm, body.clone(), linear((cx, cy - half), (cx, cy + half), vec![stop(0.0, [178, 255, 208], a), stop(1.0, [36, 204, 106], a)]), tf, None);
     let Some(body) = body else { return };
     let mask = mask_of(pm, &body, tf);
     // Faint scan lines.
     for k in [-2.6, 0.2, 3.0] {
-        fill_solid(pm, Rect::from_xywh(cx - half, cy + k * s, half * 2.0, 0.7 * s).and_then(|r| {
-            let mut pb = PathBuilder::new();
-            pb.push_rect(r);
-            pb.finish()
-        }), [8, 80, 40], 0.22 * a, tf, mask.as_ref());
+        fill_solid(
+            pm,
+            Rect::from_xywh(cx - half, cy + k * s, half * 2.0, 0.7 * s).and_then(|r| {
+                let mut pb = PathBuilder::new();
+                pb.push_rect(r);
+                pb.finish()
+            }),
+            [8, 80, 40],
+            0.22 * a,
+            tf,
+            mask.as_ref(),
+        );
     }
     // The lens.
     let (lx, ly) = (cx + p.look.0 * 1.5 * s, cy + p.look.1 * 1.0 * s);
-    fill_shader(
-        pm,
-        oval(lx, ly, 2.0 * s, 2.0 * s),
-        radial((lx, ly), 2.0 * s, vec![stop(0.0, [244, 255, 250], a), stop(1.0, [150, 255, 196], a)]),
-        tf,
-        mask.as_ref(),
-    );
+    fill_shader(pm, oval(lx, ly, 2.0 * s, 2.0 * s), radial((lx, ly), 2.0 * s, vec![stop(0.0, [244, 255, 250], a), stop(1.0, [150, 255, 196], a)]), tf, mask.as_ref());
     fill_solid(pm, Some(body.clone()), [255, 255, 255], 0.5 * flare * a, tf, None);
     stroke_path(pm, &body, 0.8 * s, [8, 80, 40], 0.5 * a, tf);
 }
@@ -492,13 +468,7 @@ fn anime(pm: &mut Pixmap, e: &Eye) {
     // The lash line: a dark shape a little bigger than the eye and a little higher, so it shows along the top.
     fill_solid(pm, oval(e.x, e.cy - 0.7 * s, rx + 0.6 * s, ry + 0.5 * s), [16, 10, 38], a, tf, None);
     let ball = oval(e.x, e.cy, rx, ry);
-    fill_shader(
-        pm,
-        ball.clone(),
-        linear((e.x, e.cy - ry), (e.x, e.cy + ry), vec![stop(0.0, [255, 255, 255], a), stop(1.0, [214, 214, 240], a)]),
-        tf,
-        None,
-    );
+    fill_shader(pm, ball.clone(), linear((e.x, e.cy - ry), (e.x, e.cy + ry), vec![stop(0.0, [255, 255, 255], a), stop(1.0, [214, 214, 240], a)]), tf, None);
     let Some(ball) = ball else { return };
     let mask = mask_of(pm, &ball, tf);
     let (lx, ly) = (e.x + p.look.0 * 1.5 * s, e.cy + 0.9 * s + p.look.1 * 1.2 * s);

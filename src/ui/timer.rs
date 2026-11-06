@@ -127,8 +127,27 @@ impl App {
                 let area = timer_value_rect(i);
                 let typing = self.timer_field == Some(i);
                 if typing {
-                    gfx::gradient_rounded(pm, area.0 * s, area.1 * s, area.2 * s, area.3 * s, 8.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 64.0) as u8], [rgb[0], rgb[1], rgb[2], (alpha * 28.0) as u8], false);
-                    gfx::stroke_rounded(pm, area.0 * s + 0.5 * s, area.1 * s + 0.5 * s, area.2 * s - s, area.3 * s - s, 8.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 170.0) as u8]);
+                    gfx::gradient_rounded(
+                        pm,
+                        area.0 * s,
+                        area.1 * s,
+                        area.2 * s,
+                        area.3 * s,
+                        8.0 * s,
+                        [rgb[0], rgb[1], rgb[2], (alpha * 64.0) as u8],
+                        [rgb[0], rgb[1], rgb[2], (alpha * 28.0) as u8],
+                        false,
+                    );
+                    gfx::stroke_rounded(
+                        pm,
+                        area.0 * s + 0.5 * s,
+                        area.1 * s + 0.5 * s,
+                        area.2 * s - s,
+                        area.3 * s - s,
+                        8.0 * s,
+                        s,
+                        [rgb[0], rgb[1], rgb[2], (alpha * 170.0) as u8],
+                    );
                 } else if idle {
                     let glow = self.hot_t(area, s);
                     if glow > 0.01 {
@@ -258,9 +277,10 @@ impl App {
             return;
         }
         if let Some(path) = &self.settings.alarm_sound
-            && sound::play_file(path, self.settings.volume) {
-                return;
-            }
+            && sound::play_file(path, self.settings.volume)
+        {
+            return;
+        }
         sound::play(sound::Chime::TimerDone, self.settings.volume);
     }
 

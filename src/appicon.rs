@@ -4,8 +4,8 @@
 //! along its underside, floating over a soft shadow on a pale sky-blue rounded square.
 
 use tiny_skia::{
-    BlendMode, Color, FillRule, GradientStop, LinearGradient, Mask, MaskType, Paint, Path, PathBuilder, Pixmap, PixmapPaint,
-    Point, RadialGradient, Rect, Shader, SpreadMode, Transform,
+    BlendMode, Color, FillRule, GradientStop, LinearGradient, Mask, MaskType, Paint, Path, PathBuilder, Pixmap, PixmapPaint, Point, RadialGradient, Rect, Shader, SpreadMode,
+    Transform,
 };
 
 fn rgb(hex: u32, alpha: u8) -> Color {
@@ -135,9 +135,7 @@ fn draw_cloud(pm: &mut Pixmap, s: f32, tiny: bool) {
     }
     // Shine: a soft glow and a crisp slanted highlight on the big puff, smaller ones on the sides.
     glow(&mut body, q(0.42), q(0.24), q(0.20), q(0.12), 0xFFFFFF, 80);
-    for (x, y, rx, ry, angle, alpha) in
-        [(0.405, 0.205, 0.075, 0.022, -24.0, 215), (0.215, 0.42, 0.040, 0.014, -32.0, 150), (0.66, 0.30, 0.030, 0.011, -30.0, 120)]
-    {
+    for (x, y, rx, ry, angle, alpha) in [(0.405, 0.205, 0.075, 0.022, -24.0, 215), (0.215, 0.42, 0.040, 0.014, -32.0, 150), (0.66, 0.30, 0.030, 0.011, -30.0, 120)] {
         let Some(shine) = oval(q(x), q(y), q(rx), q(ry)) else { continue };
         let paint = Paint { shader: Shader::SolidColor(rgb(0xFFFFFF, alpha)), anti_alias: true, ..Paint::default() };
         body.fill_path(&shine, &paint, FillRule::Winding, Transform::from_rotate_at(angle, q(x), q(y)), None);

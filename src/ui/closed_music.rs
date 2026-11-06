@@ -340,5 +340,4 @@ mod tests {
         let grey = vivid([128, 128, 128], 0.0);
         assert!(*grey.iter().max().unwrap() >= 220);
     }
-
 }

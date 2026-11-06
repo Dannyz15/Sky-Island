@@ -20,12 +20,7 @@ pub(crate) fn shelf_clear_rect(height: f32) -> (f32, f32, f32, f32) {
 
 fn tile_rect(slot: usize) -> (f32, f32, f32, f32) {
     let (col, row) = ((slot % COLS) as f32, (slot / COLS) as f32);
-    (
-        TILES_ORIGIN.0 + col * (TILE.0 + TILE_GAP.0),
-        TILES_ORIGIN.1 + row * (TILE.1 + TILE_GAP.1),
-        TILE.0,
-        TILE.1,
-    )
+    (TILES_ORIGIN.0 + col * (TILE.0 + TILE_GAP.0), TILES_ORIGIN.1 + row * (TILE.1 + TILE_GAP.1), TILE.0, TILE.1)
 }
 
 impl App {
@@ -120,7 +115,17 @@ impl App {
         let zone = (24.0, 36.0, 372.0, 124.0);
         if self.drag_hover {
             gfx::glow(pm, width / 2.0, 98.0 * s, 150.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 40.0) as u8], None);
-            gfx::gradient_rounded(pm, zone.0 * s, zone.1 * s, zone.2 * s, zone.3 * s, 16.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 62.0) as u8], [rgb[0], rgb[1], rgb[2], (alpha * 26.0) as u8], false);
+            gfx::gradient_rounded(
+                pm,
+                zone.0 * s,
+                zone.1 * s,
+                zone.2 * s,
+                zone.3 * s,
+                16.0 * s,
+                [rgb[0], rgb[1], rgb[2], (alpha * 62.0) as u8],
+                [rgb[0], rgb[1], rgb[2], (alpha * 26.0) as u8],
+                false,
+            );
             gfx::stroke_rounded(pm, zone.0 * s, zone.1 * s, zone.2 * s, zone.3 * s, 16.0 * s, 1.5 * s, [rgb[0], rgb[1], rgb[2], (alpha * 170.0) as u8]);
         } else if empty {
             draw_card(pm, zone, 16.0, s, alpha, 0.0, rgb);
@@ -136,8 +141,7 @@ impl App {
             return;
         }
 
-        const PALETTE: [[u8; 3]; 6] =
-            [[255, 99, 71], [80, 200, 120], [90, 150, 255], [255, 190, 70], [190, 120, 255], [70, 200, 210]];
+        const PALETTE: [[u8; 3]; 6] = [[255, 99, 71], [80, 200, 120], [90, 150, 255], [255, 190, 70], [190, 120, 255], [70, 200, 210]];
         for slot in 0..COLS * ROWS {
             self.animated_row(pm, s, slot / COLS, ROWS, |pm| {
                 let Some(i) = self.shelf.index_at(slot) else { return };

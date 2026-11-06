@@ -1,10 +1,7 @@
 //! Drawing helpers beyond flat fills: gradients, glows, borders and soft shadows. Colours are
 //! `[r, g, b, a]` with straight (not premultiplied) alpha, like the rest of the drawing code.
 
-use tiny_skia::{
-    Color, FillRule, GradientStop, LinearGradient, Mask, Paint, Path, PathBuilder, Pixmap, Point, RadialGradient, Rect,
-    SpreadMode, Stroke, Transform,
-};
+use tiny_skia::{Color, FillRule, GradientStop, LinearGradient, Mask, Paint, Path, PathBuilder, Pixmap, Point, RadialGradient, Rect, SpreadMode, Stroke, Transform};
 
 fn color(c: [u8; 4]) -> Color {
     let c = crate::theme::map(c);
@@ -43,11 +40,7 @@ pub fn rounded_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<Path> {
 /// Fill a rounded rectangle with a two-colour gradient, top to bottom or left to right.
 pub fn gradient_rounded(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, from: [u8; 4], to: [u8; 4], horizontal: bool) {
     let Some(path) = rounded_path(x, y, w, h, r) else { return };
-    let (a, b) = if horizontal {
-        (Point::from_xy(x, y), Point::from_xy(x + w, y))
-    } else {
-        (Point::from_xy(x, y), Point::from_xy(x, y + h))
-    };
+    let (a, b) = if horizontal { (Point::from_xy(x, y), Point::from_xy(x + w, y)) } else { (Point::from_xy(x, y), Point::from_xy(x, y + h)) };
     let stops = vec![GradientStop::new(0.0, color(from)), GradientStop::new(1.0, color(to))];
     let Some(shader) = LinearGradient::new(a, b, stops, SpreadMode::Pad, Transform::identity()) else { return };
     let paint = Paint { shader, anti_alias: true, ..Default::default() };
@@ -90,8 +83,7 @@ pub fn stroke_arc_gradient(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, width: f32
     }
     let Some(path) = pb.finish() else { return };
     let stops = vec![GradientStop::new(0.0, color(top)), GradientStop::new(1.0, color(bottom))];
-    let Some(shader) = LinearGradient::new(Point::from_xy(cx, cy - r), Point::from_xy(cx, cy + r), stops, SpreadMode::Pad, Transform::identity())
-    else {
+    let Some(shader) = LinearGradient::new(Point::from_xy(cx, cy - r), Point::from_xy(cx, cy + r), stops, SpreadMode::Pad, Transform::identity()) else {
         return;
     };
     let paint = Paint { shader, anti_alias: true, ..Default::default() };
@@ -104,11 +96,7 @@ pub fn stroke_arc_gradient(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, width: f32
 /// clipped to the mask's shape.
 pub fn glow(pm: &mut Pixmap, cx: f32, cy: f32, radius: f32, c: [u8; 4], mask: Option<&Mask>) {
     let centre = Point::from_xy(cx, cy);
-    let stops = vec![
-        GradientStop::new(0.0, color(c)),
-        GradientStop::new(0.5, color(fade(c, 0.35))),
-        GradientStop::new(1.0, color(fade(c, 0.0))),
-    ];
+    let stops = vec![GradientStop::new(0.0, color(c)), GradientStop::new(0.5, color(fade(c, 0.35))), GradientStop::new(1.0, color(fade(c, 0.0)))];
     let Some(shader) = RadialGradient::new(centre, 0.0, centre, radius, stops, SpreadMode::Pad, Transform::identity()) else {
         return;
     };
@@ -201,9 +189,7 @@ mod tests {
     fn png_bytes(w: u32, h: u32) -> Vec<u8> {
         use image::ImageEncoder;
         let mut out = Vec::new();
-        image::codecs::png::PngEncoder::new(&mut out)
-            .write_image(&vec![200u8; (w * h * 4) as usize], w, h, image::ExtendedColorType::Rgba8)
-            .unwrap();
+        image::codecs::png::PngEncoder::new(&mut out).write_image(&vec![200u8; (w * h * 4) as usize], w, h, image::ExtendedColorType::Rgba8).unwrap();
         out
     }
 

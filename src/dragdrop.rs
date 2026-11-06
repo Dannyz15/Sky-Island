@@ -6,14 +6,10 @@ use std::path::PathBuf;
 
 use windows::Win32::Foundation::{DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, S_OK};
 use windows::Win32::System::Com::{CoTaskMemFree, IDataObject};
-use windows::Win32::System::Ole::{
-    DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE, DoDragDrop, IDropSource, IDropSource_Impl,
-};
+use windows::Win32::System::Ole::{DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE, DoDragDrop, IDropSource, IDropSource_Impl};
 use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
-use windows::Win32::UI::Shell::{
-    BHID_DataObject, IShellItem, SHCreateItemFromParsingName, SHCreateShellItemArrayFromIDLists, SHParseDisplayName,
-};
+use windows::Win32::UI::Shell::{BHID_DataObject, IShellItem, SHCreateItemFromParsingName, SHCreateShellItemArrayFromIDLists, SHParseDisplayName};
 use windows::core::{BOOL, HRESULT, PCWSTR, Result, implement};
 
 #[implement(IDropSource)]

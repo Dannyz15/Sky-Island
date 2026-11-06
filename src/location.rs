@@ -73,14 +73,17 @@ fn reverse(lat: f64, lon: f64) -> Option<Value> {
 fn place_at(lat: f64, lon: f64, answer: Option<&Value>) -> Place {
     let address = answer.and_then(|a| a.get("address"));
     let text = |k: &str| address.and_then(|a| a.get(k)).and_then(Value::as_str).unwrap_or("").trim().to_string();
-    let city = ["city", "town", "municipality", "village", "suburb", "city_district", "county", "state_district"]
-        .iter()
-        .map(|k| text(k))
-        .find(|t| !t.is_empty())
-        .unwrap_or_default();
+    let city =
+        ["city", "town", "municipality", "village", "suburb", "city_district", "county", "state_district"].iter().map(|k| text(k)).find(|t| !t.is_empty()).unwrap_or_default();
     let name = if city.is_empty() { format!("{lat:.2}, {lon:.2}") } else { weather::label(&city, &text("state"), &text("country")) };
     let cc = text("country_code").to_ascii_uppercase();
-    Place::from_json(&json!({ "name": name, "lat": lat, "lon": lon, "tz": "", "cc": cc })).unwrap_or(Place { name: format!("{lat:.2}, {lon:.2}"), lat, lon, tz: String::new(), cc: String::new() })
+    Place::from_json(&json!({ "name": name, "lat": lat, "lon": lon, "tz": "", "cc": cc })).unwrap_or(Place {
+        name: format!("{lat:.2}, {lon:.2}"),
+        lat,
+        lon,
+        tz: String::new(),
+        cc: String::new(),
+    })
 }
 
 /// Find where the user is, on a background thread; the answer arrives as `UserEvent::Located`.

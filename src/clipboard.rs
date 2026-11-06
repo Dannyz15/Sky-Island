@@ -10,12 +10,12 @@ use std::time::{Duration, Instant};
 use image::{ImageEncoder, RgbaImage};
 use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::DataExchange::{
-    AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
-    IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
+    AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
+    SetClipboardData,
 };
-use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, KillTimer, SetTimer, WM_CLIPBOARDUPDATE, WM_TIMER};
 use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
+use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, KillTimer, SetTimer, WM_CLIPBOARDUPDATE, WM_TIMER};
 use windows::core::{PCWSTR, w};
 use winit::event_loop::EventLoopProxy;
 
@@ -287,13 +287,9 @@ fn image_from_rgba(width: u32, height: u32, rgba: Vec<u8>) -> Option<Image> {
     let img = RgbaImage::from_raw(width, height, rgba)?;
 
     let mut png = Vec::new();
-    image::codecs::png::PngEncoder::new_with_quality(
-        &mut png,
-        image::codecs::png::CompressionType::Fast,
-        image::codecs::png::FilterType::Sub,
-    )
-    .write_image(img.as_raw(), width, height, image::ExtendedColorType::Rgba8)
-    .ok()?;
+    image::codecs::png::PngEncoder::new_with_quality(&mut png, image::codecs::png::CompressionType::Fast, image::codecs::png::FilterType::Sub)
+        .write_image(img.as_raw(), width, height, image::ExtendedColorType::Rgba8)
+        .ok()?;
 
     Some(Image { png, width, height, ..thumbnail_of(&img) })
 }
@@ -484,9 +480,7 @@ fn read_content() -> Option<Content> {
             format != 0 && IsClipboardFormatAvailable(format).is_ok()
         };
         let can_include = RegisterClipboardFormatW(w!("CanIncludeInClipboardHistory"));
-        let kept_out_of_history = can_include != 0
-            && IsClipboardFormatAvailable(can_include).is_ok()
-            && read_flag(can_include).is_some_and(|flag| is_barred_from_history(&flag));
+        let kept_out_of_history = can_include != 0 && IsClipboardFormatAvailable(can_include).is_ok() && read_flag(can_include).is_some_and(|flag| is_barred_from_history(&flag));
         if marked(w!("ExcludeClipboardContentFromMonitorProcessing")) || marked(w!("Clipboard Viewer Ignore")) || kept_out_of_history {
             (None, None, None)
         } else if let Some(text) = read_unicode_text().filter(|t| !t.trim().is_empty()) {
@@ -532,9 +526,7 @@ fn png_fits(head: &[u8]) -> bool {
 fn dib_fits(head: &[u8]) -> bool {
     let value = |at: usize| head.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
     match (value(0), value(4), value(8)) {
-        (Some(header), Some(w), Some(h)) if header >= 40 && w > 0 && h != 0 => {
-            (w as usize).checked_mul(h.unsigned_abs() as usize).is_some_and(|px| px <= MAX_PIXELS)
-        }
+        (Some(header), Some(w), Some(h)) if header >= 40 && w > 0 && h != 0 => (w as usize).checked_mul(h.unsigned_abs() as usize).is_some_and(|px| px <= MAX_PIXELS),
         _ => false,
     }
 }
@@ -723,9 +715,7 @@ mod tests {
     #[test]
     fn an_ordinary_png_from_another_app_is_still_kept() {
         let mut png = Vec::new();
-        RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255]))
-            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-            .unwrap();
+        RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
         let kept = image_from_png(png).expect("a small picture is kept");
         assert_eq!((kept.width, kept.height), (40, 30));
     }

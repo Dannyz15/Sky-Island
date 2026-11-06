@@ -263,19 +263,21 @@ impl App {
                 // The sidebar: a page.
                 if cx < SIDEBAR_W {
                     if let Some(page) = Page::ALL.into_iter().find(|pg| inside(side_rect(*pg), cx, cy))
-                        && let Some(p) = &mut self.panel {
-                            p.show(page);
-                        }
+                        && let Some(p) = &mut self.panel
+                    {
+                        p.show(page);
+                    }
                     return;
                 }
                 if p.show_changelog {
                     // Only the Back button does anything here.
                     if inside(changelog_back(frame), cx, cy)
-                        && let Some(p) = &mut self.panel {
-                            p.show_changelog = false;
-                            p.page_since = Instant::now();
-                            p.redraw();
-                        }
+                        && let Some(p) = &mut self.panel
+                    {
+                        p.show_changelog = false;
+                        p.page_since = Instant::now();
+                        p.redraw();
+                    }
                     return;
                 }
                 // The page scrolls under its title: clicks above that line miss, and the rest are where the rows are drawn.

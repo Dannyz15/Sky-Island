@@ -104,7 +104,18 @@ pub(super) fn draw_page_icon(pm: &mut Pixmap, page: Page, x: f32, y: f32, s: f32
         }
         Page::Sounds => {
             // A speaker with two waves.
-            fill_poly(pm, &[(cx - 7.5 * u, cy - 2.4 * u), (cx - 4.0 * u, cy - 2.4 * u), (cx + 0.6 * u, cy - 6.4 * u), (cx + 0.6 * u, cy + 6.4 * u), (cx - 4.0 * u, cy + 2.4 * u), (cx - 7.5 * u, cy + 2.4 * u)], w);
+            fill_poly(
+                pm,
+                &[
+                    (cx - 7.5 * u, cy - 2.4 * u),
+                    (cx - 4.0 * u, cy - 2.4 * u),
+                    (cx + 0.6 * u, cy - 6.4 * u),
+                    (cx + 0.6 * u, cy + 6.4 * u),
+                    (cx - 4.0 * u, cy + 2.4 * u),
+                    (cx - 7.5 * u, cy + 2.4 * u),
+                ],
+                w,
+            );
             stroke_points(pm, &arc_points(cx + 1.0 * u, cy, 4.2 * u, -48.0, 48.0, 8), false, 1.4 * u, w);
             stroke_points(pm, &arc_points(cx + 1.0 * u, cy, 7.4 * u, -48.0, 48.0, 8), false, 1.4 * u, w);
         }
@@ -121,7 +132,20 @@ pub(super) fn draw_page_icon(pm: &mut Pixmap, page: Page, x: f32, y: f32, s: f32
         Page::Shelf => {
             // An open tray with an arrow going in.
             stroke_points(pm, &[(cx - 7.5 * u, cy + 0.5 * u), (cx - 7.5 * u, cy + 6.5 * u), (cx + 7.5 * u, cy + 6.5 * u), (cx + 7.5 * u, cy + 0.5 * u)], false, 1.7 * u, w);
-            stroke_points(pm, &[(cx - 7.5 * u, cy + 0.5 * u), (cx - 3.2 * u, cy + 0.5 * u), (cx - 2.0 * u, cy + 3.0 * u), (cx + 2.0 * u, cy + 3.0 * u), (cx + 3.2 * u, cy + 0.5 * u), (cx + 7.5 * u, cy + 0.5 * u)], false, 1.7 * u, w);
+            stroke_points(
+                pm,
+                &[
+                    (cx - 7.5 * u, cy + 0.5 * u),
+                    (cx - 3.2 * u, cy + 0.5 * u),
+                    (cx - 2.0 * u, cy + 3.0 * u),
+                    (cx + 2.0 * u, cy + 3.0 * u),
+                    (cx + 3.2 * u, cy + 0.5 * u),
+                    (cx + 7.5 * u, cy + 0.5 * u),
+                ],
+                false,
+                1.7 * u,
+                w,
+            );
             stroke_points(pm, &[(cx, cy - 7.0 * u), (cx, cy - 0.5 * u)], false, 1.7 * u, w);
             fill_poly(pm, &[(cx - 3.2 * u, cy - 2.4 * u), (cx + 3.2 * u, cy - 2.4 * u), (cx, cy + 1.2 * u)], w);
         }
@@ -179,11 +203,32 @@ impl App {
                     gfx::glow(pm, cx * s, cy * s, (r + 8.0) * s, [tint[0], tint[1], tint[2], 60], None);
                     crate::fill_circle(pm, cx * s, cy * s, r * s, [tint[0], tint[1], tint[2], 255]);
                 }
-                let ink = if is_today { white } else if m != month && !week { muted } else { [214, 214, 224, 255] };
-                crate::draw_text_centered(pm, if is_today { heading } else { font }, &dom.to_string(), cx * s, (cy + if week { 6.0 } else { 4.5 }) * s, if week { 18.0 } else { 12.0 } * s, ink, cell_w * s);
+                let ink = if is_today {
+                    white
+                } else if m != month && !week {
+                    muted
+                } else {
+                    [214, 214, 224, 255]
+                };
+                crate::draw_text_centered(
+                    pm,
+                    if is_today { heading } else { font },
+                    &dom.to_string(),
+                    cx * s,
+                    (cy + if week { 6.0 } else { 4.5 }) * s,
+                    if week { 18.0 } else { 12.0 } * s,
+                    ink,
+                    cell_w * s,
+                );
                 let (open, total) = self.todo.day_counts(day);
                 if total > 0 {
-                    let dot = if is_today { white } else if open > 0 { [255, 190, 70, 255] } else { [110, 110, 120, 255] };
+                    let dot = if is_today {
+                        white
+                    } else if open > 0 {
+                        [255, 190, 70, 255]
+                    } else {
+                        [110, 110, 120, 255]
+                    };
                     crate::fill_circle(pm, cx * s, (cy + if week { 20.0 } else { 11.0 }) * s, 1.6 * s, dot);
                 }
             }
@@ -195,9 +240,10 @@ impl App {
         let (x, y, w, h) = hero;
         crate::draw_card(pm, hero, 16.0, s, 1.0, 0.0, tint);
         if let Some(path) = gfx::rounded_path(x * s, y * s, w * s, h * s, 16.0 * s)
-            && let Some(mask) = gfx::mask_of(pm.width(), pm.height(), &path) {
-                gfx::glow(pm, (x + w / 2.0) * s, (y + 44.0) * s, 190.0 * s, [tint[0], tint[1], tint[2], 36], Some(&mask));
-            }
+            && let Some(mask) = gfx::mask_of(pm.width(), pm.height(), &path)
+        {
+            gfx::glow(pm, (x + w / 2.0) * s, (y + 44.0) * s, 190.0 * s, [tint[0], tint[1], tint[2], 36], Some(&mask));
+        }
         let logo = appicon::pixmap(128);
         // The logo at the top, the name, the description and the version centred under it.
         let side = 64.0;
@@ -253,7 +299,17 @@ impl App {
                 let (px, pw) = ((px - stretch / 2.0) * s + 2.0 * s, (pw + stretch) * s - 4.0 * s);
                 let squash = stretch * 0.1 * s;
                 let (hy, hh) = (y + 2.0 * s + squash / 2.0, h - 4.0 * s - squash);
-                gfx::gradient_rounded(pm, px - 2.0 * s, hy - 2.0 * s, pw + 4.0 * s, hh + 4.0 * s, (hh + 4.0 * s) / 2.0, [accent[0], accent[1], accent[2], 26], [accent[0], accent[1], accent[2], 10], false);
+                gfx::gradient_rounded(
+                    pm,
+                    px - 2.0 * s,
+                    hy - 2.0 * s,
+                    pw + 4.0 * s,
+                    hh + 4.0 * s,
+                    (hh + 4.0 * s) / 2.0,
+                    [accent[0], accent[1], accent[2], 26],
+                    [accent[0], accent[1], accent[2], 10],
+                    false,
+                );
                 gfx::gradient_rounded(pm, px, hy, pw, hh, hh / 2.0, [accent[0], accent[1], accent[2], 140], [accent[0], accent[1], accent[2], 86], false);
                 gfx::stroke_rounded(pm, px + 0.5 * s, hy + 0.5 * s, pw - s, hh - s, hh / 2.0, s, [accent[0], accent[1], accent[2], 160]);
                 for (i, name) in names.iter().enumerate() {
@@ -274,7 +330,17 @@ impl App {
                     let lit = panel.glows.follow(key + 40 + i as u64, if *style == self.settings.eye_style { 1.0 } else { 0.0 }, 30.0, 0.8) as f32;
                     crate::fill_rounded(pm, x, y, w, h, 10.0 * s, [255, 255, 255, (14.0 + 20.0 * over) as u8]);
                     if lit > 0.01 {
-                        gfx::gradient_rounded(pm, x, y, w, h, 10.0 * s, [accent[0], accent[1], accent[2], (140.0 * lit) as u8], [accent[0], accent[1], accent[2], (86.0 * lit) as u8], false);
+                        gfx::gradient_rounded(
+                            pm,
+                            x,
+                            y,
+                            w,
+                            h,
+                            10.0 * s,
+                            [accent[0], accent[1], accent[2], (140.0 * lit) as u8],
+                            [accent[0], accent[1], accent[2], (86.0 * lit) as u8],
+                            false,
+                        );
                         gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, 10.0 * s, s, [accent[0], accent[1], accent[2], (170.0 * lit) as u8]);
                     }
                     // The eyes are drawn on a picture of the tile's own size, so their glow stays inside the tile.
@@ -301,11 +367,27 @@ impl App {
                 for (i, (d, t)) in screens.iter().zip(&rects).enumerate() {
                     let (x, y, w, h) = (t.0 * s, t.1 * s, t.2 * s, t.3 * s);
                     let over = panel.glows.fade(own + i as u64, inside(*t, cx, cy));
-                    let target = if is_chosen(d, self.settings.screen) { 1.0 } else if lights_all { 0.6 } else { 0.0 };
+                    let target = if is_chosen(d, self.settings.screen) {
+                        1.0
+                    } else if lights_all {
+                        0.6
+                    } else {
+                        0.0
+                    };
                     let lit = panel.glows.follow(own + 16 + i as u64, target, 30.0, 0.8) as f32;
                     crate::fill_rounded(pm, x, y, w, h, 6.0 * s, [255, 255, 255, (14.0 + 22.0 * over) as u8]);
                     if lit > 0.01 {
-                        gfx::gradient_rounded(pm, x, y, w, h, 6.0 * s, [accent[0], accent[1], accent[2], (140.0 * lit) as u8], [accent[0], accent[1], accent[2], (86.0 * lit) as u8], false);
+                        gfx::gradient_rounded(
+                            pm,
+                            x,
+                            y,
+                            w,
+                            h,
+                            6.0 * s,
+                            [accent[0], accent[1], accent[2], (140.0 * lit) as u8],
+                            [accent[0], accent[1], accent[2], (86.0 * lit) as u8],
+                            false,
+                        );
                         gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, 6.0 * s, s, [accent[0], accent[1], accent[2], (170.0 * lit) as u8]);
                     }
                     // The notch, small, at the top middle of the screen it is on now. (With All every screen is lit the
@@ -330,13 +412,25 @@ impl App {
                 if screens.len() > 1 {
                     // All: the notch follows the mouse. Every: a closed notch on each screen, the touched one opens.
                     let every = self.settings.screen == Screen::Every;
-                    for (n, (tile, name, note, on)) in [(all_tile(item.ctrl), "All", "follows mouse", all), (every_tile(item.ctrl), "Every", "all closed", every)].into_iter().enumerate() {
+                    for (n, (tile, name, note, on)) in
+                        [(all_tile(item.ctrl), "All", "follows mouse", all), (every_tile(item.ctrl), "Every", "all closed", every)].into_iter().enumerate()
+                    {
                         let (x, y, w, h) = (tile.0 * s, tile.1 * s, tile.2 * s, tile.3 * s);
                         let over = panel.glows.fade(own + 48 + 2 * n as u64, inside(tile, cx, cy));
                         let lit = panel.glows.follow(own + 49 + 2 * n as u64, if on { 1.0 } else { 0.0 }, 30.0, 0.8) as f32;
                         crate::fill_rounded(pm, x, y, w, h, 8.0 * s, [255, 255, 255, (14.0 + 22.0 * over) as u8]);
                         if lit > 0.01 {
-                            gfx::gradient_rounded(pm, x, y, w, h, 8.0 * s, [accent[0], accent[1], accent[2], (140.0 * lit) as u8], [accent[0], accent[1], accent[2], (86.0 * lit) as u8], false);
+                            gfx::gradient_rounded(
+                                pm,
+                                x,
+                                y,
+                                w,
+                                h,
+                                8.0 * s,
+                                [accent[0], accent[1], accent[2], (140.0 * lit) as u8],
+                                [accent[0], accent[1], accent[2], (86.0 * lit) as u8],
+                                false,
+                            );
                             gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, 8.0 * s, s, [accent[0], accent[1], accent[2], (170.0 * lit) as u8]);
                         }
                         let ink = crate::pick(grey, white, lit.max(over * 0.6));
@@ -372,7 +466,17 @@ impl App {
             Kind::Pick => {
                 let (x, y, w, h) = (item.ctrl.0 * s, item.ctrl.1 * s, item.ctrl.2 * s, item.ctrl.3 * s);
                 let over = panel.glows.fade(key + 9, inside(item.ctrl, cx, cy));
-                gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], crate::pick(110.0, 64.0, over) as u8], [accent[0], accent[1], accent[2], crate::pick(66.0, 32.0, over) as u8], false);
+                gfx::gradient_rounded(
+                    pm,
+                    x,
+                    y,
+                    w,
+                    h,
+                    h / 2.0,
+                    [accent[0], accent[1], accent[2], crate::pick(110.0, 64.0, over) as u8],
+                    [accent[0], accent[1], accent[2], crate::pick(66.0, 32.0, over) as u8],
+                    false,
+                );
                 gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], 130]);
                 let custom = self.settings.alarm_sound.as_ref();
                 let name = custom.and_then(|p| p.file_name()).map_or_else(|| "Built-in chime".to_string(), |n| n.to_string_lossy().into_owned());
@@ -391,13 +495,32 @@ impl App {
                 let live = stepper != Stepper::Zone || self.zone_applies();
                 let strength = if live { 1.0 } else { 0.45 };
                 let over = panel.glows.fade(key + 9, live && inside(item.ctrl, cx, cy));
-                gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], (crate::pick(110.0, 64.0, over) * strength) as u8], [accent[0], accent[1], accent[2], (crate::pick(66.0, 32.0, over) * strength) as u8], false);
+                gfx::gradient_rounded(
+                    pm,
+                    x,
+                    y,
+                    w,
+                    h,
+                    h / 2.0,
+                    [accent[0], accent[1], accent[2], (crate::pick(110.0, 64.0, over) * strength) as u8],
+                    [accent[0], accent[1], accent[2], (crate::pick(66.0, 32.0, over) * strength) as u8],
+                    false,
+                );
                 gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], (130.0 * strength) as u8]);
                 let name = match stepper {
                     Stepper::Method => crate::prayer::METHODS[crate::prayer::method_index(self.settings.prayer_method)].1.to_string(),
                     Stepper::Zone => self.zone_text(),
                 };
-                crate::draw_text_centered(pm, heading, &name, (item.ctrl.0 + item.ctrl.2 / 2.0) * s, (item.ctrl.1 + 18.5) * s, 12.0 * s, if live { white } else { grey }, (item.ctrl.2 - 56.0) * s);
+                crate::draw_text_centered(
+                    pm,
+                    heading,
+                    &name,
+                    (item.ctrl.0 + item.ctrl.2 / 2.0) * s,
+                    (item.ctrl.1 + 18.5) * s,
+                    12.0 * s,
+                    if live { white } else { grey },
+                    (item.ctrl.2 - 56.0) * s,
+                );
                 // The arrows at the two ends.
                 let hot_left = over > 0.01 && cx < item.ctrl.0 + item.ctrl.2 / 3.0;
                 for (bx, glyph) in [(item.ctrl.0 + 16.0, "\u{2039}"), (item.ctrl.0 + item.ctrl.2 - 16.0, "\u{203A}")] {
@@ -415,10 +538,29 @@ impl App {
                     crate::draw_text_centered(pm, font, "Press the keys...", centre, (item.ctrl.1 + 18.5) * s, 12.0 * s, grey, item.ctrl.2 * s);
                 } else {
                     let strength = if self.settings.hotkey { 1.0 } else { 0.45 };
-                    gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], (crate::pick(110.0, 64.0, over) * strength) as u8], [accent[0], accent[1], accent[2], (crate::pick(66.0, 32.0, over) * strength) as u8], false);
+                    gfx::gradient_rounded(
+                        pm,
+                        x,
+                        y,
+                        w,
+                        h,
+                        h / 2.0,
+                        [accent[0], accent[1], accent[2], (crate::pick(110.0, 64.0, over) * strength) as u8],
+                        [accent[0], accent[1], accent[2], (crate::pick(66.0, 32.0, over) * strength) as u8],
+                        false,
+                    );
                     gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], (130.0 * strength) as u8]);
                     let name = crate::hotkey::name(self.settings.hotkey_mods, self.settings.hotkey_vk);
-                    crate::draw_text_centered(pm, heading, &name, centre, (item.ctrl.1 + 18.5) * s, 12.0 * s, if self.settings.hotkey { white } else { grey }, (item.ctrl.2 - 20.0) * s);
+                    crate::draw_text_centered(
+                        pm,
+                        heading,
+                        &name,
+                        centre,
+                        (item.ctrl.1 + 18.5) * s,
+                        12.0 * s,
+                        if self.settings.hotkey { white } else { grey },
+                        (item.ctrl.2 - 20.0) * s,
+                    );
                 }
             }
             Kind::Text(Field::City) => {
@@ -437,7 +579,17 @@ impl App {
                     let caret_x = x + 12.0 * s + crate::text_width(font, shown, 12.5 * s) + 1.5 * s;
                     crate::fill_rect(pm, caret_x, y + 7.0 * s, 1.4 * s, h - 14.0 * s, white);
                 } else {
-                    gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], crate::pick(110.0, 64.0, over) as u8], [accent[0], accent[1], accent[2], crate::pick(66.0, 32.0, over) as u8], false);
+                    gfx::gradient_rounded(
+                        pm,
+                        x,
+                        y,
+                        w,
+                        h,
+                        h / 2.0,
+                        [accent[0], accent[1], accent[2], crate::pick(110.0, 64.0, over) as u8],
+                        [accent[0], accent[1], accent[2], crate::pick(66.0, 32.0, over) as u8],
+                        false,
+                    );
                     gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], 130]);
                     let (name, ink) = match &self.settings.place {
                         Some(p) => (p.name.as_str(), white),
@@ -451,7 +603,17 @@ impl App {
                 let over = panel.glows.fade(key + 9, inside(item.ctrl, cx, cy));
                 let (x, y, w, h) = (item.ctrl.0 * s, item.ctrl.1 * s, item.ctrl.2 * s, item.ctrl.3 * s);
                 let colour = if armed || act == Act::Reset { [255, 110, 96] } else { accent };
-                gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [colour[0], colour[1], colour[2], crate::pick(110.0, 62.0, over) as u8], [colour[0], colour[1], colour[2], crate::pick(66.0, 30.0, over) as u8], false);
+                gfx::gradient_rounded(
+                    pm,
+                    x,
+                    y,
+                    w,
+                    h,
+                    h / 2.0,
+                    [colour[0], colour[1], colour[2], crate::pick(110.0, 62.0, over) as u8],
+                    [colour[0], colour[1], colour[2], crate::pick(66.0, 30.0, over) as u8],
+                    false,
+                );
                 gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [colour[0], colour[1], colour[2], 130]);
                 let download = match &self.update {
                     _ if act != Act::CheckUpdate => None,

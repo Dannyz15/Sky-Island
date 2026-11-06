@@ -3,11 +3,11 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::store;
+use crate::weather::Place;
+use crate::{hotkey, prayer};
 use serde_json::{Map, Value, json};
 use winreg::RegKey;
-use crate::store;
-use crate::{hotkey, prayer};
-use crate::weather::Place;
 use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -106,18 +106,8 @@ pub enum EyeStyle {
 }
 
 impl EyeStyle {
-    pub const ALL: [EyeStyle; 10] = [
-        EyeStyle::Classic,
-        EyeStyle::Dots,
-        EyeStyle::Cat,
-        EyeStyle::Glow,
-        EyeStyle::Sleepy,
-        EyeStyle::Happy,
-        EyeStyle::Heart,
-        EyeStyle::Sparkle,
-        EyeStyle::Robot,
-        EyeStyle::Anime,
-    ];
+    pub const ALL: [EyeStyle; 10] =
+        [EyeStyle::Classic, EyeStyle::Dots, EyeStyle::Cat, EyeStyle::Glow, EyeStyle::Sleepy, EyeStyle::Happy, EyeStyle::Heart, EyeStyle::Sparkle, EyeStyle::Robot, EyeStyle::Anime];
 
     fn name(self) -> &'static str {
         match self {
@@ -380,7 +370,15 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { hide_fullscreen: true, show_clock: true, clock_24h: false, eyes: false, idle_eyes: true, eye_style: EyeStyle::Glow, size: NotchSize::Auto, minimal: false,
+        Self {
+            hide_fullscreen: true,
+            show_clock: true,
+            clock_24h: false,
+            eyes: false,
+            idle_eyes: true,
+            eye_style: EyeStyle::Glow,
+            size: NotchSize::Auto,
+            minimal: false,
             closed_music: true,
             closed_bars: true,
             closed_spin: true,
@@ -398,7 +396,12 @@ impl Default for Settings {
             hud_network: true,
             hud_audio: true,
             hud_update: true,
-            sound: true, clipboard: true, clip_keep: ClipKeep::Forever, screen: Screen::Main, hide_island: false, water: true,
+            sound: true,
+            clipboard: true,
+            clip_keep: ClipKeep::Forever,
+            screen: Screen::Main,
+            hide_island: false,
+            water: true,
             timer: true,
             weather: true,
             fahrenheit: false,
@@ -446,9 +449,45 @@ macro_rules! on_off_settings {
 }
 
 on_off_settings!(
-    hide_fullscreen, show_clock, clock_24h, eyes, idle_eyes, minimal, closed_music, closed_bars, closed_spin, closed_edge, closed_sound, lyrics_online, open_on_click, week_monday, calendar_week,
-    empty_shelf, hud_volume, hud_brightness, hud_lock, hud_battery, hud_network, hud_audio, hud_update, sound, clipboard,
-    hide_island, water, timer, weather, fahrenheit, prayer, hud_prayer, asr_hanafi, hotkey, tab_music, tab_stats, tab_shelf, tab_todo, tab_calendar,
+    hide_fullscreen,
+    show_clock,
+    clock_24h,
+    eyes,
+    idle_eyes,
+    minimal,
+    closed_music,
+    closed_bars,
+    closed_spin,
+    closed_edge,
+    closed_sound,
+    lyrics_online,
+    open_on_click,
+    week_monday,
+    calendar_week,
+    empty_shelf,
+    hud_volume,
+    hud_brightness,
+    hud_lock,
+    hud_battery,
+    hud_network,
+    hud_audio,
+    hud_update,
+    sound,
+    clipboard,
+    hide_island,
+    water,
+    timer,
+    weather,
+    fahrenheit,
+    prayer,
+    hud_prayer,
+    asr_hanafi,
+    hotkey,
+    tab_music,
+    tab_stats,
+    tab_shelf,
+    tab_todo,
+    tab_calendar,
     tab_clipboard,
 );
 
@@ -557,10 +596,7 @@ impl Settings {
 
 /// Whether the app is registered to start when the user signs in.
 pub fn autostart_enabled() -> bool {
-    RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey(RUN_KEY)
-        .and_then(|k| k.get_value::<String, _>(RUN_NAME))
-        .is_ok()
+    RegKey::predef(HKEY_CURRENT_USER).open_subkey(RUN_KEY).and_then(|k| k.get_value::<String, _>(RUN_NAME)).is_ok()
 }
 
 /// The program a startup value runs, when the value is quoted the way this app writes it.

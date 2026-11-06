@@ -72,9 +72,24 @@ impl App {
             let (_, _, dom) = calendar::civil_from_days(day);
             let name = NAMES[calendar::weekday(day)];
             let weekend = calendar::weekday(day) >= 5;
-            let ink = if is_today { white } else if weekend { [190, 175, 225, a] } else { grey };
+            let ink = if is_today {
+                white
+            } else if weekend {
+                [190, 175, 225, a]
+            } else {
+                grey
+            };
             draw_text_centered(pm, font, name, (x + 17.0) * s, (y + 10.5) * s, 9.0 * s, ink, 30.0 * s);
-            draw_text(pm, if is_today { heading } else { font }, &dom.to_string(), (x + 42.0) * s, (y + 10.5) * s, 10.0 * s, if weekend && !is_today { [190, 175, 225, a] } else { white }, 24.0 * s);
+            draw_text(
+                pm,
+                if is_today { heading } else { font },
+                &dom.to_string(),
+                (x + 42.0) * s,
+                (y + 10.5) * s,
+                10.0 * s,
+                if weekend && !is_today { [190, 175, 225, a] } else { white },
+                24.0 * s,
+            );
             let (open, total) = self.todo.day_counts(day);
             for k in 0..total.min(8) {
                 let colour = if k < open { amber } else { [110, 110, 120, a] };
@@ -113,50 +128,66 @@ impl App {
         let title = if week { calendar::week_title(calendar::week_start(selected, monday)) } else { self.cal.title() };
         draw_text_centered(pm, heading, &title, (CAL_TITLE.0 + CAL_TITLE.2 / 2.0) * s, (CAL_TITLE.1 + 13.0) * s, 12.5 * s, white, CAL_TITLE.2 * s);
         let grid = |pm: &mut Pixmap| {
-        if week {
-            self.draw_calendar_week(pm, s, alpha, monday, today);
-            return;
-        }
-        for (i, head) in calendar::week_heads(monday).iter().enumerate() {
-            let x = CAL_GRID.0 + (i as f32 + 0.5) * CAL_CELL.0;
-            let ink = if calendar::is_weekend(i, monday) { gfx::mix(grey, violet, 0.45) } else { [130, 130, 142, a] };
-            draw_text_centered(pm, font, head, x * s, CAL_HEADS_Y * s, 9.0 * s, ink, CAL_CELL.0 * s);
-        }
+            if week {
+                self.draw_calendar_week(pm, s, alpha, monday, today);
+                return;
+            }
+            for (i, head) in calendar::week_heads(monday).iter().enumerate() {
+                let x = CAL_GRID.0 + (i as f32 + 0.5) * CAL_CELL.0;
+                let ink = if calendar::is_weekend(i, monday) { gfx::mix(grey, violet, 0.45) } else { [130, 130, 142, a] };
+                draw_text_centered(pm, font, head, x * s, CAL_HEADS_Y * s, 9.0 * s, ink, CAL_CELL.0 * s);
+            }
 
-        // Month grid: the selected day is outlined (the outline glides from day to day), today is filled, and
-        // a dot marks days with tasks.
-        if let Some(i) = (0..calendar::CELLS).find(|&i| self.cal.cell(i, monday) == Some(selected)) {
-            let (x, y, w, h) = cal_cell_rect(i);
-            let gx = self.glows.follow(KEY_CAL_SELECTED, x as f64, 30.0, 0.78) as f32;
-            let gy = self.glows.follow(KEY_CAL_SELECTED + 1, y as f64, 30.0, 0.78) as f32;
-            gfx::gradient_rounded(pm, (gx + 1.0) * s, gy * s, (w - 2.0) * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 44.0) as u8], [255, 255, 255, (alpha * 22.0) as u8], false);
-            gfx::stroke_rounded(pm, (gx + 1.0) * s + 0.5 * s, gy * s + 0.5 * s, (w - 2.0) * s - s, h * s - s, 6.0 * s, s, [255, 255, 255, (alpha * 90.0) as u8]);
-        }
-        for i in 0..calendar::CELLS {
-            let Some(day) = self.cal.cell(i, monday) else { continue };
-            let rect = cal_cell_rect(i);
-            let (x, y, w, h) = rect;
-            let is_today = day == today;
-            if day != selected {
-                let glow = self.hot_t(rect, s);
-                if glow > 0.01 {
-                    fill_rounded(pm, (x + 1.0) * s, y * s, (w - 2.0) * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
+            // Month grid: the selected day is outlined (the outline glides from day to day), today is filled, and
+            // a dot marks days with tasks.
+            if let Some(i) = (0..calendar::CELLS).find(|&i| self.cal.cell(i, monday) == Some(selected)) {
+                let (x, y, w, h) = cal_cell_rect(i);
+                let gx = self.glows.follow(KEY_CAL_SELECTED, x as f64, 30.0, 0.78) as f32;
+                let gy = self.glows.follow(KEY_CAL_SELECTED + 1, y as f64, 30.0, 0.78) as f32;
+                gfx::gradient_rounded(
+                    pm,
+                    (gx + 1.0) * s,
+                    gy * s,
+                    (w - 2.0) * s,
+                    h * s,
+                    6.0 * s,
+                    [255, 255, 255, (alpha * 44.0) as u8],
+                    [255, 255, 255, (alpha * 22.0) as u8],
+                    false,
+                );
+                gfx::stroke_rounded(pm, (gx + 1.0) * s + 0.5 * s, gy * s + 0.5 * s, (w - 2.0) * s - s, h * s - s, 6.0 * s, s, [255, 255, 255, (alpha * 90.0) as u8]);
+            }
+            for i in 0..calendar::CELLS {
+                let Some(day) = self.cal.cell(i, monday) else { continue };
+                let rect = cal_cell_rect(i);
+                let (x, y, w, h) = rect;
+                let is_today = day == today;
+                if day != selected {
+                    let glow = self.hot_t(rect, s);
+                    if glow > 0.01 {
+                        fill_rounded(pm, (x + 1.0) * s, y * s, (w - 2.0) * s, h * s, 6.0 * s, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
+                    }
+                }
+                if is_today {
+                    gfx::glow(pm, (x + w / 2.0) * s, (y + h / 2.0) * s, 16.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 70.0) as u8], None);
+                    gfx::gradient_rounded(pm, (x + 3.0) * s, (y + 1.0) * s, (w - 6.0) * s, (h - 2.0) * s, 5.0 * s, gfx::mix(violet, white, 0.25), violet, false);
+                }
+                let (_, _, dom) = calendar::civil_from_days(day);
+                let weekend = calendar::is_weekend(i % 7, monday);
+                let ink = if is_today {
+                    white
+                } else if weekend {
+                    [190, 175, 225, a]
+                } else {
+                    white
+                };
+                draw_text_centered(pm, if is_today { heading } else { font }, &dom.to_string(), (x + w / 2.0) * s, (y + 11.5) * s, 10.0 * s, ink, w * s);
+                let (open, total) = self.todo.day_counts(day);
+                if total > 0 {
+                    let dot = if open > 0 { amber } else { [110, 110, 120, a] };
+                    fill_circle(pm, (x + w / 2.0) * s, (y + 14.3) * s, 1.2 * s, if is_today { white } else { dot });
                 }
             }
-            if is_today {
-                gfx::glow(pm, (x + w / 2.0) * s, (y + h / 2.0) * s, 16.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 70.0) as u8], None);
-                gfx::gradient_rounded(pm, (x + 3.0) * s, (y + 1.0) * s, (w - 6.0) * s, (h - 2.0) * s, 5.0 * s, gfx::mix(violet, white, 0.25), violet, false);
-            }
-            let (_, _, dom) = calendar::civil_from_days(day);
-            let weekend = calendar::is_weekend(i % 7, monday);
-            let ink = if is_today { white } else if weekend { [190, 175, 225, a] } else { white };
-            draw_text_centered(pm, if is_today { heading } else { font }, &dom.to_string(), (x + w / 2.0) * s, (y + 11.5) * s, 10.0 * s, ink, w * s);
-            let (open, total) = self.todo.day_counts(day);
-            if total > 0 {
-                let dot = if open > 0 { amber } else { [110, 110, 120, a] };
-                fill_circle(pm, (x + w / 2.0) * s, (y + 14.3) * s, 1.2 * s, if is_today { white } else { dot });
-            }
-        }
         };
         self.slide_in(pm, s, grid);
 
@@ -212,12 +243,21 @@ impl App {
             });
         }
 
-
         // Add a task for this day.
         let add = CAL_ADD;
         let hot = self.hot_t(add, s);
         let (x, y, w, h) = add;
-        gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, h * s / 2.0, [rgb[0], rgb[1], rgb[2], (alpha * pick(90.0, 56.0, hot)) as u8], [rgb[0], rgb[1], rgb[2], (alpha * pick(56.0, 28.0, hot)) as u8], false);
+        gfx::gradient_rounded(
+            pm,
+            x * s,
+            y * s,
+            w * s,
+            h * s,
+            h * s / 2.0,
+            [rgb[0], rgb[1], rgb[2], (alpha * pick(90.0, 56.0, hot)) as u8],
+            [rgb[0], rgb[1], rgb[2], (alpha * pick(56.0, 28.0, hot)) as u8],
+            false,
+        );
         gfx::stroke_rounded(pm, x * s + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, h * s / 2.0, s, [rgb[0], rgb[1], rgb[2], (alpha * 100.0) as u8]);
         draw_text_centered(pm, font, "+  Add task", (x + w / 2.0) * s, (y + 13.0) * s, 11.0 * s, white, (w - 16.0) * s);
     }
@@ -227,10 +267,18 @@ impl App {
         let inside = |r: (f32, f32, f32, f32)| cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3;
         let (monday, week) = (self.settings.week_monday, self.settings.calendar_week);
         if inside(CAL_PREV) {
-            if week { self.cal.shift_week(-1) } else { self.cal.shift_month(-1) }
+            if week {
+                self.cal.shift_week(-1)
+            } else {
+                self.cal.shift_month(-1)
+            }
             (self.cal_t, self.cal_v, self.cal_dir) = (0.0, 0.0, -1.0);
         } else if inside(CAL_NEXT) {
-            if week { self.cal.shift_week(1) } else { self.cal.shift_month(1) }
+            if week {
+                self.cal.shift_week(1)
+            } else {
+                self.cal.shift_month(1)
+            }
             (self.cal_t, self.cal_v, self.cal_dir) = (0.0, 0.0, 1.0);
         } else if inside(CAL_TITLE) {
             self.cal = calendar::Calendar::new(today_day());

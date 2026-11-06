@@ -8,8 +8,7 @@ use std::thread;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG, RegisterClassW, TranslateMessage, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WNDCLASSW, WNDPROC,
+    CreateWindowExW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG, RegisterClassW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW, WNDPROC,
 };
 use windows::core::PCWSTR;
 
@@ -25,20 +24,7 @@ pub fn spawn(class: PCWSTR, proc: WNDPROC, setup: fn(HWND) -> bool) -> bool {
         let instance = GetModuleHandleW(None).ok().map(|module| module.into());
         let definition = WNDCLASSW { lpfnWndProc: proc, hInstance: instance.unwrap_or_default(), lpszClassName: class, ..Default::default() };
         RegisterClassW(&definition);
-        let window = CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            class,
-            class,
-            WINDOW_STYLE(0),
-            0,
-            0,
-            0,
-            0,
-            Some(HWND_MESSAGE),
-            None,
-            instance,
-            None,
-        );
+        let window = CreateWindowExW(WINDOW_EX_STYLE(0), class, class, WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, instance, None);
         let ready = window.is_ok_and(setup);
         let _ = tx.send(ready);
         if !ready {

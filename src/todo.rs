@@ -74,11 +74,7 @@ impl Todo {
             return;
         }
         if let Some(p) = Self::path() {
-            let body: Vec<Value> = self
-                .tasks
-                .iter()
-                .map(|t| json!({ "text": t.text, "done": t.done, "due": t.due, "notified": t.notified, "date": t.date }))
-                .collect();
+            let body: Vec<Value> = self.tasks.iter().map(|t| json!({ "text": t.text, "done": t.done, "due": t.due, "notified": t.notified, "date": t.date })).collect();
             store::write(&p, &json!(body).to_string());
         }
     }

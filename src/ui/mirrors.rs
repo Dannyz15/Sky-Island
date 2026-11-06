@@ -91,11 +91,8 @@ impl App {
         let Some(window) = self.window.clone() else { return };
         let at_of = |m: &winit::monitor::MonitorHandle| (m.position().x, m.position().y);
         let here = self.island_monitor(&window).map(|m| at_of(&m));
-        let wanted: Vec<(i32, i32)> = if self.settings.screen == settings::Screen::Every {
-            window.available_monitors().map(|m| at_of(&m)).filter(|at| Some(*at) != here).collect()
-        } else {
-            Vec::new()
-        };
+        let wanted: Vec<(i32, i32)> =
+            if self.settings.screen == settings::Screen::Every { window.available_monitors().map(|m| at_of(&m)).filter(|at| Some(*at) != here).collect() } else { Vec::new() };
         self.mirrors.retain(|m| wanted.contains(&m.at));
         for at in wanted {
             if !self.mirrors.iter().any(|m| m.at == at)
@@ -167,7 +164,10 @@ impl App {
                 *dst = (src.alpha() as u32) << 24 | (src.red() as u32) << 16 | (src.green() as u32) << 8 | src.blue() as u32;
             }
             buffer.present().ok();
-            if raise && let Ok(handle) = mirror.window.window_handle() && let RawWindowHandle::Win32(h) = handle.as_raw() {
+            if raise
+                && let Ok(handle) = mirror.window.window_handle()
+                && let RawWindowHandle::Win32(h) = handle.as_raw()
+            {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos};
                 // SAFETY: puts one of this app's own windows in front without taking the focus.

@@ -62,10 +62,7 @@ fn system_time(secs: i64) -> SYSTEMTIME {
 }
 
 fn seconds(t: &SYSTEMTIME) -> i64 {
-    calendar::days_from_civil(i32::from(t.wYear), u32::from(t.wMonth), u32::from(t.wDay)) * 86_400
-        + i64::from(t.wHour) * 3600
-        + i64::from(t.wMinute) * 60
-        + i64::from(t.wSecond)
+    calendar::days_from_civil(i32::from(t.wYear), u32::from(t.wMonth), u32::from(t.wDay)) * 86_400 + i64::from(t.wHour) * 3600 + i64::from(t.wMinute) * 60 + i64::from(t.wSecond)
 }
 
 /// Local minus UTC at the UTC moment `unix`, in `zone` (`None`: the time zone of this PC).
@@ -102,14 +99,7 @@ mod tests {
     /// US Eastern time: UTC-5, and UTC-4 from the second Sunday of March to the first Sunday of November.
     fn eastern() -> TIME_ZONE_INFORMATION {
         let rule = |month: u16, week: u16| SYSTEMTIME { wMonth: month, wDayOfWeek: 0, wDay: week, wHour: 2, ..Default::default() };
-        TIME_ZONE_INFORMATION {
-            Bias: 300,
-            StandardDate: rule(11, 1),
-            StandardBias: 0,
-            DaylightDate: rule(3, 2),
-            DaylightBias: -60,
-            ..Default::default()
-        }
+        TIME_ZONE_INFORMATION { Bias: 300, StandardDate: rule(11, 1), StandardBias: 0, DaylightDate: rule(3, 2), DaylightBias: -60, ..Default::default() }
     }
 
     fn utc(year: i32, month: u32, day: u32, hour: i64) -> i64 {

@@ -28,7 +28,6 @@ type Backdrop = ((u32, u32, bool, u32), Pixmap);
 const SLOT_GRAPH: usize = 5;
 const SLOT_NETWORK: usize = 6;
 
-
 /// Where the content sits across the notch.
 const MARGIN: f32 = 18.0;
 const WIDTH: f32 = 384.0;
@@ -422,10 +421,8 @@ impl App {
         let frac = glide(Some(0.0), Some(1.0), self.glide_progress()).unwrap_or(1.0);
         for (pick_up, rgb) in [(false, DOWN), (true, UP)] {
             let v: Vec<f32> = self.stats.net_history.iter().map(|(d, u)| (if pick_up { *u } else { *d }) / scale).collect();
-            let pts: Vec<(f32, f32)> = smooth(&graph_points(&v, frac, step, pw, 0.0), 2)
-                .into_iter()
-                .map(|(gx, value)| (gx * s, (ph - 1.5 - value.clamp(0.0, 1.0) * (ph - 3.0)) * s))
-                .collect();
+            let pts: Vec<(f32, f32)> =
+                smooth(&graph_points(&v, frac, step, pw, 0.0), 2).into_iter().map(|(gx, value)| (gx * s, (ph - 1.5 - value.clamp(0.0, 1.0) * (ph - 3.0)) * s)).collect();
             if pts.len() < 2 {
                 continue;
             }

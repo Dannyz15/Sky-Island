@@ -40,11 +40,7 @@ pub fn map(c: [u8; 4]) -> [u8; 4] {
 
 /// The notch body: top, middle and bottom colours of its gradient.
 pub fn body() -> [[u8; 3]; 3] {
-    if is_light() {
-        [[250, 250, 252], [241, 242, 246], [229, 231, 238]]
-    } else {
-        [[0, 0, 0], [7, 7, 10], [16, 16, 22]]
-    }
+    if is_light() { [[250, 250, 252], [241, 242, 246], [229, 231, 238]] } else { [[0, 0, 0], [7, 7, 10], [16, 16, 22]] }
 }
 
 /// The hairline around the notch.

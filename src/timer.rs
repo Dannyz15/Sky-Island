@@ -56,8 +56,12 @@ impl Unit {
 enum State {
     /// Not started: the whole length is left.
     Idle,
-    Running { ends: Instant },
-    Paused { left: Duration },
+    Running {
+        ends: Instant,
+    },
+    Paused {
+        left: Duration,
+    },
 }
 
 pub struct Timer {

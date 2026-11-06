@@ -174,14 +174,7 @@ fn parse(v: &Value, lat: f64, lon: f64) -> Option<Report> {
     let list = |k: &str| daily.get(k).and_then(Value::as_array);
     let (dates, codes, highs, lows) = (list("time")?, list("weather_code")?, list("temperature_2m_max")?, list("temperature_2m_min")?);
     let days: Vec<Day> = (0..dates.len().min(codes.len()).min(highs.len()).min(lows.len()).min(DAYS))
-        .filter_map(|i| {
-            Some(Day {
-                date: dates[i].as_str()?.to_string(),
-                code: codes[i].as_u64()? as u32,
-                high: highs[i].as_f64()? as f32,
-                low: lows[i].as_f64()? as f32,
-            })
-        })
+        .filter_map(|i| Some(Day { date: dates[i].as_str()?.to_string(), code: codes[i].as_u64()? as u32, high: highs[i].as_f64()? as f32, low: lows[i].as_f64()? as f32 }))
         .collect();
     if days.is_empty() {
         return None;

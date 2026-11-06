@@ -15,9 +15,7 @@ const SIZES: [u32; 6] = [16, 32, 48, 64, 128, 256];
 
 fn png(size: u32) -> Vec<u8> {
     let mut out = Vec::new();
-    PngEncoder::new(&mut out)
-        .write_image(&appicon::rgba(size), size, size, image::ExtendedColorType::Rgba8)
-        .expect("encode png");
+    PngEncoder::new(&mut out).write_image(&appicon::rgba(size), size, size, image::ExtendedColorType::Rgba8).expect("encode png");
     out
 }
 

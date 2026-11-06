@@ -56,9 +56,7 @@ impl App {
             || (self.music_w - self.music_extra_goal()).abs() > 1e-3
             || (self.closed_k - self.closed_target()).abs() > 1e-4
             || (self.target_k() - self.ui_k).abs() > 1e-3
-            || (self.view == View::Lyrics
-                && matches!(self.lyrics, LyricsState::Found(_))
-                && (self.lyric_pos - self.lyric_target()).abs() > f64::EPSILON)
+            || (self.view == View::Lyrics && matches!(self.lyrics, LyricsState::Found(_)) && (self.lyric_pos - self.lyric_target()).abs() > f64::EPSILON)
     }
 
     fn ov_target(&self) -> f64 {
@@ -380,11 +378,7 @@ impl App {
             return;
         }
         let Ok(icon) = Icon::from_rgba(appicon::rgba(32), 32, 32) else { return };
-        let tray = TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
-            .with_tooltip("Sky Island")
-            .with_icon(icon)
-            .build();
+        let tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("Sky Island").with_icon(icon).build();
 
         let proxy = std::sync::Mutex::new(self.proxy.clone());
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {

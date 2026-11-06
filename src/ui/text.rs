@@ -6,9 +6,10 @@ pub(crate) fn load_font() -> Option<Font> {
     let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
     for name in ["segoeui.ttf", "arial.ttf"] {
         if let Ok(bytes) = std::fs::read(format!("{windir}\\Fonts\\{name}"))
-            && let Ok(font) = Font::from_bytes(bytes, FontSettings::default()) {
-                return Some(font);
-            }
+            && let Ok(font) = Font::from_bytes(bytes, FontSettings::default())
+        {
+            return Some(font);
+        }
     }
     None
 }
@@ -17,9 +18,10 @@ pub(crate) fn load_bold_font() -> Option<Font> {
     let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
     for name in ["seguisb.ttf", "segoeuib.ttf"] {
         if let Ok(bytes) = std::fs::read(format!("{windir}\\Fonts\\{name}"))
-            && let Ok(font) = Font::from_bytes(bytes, FontSettings::default()) {
-                return Some(font);
-            }
+            && let Ok(font) = Font::from_bytes(bytes, FontSettings::default())
+        {
+            return Some(font);
+        }
     }
     None
 }
@@ -136,10 +138,7 @@ mod tests {
     #[test]
     fn ui_glyphs_exist_in_font() {
         let font = load_font().expect("a system font");
-        let missing: Vec<char> = "\u{00D7}\u{00B7}\u{2026}\u{2014}"
-            .chars()
-            .filter(|&c| font.lookup_glyph_index(c) == 0)
-            .collect();
+        let missing: Vec<char> = "\u{00D7}\u{00B7}\u{2026}\u{2014}".chars().filter(|&c| font.lookup_glyph_index(c) == 0).collect();
         assert!(missing.is_empty(), "missing glyphs: {missing:?}");
     }
 

@@ -203,18 +203,10 @@ fn means_down(e: &ureq::Error) -> bool {
 }
 
 fn fetch(title: &str, artist: &str, duration: Duration, superseded: &dyn Fn() -> bool) -> Looked {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .https_only(true)
-        .timeout_global(Some(Duration::from_secs(8)))
-        .build()
-        .into();
+    let agent: ureq::Agent = ureq::Agent::config_builder().https_only(true).timeout_global(Some(Duration::from_secs(8))).build().into();
     let artist = artist.trim_end_matches(" - Topic").trim();
 
-    let mut req = agent
-        .get(format!("{API}/get"))
-        .header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION")))
-        .query("track_name", title)
-        .query("artist_name", artist);
+    let mut req = agent.get(format!("{API}/get")).header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION"))).query("track_name", title).query("artist_name", artist);
     if !duration.is_zero() {
         req = req.query("duration", duration.as_secs().to_string());
     }
@@ -261,20 +253,14 @@ pub fn clear_cache() -> usize {
 
 fn clear_dir(dir: &std::path::Path) -> usize {
     let Ok(files) = fs::read_dir(dir) else { return 0 };
-    files
-        .flatten()
-        .map(|f| f.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "lrc") && fs::remove_file(p).is_ok())
-        .count()
+    files.flatten().map(|f| f.path()).filter(|p| p.extension().is_some_and(|e| e == "lrc") && fs::remove_file(p).is_ok()).count()
 }
 
 fn cache_path(key: &str) -> Option<PathBuf> {
     let dir = crate::store::path("lyrics")?;
     fs::create_dir_all(&dir).ok()?;
     // FNV-1a: stable across runs and Rust versions, unlike DefaultHasher.
-    let hash = key
-        .bytes()
-        .fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+    let hash = key.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
     Some(dir.join(format!("{hash:016x}.lrc")))
 }
 

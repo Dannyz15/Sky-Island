@@ -351,10 +351,23 @@ mod tests {
     #[test]
     fn buttons_do_not_overlap_each_other() {
         let all = [
-            Action::DatePrev, Action::DateNext, Action::DateNone, Action::DateToday, Action::DateTomorrow,
-            Action::RemindToggle, Action::HourDown, Action::HourUp, Action::MinuteDown, Action::MinuteUp,
-            Action::Meridiem, Action::In(15), Action::In(60), Action::In(180), Action::TomorrowMorning,
-            Action::Cancel, Action::Save,
+            Action::DatePrev,
+            Action::DateNext,
+            Action::DateNone,
+            Action::DateToday,
+            Action::DateTomorrow,
+            Action::RemindToggle,
+            Action::HourDown,
+            Action::HourUp,
+            Action::MinuteDown,
+            Action::MinuteUp,
+            Action::Meridiem,
+            Action::In(15),
+            Action::In(60),
+            Action::In(180),
+            Action::TomorrowMorning,
+            Action::Cancel,
+            Action::Save,
         ];
         for (i, &a) in all.iter().enumerate() {
             let (ra, right) = (rect(a), rect(a).0 + rect(a).2);

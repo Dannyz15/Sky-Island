@@ -94,9 +94,10 @@ impl ApplicationHandler<UserEvent> for App {
                     && self.clips.add(content)
                     && self.view == View::Clipboard
                     && self.progress > 0.0
-                    && let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
+                    && let Some(w) = &self.window
+                {
+                    w.request_redraw();
+                }
             }
             UserEvent::Menu(id) => {
                 let now = Instant::now();
@@ -217,9 +218,10 @@ impl ApplicationHandler<UserEvent> for App {
                     self.lyric_manual = None;
                     self.snap_lyrics();
                     if self.progress > 0.0
-                        && let Some(w) = &self.window {
-                            w.request_redraw();
-                        }
+                        && let Some(w) = &self.window
+                    {
+                        w.request_redraw();
+                    }
                 }
             }
             UserEvent::Media(state) => {
@@ -245,10 +247,7 @@ impl ApplicationHandler<UserEvent> for App {
                     (self.track_t, self.track_v) = (0.0, 0.0);
                     (self.lyrics_duration, self.lyrics_refetched) = (state.duration, false);
                     lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.settings.lyrics_online, self.proxy.clone());
-                } else if !self.lyrics_refetched
-                    && !state.duration.is_zero()
-                    && state.duration.abs_diff(self.lyrics_duration) > Duration::from_secs(2)
-                {
+                } else if !self.lyrics_refetched && !state.duration.is_zero() && state.duration.abs_diff(self.lyrics_duration) > Duration::from_secs(2) {
                     // The first look used no length or the old song's: look again, once, with the right one.
                     // What is shown stays until the answer comes.
                     (self.lyrics_duration, self.lyrics_refetched) = (state.duration, true);
@@ -271,9 +270,10 @@ impl ApplicationHandler<UserEvent> for App {
                 self.media_at = Instant::now();
                 // Only worth repainting if the player is visible.
                 if self.progress > 0.0
-                    && let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
+                    && let Some(w) = &self.window
+                {
+                    w.request_redraw();
+                }
             }
         }
     }
@@ -328,14 +328,16 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 // Hover highlights follow the mouse.
                 if self.progress >= 0.9
-                    && let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
+                    && let Some(w) = &self.window
+                {
+                    w.request_redraw();
+                }
                 if let Some((idx, start)) = self.press
-                    && (position.x - start.0).hypot(position.y - start.1) > DRAG_THRESHOLD {
-                        self.press = None;
-                        self.drag_out(idx);
-                    }
+                    && (position.x - start.0).hypot(position.y - start.1) > DRAG_THRESHOLD
+                {
+                    self.press = None;
+                    self.drag_out(idx);
+                }
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 if self.settings.open_on_click && !self.hovered && self.progress < 0.9 {
@@ -367,11 +369,12 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 // A press that never turned into a drag is a click: open the file.
                 if let Some((idx, _)) = self.press.take()
-                    && let Some(path) = self.shelf.items.get(idx).cloned() {
-                        crate::open::open(&path);
-                        self.selected.clear();
-                        self.sync_selection_focus();
-                    }
+                    && let Some(path) = self.shelf.items.get(idx).cloned()
+                {
+                    crate::open::open(&path);
+                    self.selected.clear();
+                    self.sync_selection_focus();
+                }
             }
             WindowEvent::Focused(false) if self.selecting => {
                 // The user went to another app: the highlight and the keyboard are no longer ours.
@@ -405,9 +408,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            WindowEvent::MouseWheel { delta, .. }
-                if self.progress >= 0.9 && !self.editing && self.timer_field.is_none() && self.wheel_changes_tab() =>
-            {
+            WindowEvent::MouseWheel { delta, .. } if self.progress >= 0.9 && !self.editing && self.timer_field.is_none() && self.wheel_changes_tab() => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 // Scrolling down goes to the next tab, up to the one before; one step per flick.
                 if dy != 0.0 && self.last_wheel_tab.elapsed() > Duration::from_millis(220) {
@@ -429,9 +430,10 @@ impl ApplicationHandler<UserEvent> for App {
                 let column = TIMER_COLS.iter().position(|x| (cx - x).abs() <= 28.0);
                 if let Some(i) = column.filter(|_| dy != 0.0 && (TIMER_PLUS_Y - 12.0..=TIMER_MINUS_Y + 12.0).contains(&cy))
                     && self.timer.adjust(Unit::ALL[i], if dy > 0.0 { 1 } else { -1 })
-                    && let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
+                    && let Some(w) = &self.window
+                {
+                    w.request_redraw();
+                }
             }
             WindowEvent::MouseWheel { delta, .. } if self.view == View::Lyrics && !self.editing && self.progress >= 0.9 => {
                 let s = self.ui_scale() as f32;
@@ -459,13 +461,12 @@ impl ApplicationHandler<UserEvent> for App {
                 let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
                 if dy != 0.0
                     && self.editor.wheel(cx, cy, if dy > 0.0 { 1 } else { -1 }, clock_now())
-                    && let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
+                    && let Some(w) = &self.window
+                {
+                    w.request_redraw();
+                }
             }
-            WindowEvent::MouseWheel { delta, .. }
-                if matches!(self.view, View::Shelf | View::Todo | View::Clipboard) && self.progress >= 0.9 =>
-            {
+            WindowEvent::MouseWheel { delta, .. } if matches!(self.view, View::Shelf | View::Todo | View::Clipboard) && self.progress >= 0.9 => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 if dy != 0.0 {
                     // Wheel up shows earlier rows.
@@ -724,9 +725,7 @@ impl ApplicationHandler<UserEvent> for App {
         // Periodic refresh for the progress bar / countdown. Only redraw when due, since a redraw
         // itself triggers another about_to_wait.
         let expanded = self.progress >= 1.0;
-        if (expanded && (self.media.playing || self.editing || self.timer_field.is_some() || matches!(self.view, View::Water | View::Todo)))
-            || self.timer.running()
-        {
+        if (expanded && (self.media.playing || self.editing || self.timer_field.is_some() || matches!(self.view, View::Water | View::Todo))) || self.timer.running() {
             let tick = if expanded && self.view == View::Timer && self.timer.running() { RING_TICK } else { PROGRESS_TICK };
             let due = self.last_ui_tick + tick;
             if now >= due {
@@ -762,13 +761,16 @@ impl ApplicationHandler<UserEvent> for App {
             at(t);
         }
         // Wake exactly when the next lyric line starts, so the glide begins on time.
-        if expanded && self.view == View::Lyrics && self.media.playing
-            && let LyricsState::Found(lines) = &self.lyrics {
-                let next = self.current_line().map_or(0, |c| c + 1);
-                if let Some(line) = lines.get(next) {
-                    at(now + line.at.saturating_sub(self.position()));
-                }
+        if expanded
+            && self.view == View::Lyrics
+            && self.media.playing
+            && let LyricsState::Found(lines) = &self.lyrics
+        {
+            let next = self.current_line().map_or(0, |c| c + 1);
+            if let Some(line) = lines.get(next) {
+                at(now + line.at.saturating_sub(self.position()));
             }
+        }
         if let Some(d) = self.timer.deadline() {
             at(d);
         }

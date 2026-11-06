@@ -4,8 +4,8 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::mpsc::{Receiver, channel};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::FILETIME;
@@ -14,8 +14,8 @@ use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB
 use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives};
 use windows::Win32::System::Diagnostics::Debug::{SEM_FAILCRITICALERRORS, SetThreadErrorMode};
 use windows::Win32::System::Performance::{
-    PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA, PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData,
-    PdhGetFormattedCounterArrayW, PdhOpenQueryW,
+    PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA, PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
+    PdhOpenQueryW,
 };
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows::Win32::System::Threading::GetSystemTimes;
@@ -480,11 +480,7 @@ pub fn gigabytes(bytes: u64) -> String {
 pub fn used_of(used: u64, total: u64) -> String {
     const GB: f64 = 1_073_741_824.0;
     let (used, total) = (used as f64 / GB, total as f64 / GB);
-    if total >= 1024.0 {
-        format!("{:.1} / {:.1} TB", used / 1024.0, total / 1024.0)
-    } else {
-        format!("{:.0} / {:.0} GB", used, total)
-    }
+    if total >= 1024.0 { format!("{:.1} / {:.1} TB", used / 1024.0, total / 1024.0) } else { format!("{:.0} / {:.0} GB", used, total) }
 }
 
 /// A graphics chip's name made short for a small label: "NVIDIA GeForce RTX 4050 Laptop GPU" is "RTX 4050" and

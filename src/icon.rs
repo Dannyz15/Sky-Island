@@ -8,12 +8,9 @@ use std::thread;
 
 use tiny_skia::{Pixmap, PremultipliedColorU8};
 use windows::Win32::Foundation::SIZE;
-use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject, GetDC, GetDIBits, GetObjectW,
-    HGDIOBJ, ReleaseDC,
-};
-use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY};
+use windows::Win32::Graphics::Gdi::{BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject, GetDC, GetDIBits, GetObjectW, HGDIOBJ, ReleaseDC};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY};
 use windows::core::PCWSTR;
 use winit::event_loop::EventLoopProxy;
 
@@ -56,16 +53,10 @@ pub fn load(path: &Path) -> Option<Pixmap> {
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
     unsafe {
         let factory: IShellItemImageFactory = SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None).ok()?;
-        let bitmap = factory
-            .GetImage(SIZE { cx: SIZE_PX, cy: SIZE_PX }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK)
-            .ok()?;
+        let bitmap = factory.GetImage(SIZE { cx: SIZE_PX, cy: SIZE_PX }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK).ok()?;
 
         let mut info = BITMAP::default();
-        let got = GetObjectW(
-            HGDIOBJ(bitmap.0),
-            std::mem::size_of::<BITMAP>() as i32,
-            Some(&mut info as *mut BITMAP as *mut c_void),
-        );
+        let got = GetObjectW(HGDIOBJ(bitmap.0), std::mem::size_of::<BITMAP>() as i32, Some(&mut info as *mut BITMAP as *mut c_void));
         let (w, h) = (info.bmWidth, info.bmHeight);
         let Some(len) = buffer_len(w, h).filter(|_| got != 0) else {
             let _ = DeleteObject(HGDIOBJ(bitmap.0));

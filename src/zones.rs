@@ -68,7 +68,11 @@ pub const ZONES: &[Zone] = &[
     z("SWK08", "Kuching, Bau, Lundu", &[(1.5535, 110.3593), (1.4167, 110.15), (1.6667, 109.8667)]),
     // A special zone for one village; it is chosen by hand, never by distance.
     z("SWK09", "Kampung Patarikan", &[]),
-    z("SGR01", "Shah Alam, Petaling, Gombak", &[(3.0733, 101.5185), (3.1073, 101.6067), (3.2639, 101.6988), (2.6903, 101.7497), (2.9935, 101.7874), (3.5667, 101.65), (3.3214, 101.5767)]),
+    z(
+        "SGR01",
+        "Shah Alam, Petaling, Gombak",
+        &[(3.0733, 101.5185), (3.1073, 101.6067), (3.2639, 101.6988), (2.6903, 101.7497), (2.9935, 101.7874), (3.5667, 101.65), (3.3214, 101.5767)],
+    ),
     z("SGR02", "Kuala Selangor", &[(3.34, 101.25), (3.7667, 100.9833)]),
     z("SGR03", "Klang, Kuala Langat", &[(3.0449, 101.4456), (2.8167, 101.5)]),
     z("TRG01", "Kuala Terengganu, Marang", &[(5.3302, 103.1408), (5.2, 103.2)]),
@@ -114,12 +118,7 @@ pub fn nearest(place: &Place) -> Option<&'static Zone> {
         return None;
     }
     let here = (place.lat, place.lon);
-    ZONES
-        .iter()
-        .flat_map(|zone| zone.points.iter().map(move |p| (zone, km(here, *p))))
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .filter(|(_, d)| *d <= FAR_KM)
-        .map(|(zone, _)| zone)
+    ZONES.iter().flat_map(|zone| zone.points.iter().map(move |p| (zone, km(here, *p)))).min_by(|a, b| a.1.total_cmp(&b.1)).filter(|(_, d)| *d <= FAR_KM).map(|(zone, _)| zone)
 }
 
 #[cfg(test)]
