@@ -2,5 +2,7 @@
 
 # Local tooling and private notes, not part of the project
 .claude/
+.agents/
+skills-lock.json
 Sky Memory/
 /dist
