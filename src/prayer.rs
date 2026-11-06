@@ -226,10 +226,22 @@ fn minutes_of(text: &str) -> Option<u32> {
     (h < 24 && m < 60).then_some(h * 60 + m)
 }
 
+/// The most days read from one answer (a month is at most 31, a year at most 366): an answer with more is cut.
+const MAX_DAYS: usize = 400;
+/// The years a date from an answer may have; anything else is no date this app can have asked for.
+const YEARS: std::ops::RangeInclusive<i32> = 1970..=2200;
+
+/// A date from an answer as a day number, `None` unless it is a real date: the year within `YEARS`, the month 1 to 12
+/// and the day within that month ("31 February" is not one; the day used to be checked only against 31).
+fn real_date(year: i32, month: u32, day: u32) -> Option<i64> {
+    let valid = YEARS.contains(&year) && (1..=12).contains(&month) && (1..=calendar::days_in_month(year, month)).contains(&day);
+    valid.then(|| calendar::days_from_civil(year, month, day))
+}
+
 /// The days of one month of Aladhan's calendar answer. A day that cannot be read is left out.
 fn parse_month(v: &Value) -> Vec<Day> {
     let Some(list) = v.get("data").and_then(Value::as_array) else { return Vec::new() };
-    list.iter().filter_map(parse_day).collect()
+    list.iter().take(MAX_DAYS).filter_map(parse_day).collect()
 }
 
 fn parse_day(d: &Value) -> Option<Day> {
@@ -240,9 +252,7 @@ fn parse_day(d: &Value) -> Option<Day> {
     }
     let mut g = d.get("date")?.get("gregorian")?.get("date")?.as_str()?.split('-').map(|p| p.parse::<u32>().ok());
     let (Some(Some(day)), Some(Some(month)), Some(Some(year))) = (g.next(), g.next(), g.next()) else { return None };
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
+    let date = real_date(i32::try_from(year).ok()?, month, day)?;
     let hijri = d.get("date")?.get("hijri");
     let number = |v: Option<&Value>| v.and_then(Value::as_str).and_then(|s| s.parse::<u32>().ok()).or_else(|| v.and_then(Value::as_u64).map(|n| n as u32));
     let hijri = (
@@ -250,7 +260,7 @@ fn parse_day(d: &Value) -> Option<Day> {
         hijri.and_then(|h| h.get("month")).and_then(|m| m.get("number")).and_then(Value::as_u64).unwrap_or(0) as u32,
         number(hijri.and_then(|h| h.get("year"))).unwrap_or(0),
     );
-    Some(Day { date: calendar::days_from_civil(year as i32, month, day), times, hijri })
+    Some(Day { date, times, hijri })
 }
 
 /// "11" for "Nov" or "Dis" (December in Malay): the month of e-Solat's date, which writes its names in Malay.
@@ -264,7 +274,7 @@ fn month_of(name: &str) -> Option<u32> {
 /// The days of e-Solat's answer for a zone. A day that cannot be read is left out.
 fn parse_esolat(v: &Value) -> Vec<Day> {
     let Some(list) = v.get("prayerTime").and_then(Value::as_array) else { return Vec::new() };
-    list.iter().filter_map(parse_esolat_day).collect()
+    list.iter().take(MAX_DAYS).filter_map(parse_esolat_day).collect()
 }
 
 fn parse_esolat_day(d: &Value) -> Option<Day> {
@@ -275,20 +285,18 @@ fn parse_esolat_day(d: &Value) -> Option<Day> {
     // "04-Nov-2026".
     let mut g = d.get("date")?.as_str()?.split('-');
     let (day, month, year) = (g.next()?.parse::<u32>().ok()?, month_of(g.next()?)?, g.next()?.parse::<i32>().ok()?);
-    if !(1..=31).contains(&day) {
-        return None;
-    }
+    let date = real_date(year, month, day)?;
     // "1448-05-24": the year, the month and the day.
     let mut h = d.get("hijri").and_then(Value::as_str).unwrap_or("").split('-').map(|p| p.parse::<u32>().ok());
     let hijri = match (h.next().flatten(), h.next().flatten(), h.next().flatten()) {
         (Some(y), Some(m), Some(day)) => (day, m, y),
         _ => (0, 0, 0),
     };
-    Some(Day { date: calendar::days_from_civil(year, month, day), times, hijri })
+    Some(Day { date, times, hijri })
 }
 
 fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(10))).build().into()
+    ureq::Agent::config_builder().https_only(true).timeout_global(Some(Duration::from_secs(10))).build().into()
 }
 
 fn fetch_month(place: &Place, method: u32, school: u32, year: i32, month: u32) -> Option<Vec<Day>> {
@@ -435,6 +443,13 @@ fn save_cache(t: &Table) {
 mod tests {
     use super::*;
 
+    /// The address is plain http and nothing listens there: the request must be refused before any connection is tried.
+    #[test]
+    fn the_agent_refuses_plain_http() {
+        let err = agent().get("http://127.0.0.1:9/x").call().unwrap_err();
+        assert!(matches!(err, ureq::Error::RequireHttpsOnly(_)), "{err}");
+    }
+
     fn day(date: i64, times: [u32; 6]) -> Day {
         Day { date, times, hijri: (21, 5, 1448) }
     }
@@ -543,6 +558,45 @@ mod tests {
         assert_eq!(calendar::civil_from_days(days[1].date), (2026, 12, 31), "December is Dis in Malay");
         assert!(parse_esolat(&json!({ "prayerTime": { "data": ["No data available for the current request"] } })).is_empty());
         assert!(parse_esolat(&json!({})).is_empty());
+    }
+
+    fn aladhan_day(date: &str) -> Value {
+        json!({
+            "timings": { "Fajr": "05:37", "Sunrise": "06:57", "Dhuhr": "12:57", "Asr": "16:19", "Maghrib": "18:57", "Isha": "20:08" },
+            "date": { "gregorian": { "date": date }, "hijri": { "day": "21", "month": { "number": 5 }, "year": "1448" } },
+        })
+    }
+
+    fn esolat_day(date: &str) -> Value {
+        json!({ "hijri": "1448-05-24", "date": date, "fajr": "05:48:00", "syuruk": "06:55:00", "dhuhr": "13:00:00", "asr": "16:20:00", "maghrib": "18:58:00", "isha": "20:09:00" })
+    }
+
+    #[test]
+    fn only_real_dates_are_read_from_aladhan() {
+        for good in ["01-11-2026", "29-02-2028", "30-04-2026", "31-12-2200", "01-01-1970"] {
+            assert!(parse_day(&aladhan_day(good)).is_some(), "{good}");
+        }
+        for bad in ["31-02-2026", "29-02-2027", "29-02-2100", "31-04-2026", "00-05-2026", "10-13-2026", "10-00-2026", "01-01-1969", "01-01-2201", "01-01-4294967295", "01-01-99999"] {
+            assert!(parse_day(&aladhan_day(bad)).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn only_real_dates_are_read_from_esolat() {
+        for good in ["04-Nov-2026", "29-Feb-2028", "31-Dis-2026"] {
+            assert!(parse_esolat_day(&esolat_day(good)).is_some(), "{good}");
+        }
+        for bad in ["31-Feb-2026", "29-Feb-2027", "31-Nov-2026", "00-Nov-2026", "04-Nov-1969", "04-Nov-2201", "04-Nov--5", "04-Nov-2147483648", "04-Xyz-2026"] {
+            assert!(parse_esolat_day(&esolat_day(bad)).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_answer_with_far_too_many_days_is_cut() {
+        let many: Vec<Value> = (0..5000).map(|_| aladhan_day("01-11-2026")).collect();
+        assert_eq!(parse_month(&json!({ "data": many })).len(), MAX_DAYS);
+        let many: Vec<Value> = (0..5000).map(|_| esolat_day("04-Nov-2026")).collect();
+        assert_eq!(parse_esolat(&json!({ "prayerTime": many })).len(), MAX_DAYS);
     }
 
     #[test]

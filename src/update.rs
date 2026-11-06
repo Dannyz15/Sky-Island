@@ -215,7 +215,7 @@ pub fn take_auto(current: &Status, found: Status) -> Option<Status> {
 }
 
 fn agent(seconds: u64) -> ureq::Agent {
-    ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(seconds))).build().into()
+    ureq::Agent::config_builder().https_only(true).timeout_global(Some(Duration::from_secs(seconds))).build().into()
 }
 
 fn check() -> Status {
@@ -436,6 +436,13 @@ fn acceptable(got: u64, sha256: &str, asset: &Asset) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The address is plain http and nothing listens there: the request must be refused before any connection is tried.
+    #[test]
+    fn the_agent_refuses_plain_http() {
+        let err = agent(5).get("http://127.0.0.1:9/x").call().unwrap_err();
+        assert!(matches!(err, ureq::Error::RequireHttpsOnly(_)), "{err}");
+    }
 
     fn asset_of(bytes: &[u8]) -> Asset {
         Asset { url: String::new(), size: bytes.len() as u64, sha256: hex_of(&Sha256::digest(bytes)) }

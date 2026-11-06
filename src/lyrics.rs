@@ -204,6 +204,7 @@ fn means_down(e: &ureq::Error) -> bool {
 
 fn fetch(title: &str, artist: &str, duration: Duration, superseded: &dyn Fn() -> bool) -> Looked {
     let agent: ureq::Agent = ureq::Agent::config_builder()
+        .https_only(true)
         .timeout_global(Some(Duration::from_secs(8)))
         .build()
         .into();

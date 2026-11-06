@@ -12,7 +12,7 @@ $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USER
 $sources = @(Get-ChildItem (Join-Path $cargoHome 'registry\src') -Directory)
 if ($sources.Count -eq 0) { throw "No crates found in $cargoHome\registry\src. Run cargo build first." }
 
-$tree = cargo tree -e normal --target x86_64-pc-windows-msvc --prefix none -f '{p}|{l}|{r}'
+$tree = cargo tree --locked -e normal --target x86_64-pc-windows-msvc --prefix none -f '{p}|{l}|{r}'
 if ($LASTEXITCODE -ne 0) { throw 'cargo tree failed' }
 
 # One entry per crate and version.

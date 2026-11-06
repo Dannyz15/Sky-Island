@@ -53,7 +53,7 @@ fn windows_position() -> Option<(f64, f64)> {
 
 /// The place Nominatim names for coordinates, to the city. `None` when it could not be asked.
 fn reverse(lat: f64, lon: f64) -> Option<Value> {
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(10))).build().into();
+    let agent: ureq::Agent = ureq::Agent::config_builder().https_only(true).timeout_global(Some(Duration::from_secs(10))).build().into();
     agent
         .get(REVERSE)
         .header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION"), " (https://github.com/Dannyz15/Sky-Island)"))

@@ -201,7 +201,7 @@ fn parse(v: &Value, lat: f64, lon: f64) -> Option<Report> {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(10))).build().into()
+    ureq::Agent::config_builder().https_only(true).timeout_global(Some(Duration::from_secs(10))).build().into()
 }
 
 fn user_agent() -> &'static str {
@@ -426,6 +426,13 @@ pub fn clear_cache() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The address is plain http and nothing listens there: the request must be refused before any connection is tried.
+    #[test]
+    fn the_agent_refuses_plain_http() {
+        let err = agent().get("http://127.0.0.1:9/x").call().unwrap_err();
+        assert!(matches!(err, ureq::Error::RequireHttpsOnly(_)), "{err}");
+    }
 
     fn answer() -> Value {
         json!({

@@ -180,9 +180,43 @@ pub fn mask_of(w: u32, h: u32, path: &Path) -> Option<Mask> {
     Some(mask)
 }
 
+/// A picture from outside (another app's clipboard, a player's cover) decoded within limits that are set here and do
+/// not depend on the defaults of the image crate: no side longer than `max_side` pixels and at most `max_alloc` bytes
+/// of memory for the decoding. `None` for a picture that is too big, damaged, or not a picture. The limits are checked
+/// from the header on, before the pixels are made.
+pub fn decode_limited(bytes: &[u8], max_side: u32, max_alloc: u64) -> Option<image::DynamicImage> {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(max_side);
+    limits.max_image_height = Some(max_side);
+    limits.max_alloc = Some(max_alloc);
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
+    reader.limits(limits);
+    reader.decode().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn png_bytes(w: u32, h: u32) -> Vec<u8> {
+        use image::ImageEncoder;
+        let mut out = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut out)
+            .write_image(&vec![200u8; (w * h * 4) as usize], w, h, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        out
+    }
+
+    #[test]
+    fn a_picture_is_decoded_only_within_the_limits_given() {
+        let png = png_bytes(64, 32);
+        let ok = decode_limited(&png, 64, 1 << 20).expect("within the limits");
+        assert_eq!((ok.width(), ok.height()), (64, 32));
+        assert!(decode_limited(&png, 63, 1 << 20).is_none(), "one side too long");
+        assert!(decode_limited(&png, 4096, 100).is_none(), "more memory than allowed");
+        assert!(decode_limited(b"not a picture at all", 4096, 1 << 20).is_none());
+        assert!(decode_limited(&[], 4096, 1 << 20).is_none());
+    }
 
     /// A picture of every kind of pixel (clear, solid, half clear), made the same way each time.
     fn patterned(w: u32, h: u32, seed: u32) -> Pixmap {

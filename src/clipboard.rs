@@ -36,6 +36,13 @@ const MAX_IMAGE_BYTES: usize = 48 * 1024 * 1024;
 const MAX_PIXELS: usize = 40 * 1024 * 1024;
 /// The most bytes of a picture read from the clipboard: that many pixels as an uncompressed bitmap.
 const MAX_PICTURE_BYTES: usize = MAX_PIXELS * 4 + 4096;
+/// The most memory the decoding of a picture from another app may take: that many pixels at four bytes, and some room.
+const MAX_DECODE_BYTES: u64 = MAX_PIXELS as u64 * 4 + 32 * 1024 * 1024;
+
+/// A picture from another app, decoded within the limits above (and not within the image crate's defaults).
+fn decode_picture(bytes: &[u8]) -> Option<image::DynamicImage> {
+    crate::gfx::decode_limited(bytes, MAX_PIXELS as u32, MAX_DECODE_BYTES)
+}
 /// The preview of an image fits in this box, at twice the size it is drawn so it stays sharp.
 pub const THUMB_MAX: (u32, u32) = (96, 52);
 /// How often the clipboard is looked at if Windows cannot tell the app when it changes.
@@ -300,7 +307,7 @@ fn thumbnail_of(img: &RgbaImage) -> Image {
 
 /// A kept picture made from PNG data copied by another app.
 fn image_from_png(png: Vec<u8>) -> Option<Image> {
-    let decoded = image::load_from_memory(&png).ok()?.to_rgba8();
+    let decoded = decode_picture(&png)?.to_rgba8();
     let (width, height) = decoded.dimensions();
     if width == 0 || height == 0 || (width as usize).checked_mul(height as usize)? > MAX_PIXELS {
         return None;
@@ -634,7 +641,7 @@ pub fn set_content(content: &Content) -> bool {
             (Some(wide.iter().flat_map(|u| u.to_le_bytes()).collect()), None, None)
         }
         Content::Image(img) => {
-            let Ok(decoded) = image::load_from_memory(&img.png) else { return false };
+            let Some(decoded) = decode_picture(&img.png) else { return false };
             let rgba = decoded.to_rgba8();
             (None, Some(rgba_to_dib(rgba.width(), rgba.height(), rgba.as_raw())), Some(img.png.as_slice()))
         }
@@ -680,6 +687,48 @@ pub fn empty() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A PNG that is nothing but a header saying the picture is `w` x `h` pixels (the checksum is made here).
+    fn png_header_only(w: u32, h: u32) -> Vec<u8> {
+        fn crc32(data: &[u8]) -> u32 {
+            let mut crc = 0xFFFF_FFFFu32;
+            for &b in data {
+                crc ^= b as u32;
+                for _ in 0..8 {
+                    crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+                }
+            }
+            !crc
+        }
+        let mut ihdr = b"IHDR".to_vec();
+        ihdr.extend(w.to_be_bytes());
+        ihdr.extend(h.to_be_bytes());
+        ihdr.extend([8, 6, 0, 0, 0]); // 8 bits, RGBA, no interlace
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend(13u32.to_be_bytes());
+        png.extend(&ihdr);
+        png.extend(crc32(&ihdr).to_be_bytes());
+        png
+    }
+
+    #[test]
+    fn a_png_that_claims_a_huge_picture_is_refused_before_anything_is_made() {
+        let started = Instant::now();
+        // 70,000 x 70,000 pixels would be 19.6 GB as RGBA, and the data is not even there.
+        assert!(image_from_png(png_header_only(70_000, 70_000)).is_none());
+        assert!(decode_picture(&png_header_only(70_000, 70_000)).is_none());
+        assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn an_ordinary_png_from_another_app_is_still_kept() {
+        let mut png = Vec::new();
+        RgbaImage::from_pixel(40, 30, image::Rgba([1, 2, 3, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let kept = image_from_png(png).expect("a small picture is kept");
+        assert_eq!((kept.width, kept.height), (40, 30));
+    }
 
     #[test]
     fn a_picture_is_judged_by_its_header_before_it_is_copied() {

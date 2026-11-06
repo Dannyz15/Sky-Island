@@ -21,6 +21,18 @@ use crate::UserEvent;
 
 /// Requested icon size in pixels; drawn scaled down on screen so it stays sharp on high-DPI displays.
 const SIZE_PX: i32 = 64;
+/// The largest icon, across or down, that is read. The shell may return a bigger one than asked for
+/// (`SIIGBF_BIGGERSIZEOK`), and the picture size comes from it, so it is checked before any memory is taken for it.
+const MAX_SIDE: i32 = 1024;
+
+/// The bytes of a 32-bit picture of `w` x `h` pixels: `None` for an empty one, one bigger than any icon, or a size
+/// that does not fit (the sum used to be `w * h * 4` in `i32`, which wraps for a huge size reported by the shell).
+fn buffer_len(w: i32, h: i32) -> Option<usize> {
+    if w <= 0 || h <= 0 || w > MAX_SIDE || h > MAX_SIDE {
+        return None;
+    }
+    (w as usize).checked_mul(h as usize)?.checked_mul(4)
+}
 
 /// Start the thread that loads icons one at a time, so a file on a slow or unreachable network drive cannot
 /// freeze the notch. Each path sent to it comes back as `UserEvent::Icon`.
@@ -54,11 +66,11 @@ pub fn load(path: &Path) -> Option<Pixmap> {
             std::mem::size_of::<BITMAP>() as i32,
             Some(&mut info as *mut BITMAP as *mut c_void),
         );
-        if got == 0 || info.bmWidth <= 0 || info.bmHeight <= 0 {
+        let (w, h) = (info.bmWidth, info.bmHeight);
+        let Some(len) = buffer_len(w, h).filter(|_| got != 0) else {
             let _ = DeleteObject(HGDIOBJ(bitmap.0));
             return None;
-        }
-        let (w, h) = (info.bmWidth, info.bmHeight);
+        };
 
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
@@ -72,7 +84,7 @@ pub fn load(path: &Path) -> Option<Pixmap> {
             },
             ..Default::default()
         };
-        let mut bgra = vec![0u8; (w * h * 4) as usize];
+        let mut bgra = vec![0u8; len];
         let hdc = GetDC(None);
         let rows = GetDIBits(hdc, bitmap, 0, h as u32, Some(bgra.as_mut_ptr() as *mut c_void), &mut bmi, DIB_RGB_COLORS);
         ReleaseDC(None, hdc);
@@ -90,5 +102,27 @@ pub fn load(path: &Path) -> Option<Pixmap> {
             *dst = PremultipliedColorU8::from_rgba(p[2].min(a), p[1].min(a), p[0].min(a), a)?;
         }
         Some(pixmap)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_buffer_for_a_normal_icon_is_four_bytes_a_pixel() {
+        assert_eq!(buffer_len(64, 64), Some(64 * 64 * 4));
+        assert_eq!(buffer_len(256, 256), Some(256 * 256 * 4));
+        assert_eq!(buffer_len(MAX_SIDE, MAX_SIDE), Some(MAX_SIDE as usize * MAX_SIDE as usize * 4));
+    }
+
+    #[test]
+    fn an_empty_or_enormous_size_from_the_shell_gets_no_buffer() {
+        for (w, h) in [(0, 5), (5, 0), (-1, 5), (5, -1), (MAX_SIDE + 1, 1), (1, MAX_SIDE + 1), (40_000, 40_000), (i32::MAX, i32::MAX), (i32::MAX, 1)] {
+            assert_eq!(buffer_len(w, h), None, "{w} x {h}");
+        }
+        // The old sum in i32: 32768 x 32768 x 4 wraps to 0 and (46341 x 46341 x 4) to a negative number.
+        assert_eq!((32768i32).wrapping_mul(32768).wrapping_mul(4), 0);
+        assert_eq!(buffer_len(32768, 32768), None);
     }
 }

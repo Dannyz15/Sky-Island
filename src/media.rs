@@ -14,10 +14,53 @@ use windows::Media::Control::{
 };
 use windows::Storage::Streams::{Buffer, DataReader, IRandomAccessStreamReference, InputStreamOptions};
 use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
-use windows::core::Result;
+use windows::core::{HRESULT, Result};
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
+
+/// The longest a call to a player or to Windows is waited for. A player that never answers must not freeze the
+/// media thread for good, and with it every now-playing update.
+const CALL_LIMIT: Duration = Duration::from_secs(10);
+
+/// ERROR_TIMEOUT as an HRESULT.
+const TIMED_OUT: HRESULT = HRESULT(0x8007_05B4_u32 as i32);
+
+/// The result of a finished Windows call on its way from the thread that finished it to the one that waits.
+/// Some of these objects are not marked as sendable by the `windows` crate, but they are free-threaded here: the media
+/// thread is in the multithreaded apartment, and `join()` hands them over from the finishing thread the same way.
+struct Carried<T>(Result<T>);
+// SAFETY: see above; the object is used only by the waiting thread after it is handed over.
+unsafe impl<T> Send for Carried<T> {}
+
+/// The result of a Windows call (`when` hands over a function that is called with it), waited for at most `limit`.
+/// After that `cancel` is called and an error comes back.
+fn within<T: 'static>(
+    when: impl FnOnce(Box<dyn FnOnce(Result<T>) + Send>) -> Result<()>,
+    cancel: impl FnOnce(),
+    limit: Duration,
+) -> Result<T> {
+    let (tx, rx) = mpsc::channel();
+    when(Box::new(move |result| {
+        let _ = tx.send(Carried(result));
+    }))?;
+    match rx.recv_timeout(limit) {
+        Ok(Carried(result)) => result,
+        Err(_) => {
+            cancel();
+            Err(TIMED_OUT.into())
+        }
+    }
+}
+
+/// `op.join()` for a Windows async operation, but it gives up after `limit` and cancels the call.
+macro_rules! join_within {
+    ($op:expr, $limit:expr) => {{
+        let op = $op;
+        within(|done| op.when(done), || drop(op.Cancel()), $limit)
+    }};
+}
+
 
 const ART_SIZE: u32 = 96;
 
@@ -117,7 +160,7 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
         }
         // Windows may not be ready for this right after signing in: try again until it is.
         let manager = loop {
-            match Manager::RequestAsync().and_then(|op| op.join()) {
+            match Manager::RequestAsync().and_then(|op| join_within!(op, CALL_LIMIT)) {
                 Ok(manager) => break manager,
                 // A command meant for a player that is not there yet is dropped.
                 Err(_) => match rx.recv_timeout(START_RETRY) {
@@ -267,7 +310,7 @@ fn clip_meta(s: &str) -> String {
 /// `reuse`: the state sent last, on a plain resync. Its cover is kept for the same song instead of being
 /// read and decoded again.
 fn read_state(session: &Session, reuse: Option<&MediaState>) -> Result<MediaState> {
-    let props = session.TryGetMediaPropertiesAsync()?.join()?;
+    let props = join_within!(session.TryGetMediaPropertiesAsync()?, CALL_LIMIT)?;
     let info = session.GetPlaybackInfo()?;
     let playing = info.PlaybackStatus()? == Status::Playing;
     let next_enabled = info.Controls()?.IsNextEnabled()?;
@@ -345,26 +388,30 @@ const ART_MAX_ALLOC: u64 = 96 * 1024 * 1024;
 
 /// Decode a cover within the limits above (`None` for one that is too big or not a picture).
 fn decode_art(bytes: &[u8]) -> Option<image::DynamicImage> {
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(ART_MAX_SIDE);
-    limits.max_image_height = Some(ART_MAX_SIDE);
-    limits.max_alloc = Some(ART_MAX_ALLOC);
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
-    reader.limits(limits);
-    reader.decode().ok()
+    crate::gfx::decode_limited(bytes, ART_MAX_SIDE, ART_MAX_ALLOC)
+}
+
+/// The cover as a square picture of `ART_SIZE`: the middle square is cut out FIRST, and only that is scaled.
+/// (`resize_to_fill` scales the whole picture to fill the square and cuts afterwards, so a cover of 4096 x 1 pixels
+/// was first made 393216 x 96 pixels.)
+fn cover_square(img: image::DynamicImage) -> image::DynamicImage {
+    let (w, h) = (img.width(), img.height());
+    let side = w.min(h);
+    if side == 0 {
+        return image::DynamicImage::new_rgba8(ART_SIZE, ART_SIZE);
+    }
+    img.crop_imm((w - side) / 2, (h - side) / 2, side, side).resize_exact(ART_SIZE, ART_SIZE, image::imageops::FilterType::Triangle)
 }
 
 fn read_art(r: &IRandomAccessStreamReference) -> Result<Option<Vec<u8>>> {
-    let stream = r.OpenReadAsync()?.join()?;
+    let stream = join_within!(r.OpenReadAsync()?, CALL_LIMIT)?;
     let size = stream.Size()?;
     if size == 0 || size > ART_MAX_BYTES {
         return Ok(None);
     }
     let size = size as u32;
     let buffer = Buffer::Create(size)?;
-    let buffer = stream
-        .ReadAsync(&buffer, size, InputStreamOptions::None)?
-        .join()?;
+    let buffer = join_within!(stream.ReadAsync(&buffer, size, InputStreamOptions::None)?, CALL_LIMIT)?;
     let reader = DataReader::FromBuffer(&buffer)?;
     let mut bytes = vec![0u8; buffer.Length()? as usize];
     reader.ReadBytes(&mut bytes)?;
@@ -372,8 +419,7 @@ fn read_art(r: &IRandomAccessStreamReference) -> Result<Option<Vec<u8>>> {
     let Some(img) = decode_art(&bytes) else {
         return Ok(None);
     };
-    let img = img.resize_to_fill(ART_SIZE, ART_SIZE, image::imageops::FilterType::Triangle);
-    Ok(Some(img.to_rgba8().into_raw()))
+    Ok(Some(cover_square(img).to_rgba8().into_raw()))
 }
 
 pub const fn art_size() -> u32 {
@@ -485,6 +531,72 @@ mod tests {
     fn a_future_or_ancient_update_time_adds_nothing() {
         assert_eq!(since(filetime_now() + 50_000_000), Duration::ZERO);
         assert_eq!(since(0), Duration::ZERO);
+    }
+
+    /// What `within` hands to a call so that it can report back.
+    type Done = Box<dyn FnOnce(Result<i32>) + Send>;
+
+    fn answered_later(value: i32, after_ms: u64) -> impl FnOnce(Done) -> Result<()> {
+        move |done| {
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(after_ms));
+                done(Ok(value));
+            });
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_call_that_answers_in_time_gives_its_answer() {
+        let cancelled = std::cell::Cell::new(false);
+        let got = within(answered_later(7, 0), || cancelled.set(true), Duration::from_secs(5));
+        assert_eq!(got.unwrap(), 7);
+        assert!(!cancelled.get(), "nothing to cancel");
+    }
+
+    #[test]
+    fn a_call_that_never_answers_is_given_up_on_and_cancelled() {
+        let cancelled = std::cell::Cell::new(false);
+        let started = Instant::now();
+        let got = within(answered_later(7, 3000), || cancelled.set(true), Duration::from_millis(150));
+        assert_eq!(got.unwrap_err().code(), TIMED_OUT);
+        assert!(cancelled.get(), "the call is cancelled");
+        assert!(started.elapsed() < Duration::from_secs(2), "it did not wait for the slow answer");
+    }
+
+    #[test]
+    fn an_error_from_the_call_is_passed_on() {
+        let failing = |done: Done| {
+            done(Err(windows::core::Error::from_hresult(HRESULT(0x8000_4005_u32 as i32))));
+            Ok(())
+        };
+        assert_eq!(within(failing, || {}, Duration::from_secs(5)).unwrap_err().code(), HRESULT(0x8000_4005_u32 as i32));
+        // A call that cannot even be started fails at once.
+        let refused = |_done: Done| -> Result<()> { Err(TIMED_OUT.into()) };
+        assert!(within(refused, || {}, Duration::from_secs(5)).is_err());
+    }
+
+    fn picture(width: u32, height: u32, colour: impl Fn(u32, u32) -> [u8; 4]) -> image::DynamicImage {
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_fn(width, height, |x, y| image::Rgba(colour(x, y))))
+    }
+
+    /// The audit's worst case: a strip of 4096 x 1 pixels used to be scaled to 393216 x 96 before it was cut.
+    #[test]
+    fn a_cover_is_cut_to_a_square_before_it_is_scaled() {
+        let started = Instant::now();
+        for (w, h) in [(4096, 1), (1, 4096), (200, 100), (100, 200), (96, 96), (1, 1), (5000, 3)] {
+            let out = cover_square(picture(w, h, |_, _| [10, 20, 30, 255]));
+            assert_eq!((out.width(), out.height()), (ART_SIZE, ART_SIZE), "{w} x {h}");
+        }
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn the_middle_of_a_wide_cover_is_kept() {
+        // Red on the left half, blue on the right: the middle square holds a quarter of each side of the middle line.
+        let out = cover_square(picture(200, 100, |x, _| if x < 100 { [255, 0, 0, 255] } else { [0, 0, 255, 255] })).to_rgba8();
+        assert!(out.get_pixel(5, 48)[0] > 200 && out.get_pixel(5, 48)[2] < 50, "left is red");
+        assert!(out.get_pixel(90, 48)[2] > 200 && out.get_pixel(90, 48)[0] < 50, "right is blue");
     }
 
     #[test]
