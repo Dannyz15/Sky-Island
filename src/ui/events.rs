@@ -743,9 +743,9 @@ impl ApplicationHandler<UserEvent> for App {
         }
         // The bars on the closed notch move a few times a second while a song plays.
         if self.bars_running() {
-            let (tick, due) = (self.music_tick(), self.bars_at + self.music_tick());
+            let (tick, due) = (self.music_tick(), self.music.bars_at + self.music_tick());
             if now >= due {
-                self.bars_at = now;
+                self.music.bars_at = now;
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }

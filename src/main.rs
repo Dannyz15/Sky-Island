@@ -263,14 +263,8 @@ struct App {
     alert_until: Option<Instant>,
     alert_msg: String,
     last_ui_tick: Instant,
-    /// How wide the closed notch is for the album cover and bars (0 = plain, 1 = with them), and how fast that changes;
-    /// and when the moving bars were last drawn.
-    music_k: f64,
-    music_v: f64,
-    /// How much wider than usual the closed notch is for them, in logical pixels, and how fast that changes.
-    music_w: f64,
-    music_wv: f64,
-    bars_at: Instant,
+    /// The closed notch's width for the album cover and bars while a song plays, and the bars' clock.
+    music: ui::ClosedMusic,
     proxy: EventLoopProxy<UserEvent>,
     cursor: (f64, f64),
     hovered: bool,
@@ -453,11 +447,7 @@ impl App {
             alert_until: None,
             alert_msg: String::new(),
             last_ui_tick: Instant::now(),
-            music_k: 0.0,
-            music_v: 0.0,
-            music_w: 0.0,
-            music_wv: 0.0,
-            bars_at: Instant::now(),
+            music: ui::ClosedMusic::default(),
             proxy,
             cursor: (0.0, 0.0),
             hovered: false,

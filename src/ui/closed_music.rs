@@ -13,6 +13,24 @@ use tiny_skia::{Color, FillRule, GradientStop, LinearGradient, Paint, PathBuilde
 
 use crate::*;
 
+/// How far the closed notch has opened up for the music, and when the bars were last drawn.
+pub(crate) struct ClosedMusic {
+    /// How wide the closed notch is for the album cover and bars (0 = plain, 1 = with them), and how fast that changes.
+    pub(crate) k: f64,
+    pub(crate) v: f64,
+    /// How much wider than usual the closed notch is for them, in logical pixels, and how fast that changes.
+    pub(crate) w: f64,
+    pub(crate) wv: f64,
+    /// When the moving bars were last drawn.
+    pub(crate) bars_at: Instant,
+}
+
+impl Default for ClosedMusic {
+    fn default() -> Self {
+        Self { k: 0.0, v: 0.0, w: 0.0, wv: 0.0, bars_at: Instant::now() }
+    }
+}
+
 /// How often the closed notch is drawn again while the bars run: 30 times a second keeps the motion smooth.
 pub(crate) const BARS_TICK: Duration = Duration::from_millis(33);
 
@@ -166,7 +184,7 @@ impl App {
 
     /// Whether the music is on the closed notch and something on it moves, so it needs a frame now and then.
     pub(crate) fn bars_running(&self) -> bool {
-        self.music_k > 0.02 && self.media.playing && !self.hidden && self.tuck_t < 1.0 && self.progress <= 0.0 && self.notice_until.is_none()
+        self.music.k > 0.02 && self.media.playing && !self.hidden && self.tuck_t < 1.0 && self.progress <= 0.0 && self.notice_until.is_none()
     }
 
     /// How often it is drawn again: 30 times a second while the bars, the turning record or the edge line move, and only
@@ -177,7 +195,7 @@ impl App {
 
     /// Draw the record, the bars and the glowing edge on the closed notch. `alpha` is how visible its content is.
     pub(crate) fn draw_closed_music(&self, pm: &mut Pixmap, s: f32, alpha: f32, fw: f32) {
-        let k = self.music_k.clamp(0.0, 1.0) as f32;
+        let k = self.music.k.clamp(0.0, 1.0) as f32;
         let a = alpha * k;
         if a <= 0.01 {
             return;

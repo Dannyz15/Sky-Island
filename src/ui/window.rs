@@ -52,8 +52,8 @@ impl App {
             || (self.ov_t - self.ov_target()).abs() > f64::EPSILON
             || self.glows.busy()
             || self.eyes_moving()
-            || (self.music_k - self.music_target()).abs() > 1e-4
-            || (self.music_w - self.music_extra_goal()).abs() > 1e-3
+            || (self.music.k - self.music_target()).abs() > 1e-4
+            || (self.music.w - self.music_extra_goal()).abs() > 1e-3
             || (self.closed_k - self.closed_target()).abs() > 1e-4
             || (self.target_k() - self.ui_k).abs() > 1e-3
             || (self.view == View::Lyrics && matches!(self.lyrics, LyricsState::Found(_)) && (self.lyric_pos - self.lyric_target()).abs() > f64::EPSILON)
@@ -263,9 +263,9 @@ impl App {
         // The closed notch widens for the album cover and the bars while a song plays, and goes back when it stops.
         let (omega, zeta) = tune(22.0, 0.85);
         let music_goal = self.music_target();
-        spring(&mut self.music_k, &mut self.music_v, music_goal, dt, omega, zeta);
+        spring(&mut self.music.k, &mut self.music.v, music_goal, dt, omega, zeta);
         let extra_goal = self.music_extra_goal();
-        spring(&mut self.music_w, &mut self.music_wv, extra_goal, dt, omega, zeta);
+        spring(&mut self.music.w, &mut self.music.wv, extra_goal, dt, omega, zeta);
         self.ui_k = self.target_k();
         let k = self.ui_k;
 
@@ -350,7 +350,7 @@ impl App {
 
     /// The closed notch, in logical pixels.
     pub(crate) fn closed_size(&self) -> (f64, f64) {
-        (COLLAPSED.0 * self.closed_k + self.music_w.max(0.0), COLLAPSED.1 * self.closed_k)
+        (COLLAPSED.0 * self.closed_k + self.music.w.max(0.0), COLLAPSED.1 * self.closed_k)
     }
 
     /// The height of the window in logical pixels, which the tab bar is measured from.

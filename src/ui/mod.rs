@@ -29,6 +29,7 @@ mod window;
 
 pub(crate) use clipboard::*;
 pub(crate) use clock::*;
+pub(crate) use closed_music::ClosedMusic;
 pub(crate) use companion::*;
 pub(crate) use events::*;
 pub(crate) use icons::*;
