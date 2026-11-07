@@ -65,7 +65,7 @@ impl App {
             || self.slides.cal_t < 1.0
             || self.art.track_t < 1.0
             || self.art.shown.iter().zip(self.art.tint).any(|(a, b)| (a - b as f32).abs() > 0.5)
-            || self.tab_target().is_some_and(|t| (t - self.tab_pos).abs() > f32::EPSILON)
+            || self.tab_target().is_some_and(|t| (t - self.tab_bar.pos).abs() > f32::EPSILON)
             || (self.tuck_t - self.tuck_target()).abs() > f64::EPSILON
             || (self.view_t - self.view_target()).abs() > f64::EPSILON
             || (self.grow_t - self.stats_extra()).abs() > f64::EPSILON
@@ -223,11 +223,11 @@ impl App {
         }
 
         if let Some(target) = self.tab_target() {
-            let (mut x, mut v) = (self.tab_pos as f64, self.tab_vel as f64);
+            let (mut x, mut v) = (self.tab_bar.pos as f64, self.tab_bar.vel as f64);
             let (omega, zeta) = tune(28.0, 0.7);
             spring(&mut x, &mut v, target as f64, dt, omega, zeta);
-            self.tab_pos = x as f32;
-            self.tab_vel = v as f32;
+            self.tab_bar.pos = x as f32;
+            self.tab_bar.vel = v as f32;
         }
 
         // A list that changed (scrolled, or an entry came or went) lets its rows ease in.

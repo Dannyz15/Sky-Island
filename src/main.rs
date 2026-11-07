@@ -226,10 +226,8 @@ struct App {
     tuck_goal: f64,
     /// The song's cover colours: the tint taken from the cover and its glide, and the fade-in of a new track.
     art: ui::Art,
-    /// The tab highlight's position, as a (fractional) tab index, so it can slide between tabs.
-    tab_pos: f32,
-    /// How fast it is moving, in tabs per second; the highlight stretches while it moves.
-    tab_vel: f32,
+    /// The highlight under the tabs.
+    tab_bar: ui::TabHighlight,
     /// Lists and the calendar easing in after they changed: how far along they are, the way they come from, and what the list was.
     slides: ui::Slides,
     /// The change from one view to another: how far the new view has taken over, the view fading out, and the way the new one slides from.
@@ -344,8 +342,7 @@ impl App {
             tuck_v: 0.0,
             tuck_goal: if settings.hide_island { 1.0 } else { 0.0 },
             art: ui::Art::default(),
-            tab_pos: 0.0,
-            tab_vel: 0.0,
+            tab_bar: ui::TabHighlight::default(),
             slides: ui::Slides::default(),
             switch: ui::ViewSwitch::default(),
             glows: Glows::default(),

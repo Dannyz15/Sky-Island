@@ -50,6 +50,20 @@ pub(crate) struct ViewSwitch {
     pub(crate) shown: View,
 }
 
+/// The highlight under the tabs.
+pub(crate) struct TabHighlight {
+    /// The tab highlight's position, as a (fractional) tab index, so it can slide between tabs.
+    pub(crate) pos: f32,
+    /// How fast it is moving, in tabs per second; the highlight stretches while it moves.
+    pub(crate) vel: f32,
+}
+
+impl Default for TabHighlight {
+    fn default() -> Self {
+        Self { pos: 0.0, vel: 0.0 }
+    }
+}
+
 impl Default for ViewSwitch {
     fn default() -> Self {
         Self { t: 1.0, v: 0.0, prev: None, dir: 1.0, shown: View::Player }
@@ -169,8 +183,8 @@ impl App {
         gfx::stroke_rounded(pm, px + 0.5 * s, py + 0.5 * s, pw - s, ph - s, ph / 2.0, s, [255, 255, 255, (alpha * 12.0) as u8]);
         if self.tab_target().is_some() {
             // The circle stretches a little in the direction it is moving, like a drop of liquid.
-            let stretch = (self.tab_vel.abs() * 2.4).min(18.0);
-            let cx = x0 + dx + self.tab_pos * (TAB_W + TAB_GAP) + TAB_W / 2.0;
+            let stretch = (self.tab_bar.vel.abs() * 2.4).min(18.0);
+            let cx = x0 + dx + self.tab_bar.pos * (TAB_W + TAB_GAP) + TAB_W / 2.0;
             let squash = stretch * 0.22;
             let (bw, bh) = (TAB_BUTTON + stretch, TAB_BUTTON - squash);
             let by = y + squash / 2.0;
@@ -181,7 +195,7 @@ impl App {
         for (i, (_, view)) in tabs.iter().enumerate() {
             let rect = tab_rect(i, tabs.len(), bar_y);
             let rect = (rect.0 + dx, rect.1, rect.2, rect.3);
-            let near = 1.0 - (self.tab_pos - i as f32).abs().min(1.0);
+            let near = 1.0 - (self.tab_bar.pos - i as f32).abs().min(1.0);
             // The mouse is compared in the view's coordinates, which are this much higher.
             let glow = self.hot_t((rect.0, rect.1 + TAB_SHIFT, rect.2, rect.3), s) * (1.0 - near * 2.0).clamp(0.0, 1.0);
             let cx = rect.0 + rect.2 / 2.0;

@@ -241,8 +241,8 @@ impl App {
     /// The tab bar has one tab more or fewer, so its highlight jumps instead of sliding.
     pub(super) fn tabs_changed(&mut self) {
         if let Some(target) = self.tab_target() {
-            self.tab_pos = target;
-            self.tab_vel = 0.0;
+            self.tab_bar.pos = target;
+            self.tab_bar.vel = 0.0;
         }
     }
 
