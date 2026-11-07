@@ -17,7 +17,8 @@ jobs:
   check:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      # Pinned to an exact commit (version 7.0.1) like the action below: a tag can be moved to other code, a commit cannot.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # rust-toolchain.toml makes rustup install the exact compiler named there, with clippy and rustfmt, on the first cargo call.
       # Not one of GitHub's own actions, so it is pinned to an exact commit (version 2.9.3): a tag can be moved
       # to other code, a commit cannot. Dependabot proposes newer ones.

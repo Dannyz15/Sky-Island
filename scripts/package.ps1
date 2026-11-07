@@ -28,6 +28,14 @@ if (-not $iscc) {
     throw 'Inno Setup 7 is not installed. Get it from https://jrsoftware.org/isinfo.php (or: winget install JRSoftware.InnoSetup.7)'
 }
 
+# The compiler may sit in a folder any program of yours can write to (Inno Setup installs into the user's own folder
+# when it is not run as administrator), and whatever runs here goes into the setup. Run only the real one: its
+# Authenticode signature must be valid and be the Inno Setup author's (Pyrsys B.V.).
+$signature = Get-AuthenticodeSignature $iscc
+if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(^|, )O=Pyrsys B\.V\.(,|$)') {
+    throw "ISCC.exe at $iscc is not signed by the Inno Setup author (signature: $($signature.Status), signer: $($signature.SignerCertificate.Subject)). Reinstall Inno Setup 7 from https://jrsoftware.org/isinfo.php."
+}
+
 # A release is built from the working tree BEFORE it is committed, and the only changes it makes are the version bump
 # and the regenerated licence list. Anything else that differs from the last commit would be in the setup without
 # being in the commit that CI tests, so it stops here.
