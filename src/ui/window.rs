@@ -19,12 +19,15 @@ pub(crate) struct Slides {
     /// Rows of a list ease in after the list changed (it scrolled, an entry came or went): 0 right after,
     /// 1 once they have settled. `list_dir` is the way they come from, and `list_sig` what the list was.
     pub(crate) list_t: f64,
+    /// How fast `list_t` is changing (the spring's speed).
     pub(crate) list_v: f64,
     pub(crate) list_dir: f32,
     pub(crate) list_sig: (View, usize, usize, i64),
     /// The calendar's month (or week) slides in the same way when the arrows are used.
     pub(crate) cal_t: f64,
+    /// How fast `cal_t` is changing (the spring's speed).
     pub(crate) cal_v: f64,
+    /// The way the new month (or week) comes from.
     pub(crate) cal_dir: f32,
 }
 

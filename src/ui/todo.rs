@@ -13,9 +13,11 @@ pub(crate) const TODO_AMBER: [u8; 3] = [255, 190, 70];
 
 /// Typing a task: whether the notch is taking keys for it, the text so far, and the window to give the keyboard back to.
 pub(crate) struct Editing {
-    /// Typing a new task. While true the notch stays open and keys go to `input`.
+    /// Typing a new task. While true the notch stays open and keys go to `text`.
     pub(crate) on: bool,
+    /// The text typed so far.
     pub(crate) text: String,
+    /// When typing began, which the blinking caret counts from.
     pub(crate) started: Instant,
     /// The day and reminder time of the task being added or edited.
     pub(crate) editor: editor::Editor,

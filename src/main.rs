@@ -160,14 +160,14 @@ struct App {
     /// logical pixels, and how fast that is changing.
     grow_t: f64,
     grow_v: f64,
-    /// The lyrics view: the lyrics of the song, where they came from, and the line in the middle.
+    /// x
     lyric: ui::LyricsView,
     timer: Timer,
     /// Typing a number into the timer.
     timer_entry: ui::TimerEntry,
     water: Water,
     shelf: Shelf,
-    /// What the shelf shows on screen: file icons, a drag over the notch, and the highlighted files.
+    /// x
     shelf_ui: ui::ShelfUi,
     /// Where the progress bar is being dragged to; the song jumps there when the button is let go.
     scrub: Option<Duration>,
@@ -205,7 +205,7 @@ struct App {
     monitor_area: Option<presence::Area>,
     /// The window is hidden because a full-screen app is in front.
     hidden: bool,
-    /// The closed notch's eyes: when they greet or preview, and the blink, gaze and glance clocks.
+    /// x
     eyes: ui::Eyes,
     last_minute: u32,
     quit: bool,

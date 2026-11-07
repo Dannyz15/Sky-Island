@@ -25,45 +25,6 @@ pub(crate) struct ClockText {
     pub suffix_w: f32,
 }
 
-/// The closed notch's eyes: when they greet or preview, and the blink, gaze and glance clocks.
-pub(crate) struct Eyes {
-    pub(crate) greeting_until: Option<Instant>,
-    /// The closed notch shows the eyes until then, after an Eye style is picked in the settings window.
-    pub(crate) preview_until: Option<Instant>,
-    pub(crate) next_blink: Instant,
-    /// When the blink in progress began (it lasts `eyes::blink_len`), if the eyes are blinking.
-    pub(crate) blink_since: Option<Instant>,
-    /// Where the eyes look now, how fast that is changing, and where they are turning to (across, down; -1 to 1).
-    pub(crate) look: (f64, f64),
-    pub(crate) look_v: (f64, f64),
-    pub(crate) look_goal: (f64, f64),
-    /// When the eyes next look somewhere without a blink, and how many times they have.
-    pub(crate) next_glance: Instant,
-    pub(crate) glances: u32,
-    pub(crate) blink_count: u32,
-    pub(crate) next_zz: Instant,
-    pub(crate) zz_frame: bool,
-}
-
-impl Default for Eyes {
-    fn default() -> Self {
-        Self {
-            greeting_until: None,
-            preview_until: None,
-            next_blink: Instant::now(),
-            blink_since: None,
-            look: (0.0, 0.0),
-            look_v: (0.0, 0.0),
-            look_goal: (0.0, 0.0),
-            next_glance: Instant::now(),
-            glances: 0,
-            blink_count: 0,
-            next_zz: Instant::now(),
-            zz_frame: false,
-        }
-    }
-}
-
 impl ClockText {
     /// The clock for `hour` and `minute`, measured in the notch's fonts.
     pub(crate) fn new(font: &Font, hour: u32, minute: u32, clock_24h: bool) -> Self {
@@ -84,6 +45,52 @@ impl ClockText {
 
     pub(crate) fn width(&self) -> f32 {
         self.time_w + if self.suffix.is_some() { SUFFIX_GAP + self.suffix_w } else { 0.0 }
+    }
+}
+
+/// The closed notch's eyes: when they greet or preview, and the blink, gaze and glance clocks.
+pub(crate) struct Eyes {
+    /// The closed notch shows the greeting eyes until then, after the notch wakes from dozing.
+    pub(crate) greeting_until: Option<Instant>,
+    /// The closed notch shows the eyes until then, after an Eye style is picked in the settings window.
+    pub(crate) preview_until: Option<Instant>,
+    /// When the eyes next blink.
+    pub(crate) next_blink: Instant,
+    /// When the blink in progress began (it lasts `eyes::blink_len`), if the eyes are blinking.
+    pub(crate) blink_since: Option<Instant>,
+    /// Where the eyes look now, how fast that is changing, and where they are turning to (across, down; -1 to 1).
+    pub(crate) look: (f64, f64),
+    /// How fast `look` is changing (the spring's speed).
+    pub(crate) look_v: (f64, f64),
+    /// Where the eyes are turning to.
+    pub(crate) look_goal: (f64, f64),
+    /// When the eyes next look somewhere without a blink, and how many times they have.
+    pub(crate) next_glance: Instant,
+    /// How many times the eyes have looked somewhere without a blink (it varies the next glance).
+    pub(crate) glances: u32,
+    /// How many times the eyes have blinked (it varies the pause and the direction of the next look).
+    pub(crate) blink_count: u32,
+    /// When the sleeping eyes' "z" next changes, and which of its two frames shows.
+    pub(crate) next_zz: Instant,
+    pub(crate) zz_frame: bool,
+}
+
+impl Default for Eyes {
+    fn default() -> Self {
+        Self {
+            greeting_until: None,
+            preview_until: None,
+            next_blink: Instant::now(),
+            blink_since: None,
+            look: (0.0, 0.0),
+            look_v: (0.0, 0.0),
+            look_goal: (0.0, 0.0),
+            next_glance: Instant::now(),
+            glances: 0,
+            blink_count: 0,
+            next_zz: Instant::now(),
+            zz_frame: false,
+        }
     }
 }
 

@@ -13,12 +13,15 @@ const LONG_NOTICE_TIME: Duration = Duration::from_millis(4500);
 pub(crate) struct Notices {
     /// Latest system notice, kept after it expires so it can fade out.
     pub(crate) current: Option<sys::Notice>,
+    /// When the notice on show goes away.
     pub(crate) until: Option<Instant>,
     /// 0.0 = no notice, 1.0 = compact notice size
     pub(crate) t: f64,
+    /// How fast `t` is changing (the spring's speed).
     pub(crate) v: f64,
     /// While set, the notch stays open to show a timer notification.
     pub(crate) alert_until: Option<Instant>,
+    /// What the timer notification says.
     pub(crate) alert_msg: String,
     /// When the timer's alarm sounds again while it is ringing.
     pub(crate) next_chime: Option<Instant>,

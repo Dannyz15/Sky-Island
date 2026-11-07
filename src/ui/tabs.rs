@@ -43,10 +43,12 @@ fn tab_rect(i: usize, count: usize, height: f32) -> (f32, f32, f32, f32) {
 pub(crate) struct ViewSwitch {
     /// 0 right after the view changed, 1 once the new view has taken over.
     pub(crate) t: f64,
+    /// How fast `t` is changing (the spring's speed).
     pub(crate) v: f64,
     /// The view that is fading out while the new one comes in, and which way the new one slides from.
     pub(crate) prev: Option<View>,
     pub(crate) dir: f32,
+    /// The view the last switch was for: a change of `App::view` starts the next one from here.
     pub(crate) shown: View,
 }
 

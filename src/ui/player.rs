@@ -135,49 +135,23 @@ pub(crate) struct VolumeGeo {
     pub(crate) track_w: f32,
 }
 
-/// The lyrics view: the lyrics of the song, where they came from, and the line in the middle.
-pub(crate) struct LyricsView {
-    pub(crate) state: LyricsState,
-    pub(crate) key: String,
-    /// The song length the lyrics were looked up with, and whether they were looked up again once a
-    /// different length arrived (the browser often reports the length a moment after the title).
-    pub(crate) duration: Duration,
-    pub(crate) refetched: bool,
-    /// When to look the lyrics up again after the site could not be reached.
-    pub(crate) retry_at: Option<Instant>,
-    /// The line (fractional) in the middle of the lyrics view. A spring follows the line being sung, or
-    /// wherever the wheel took it.
-    pub(crate) pos: f64,
-    pub(crate) v: f64,
-    /// Set while the lyrics were scrolled by hand: the line the wheel moved to. `None` follows the music.
-    pub(crate) manual: Option<f64>,
-    /// The lyrics just opened or closed: the notch changes width under the mouse, so the system's
-    /// "mouse left" is ignored until it has settled.
-    pub(crate) settle: bool,
-}
-
 /// The song's cover colours: the tint taken from the cover and its glide, and the fade-in of a new track.
 pub(crate) struct Art {
     /// Colour of the current song's cover art, used to tint the player.
     pub(crate) tint: [u8; 3],
-    /// Which song and cover `art_tint` was worked out for.
+    /// Which song and cover `tint` was worked out for.
     pub(crate) key: String,
     /// The accent taken from the cover glides to a new colour instead of jumping.
     pub(crate) shown: [f32; 3],
     /// A new track fades its cover and title in.
     pub(crate) track_t: f64,
+    /// How fast `track_t` is changing (the spring's speed).
     pub(crate) track_v: f64,
 }
 
 impl Default for Art {
     fn default() -> Self {
         Self { tint: [255, 110, 140], key: String::new(), shown: [255.0, 110.0, 140.0], track_t: 1.0, track_v: 0.0 }
-    }
-}
-
-impl Default for LyricsView {
-    fn default() -> Self {
-        Self { state: LyricsState::None, key: String::new(), duration: Duration::ZERO, refetched: false, retry_at: None, pos: -1.0, v: 0.0, manual: None, settle: false }
     }
 }
 
@@ -202,6 +176,36 @@ pub(crate) fn player_geo(t: f32) -> PlayerGeo {
 pub(crate) struct Volume {
     pub(crate) level: Option<(u32, bool)>,
     pub(crate) drag: bool,
+}
+
+/// The lyrics view: the lyrics of the song, where they came from, and the line in the middle.
+pub(crate) struct LyricsView {
+    /// The lyrics of the song: none, being looked up, found or not found.
+    pub(crate) state: LyricsState,
+    /// Which song the lyrics were looked up for.
+    pub(crate) key: String,
+    /// The song length the lyrics were looked up with, and whether they were looked up again once a
+    /// different length arrived (the browser often reports the length a moment after the title).
+    pub(crate) duration: Duration,
+    pub(crate) refetched: bool,
+    /// When to look the lyrics up again after the site could not be reached.
+    pub(crate) retry_at: Option<Instant>,
+    /// The line (fractional) in the middle of the lyrics view. A spring follows the line being sung, or
+    /// wherever the wheel took it.
+    pub(crate) pos: f64,
+    /// How fast `pos` is changing (the spring's speed).
+    pub(crate) v: f64,
+    /// Set while the lyrics were scrolled by hand: the line the wheel moved to. `None` follows the music.
+    pub(crate) manual: Option<f64>,
+    /// The lyrics just opened or closed: the notch changes width under the mouse, so the system's
+    /// "mouse left" is ignored until it has settled.
+    pub(crate) settle: bool,
+}
+
+impl Default for LyricsView {
+    fn default() -> Self {
+        Self { state: LyricsState::None, key: String::new(), duration: Duration::ZERO, refetched: false, retry_at: None, pos: -1.0, v: 0.0, manual: None, settle: false }
+    }
 }
 
 impl App {
