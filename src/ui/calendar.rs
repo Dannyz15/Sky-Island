@@ -109,7 +109,7 @@ impl App {
         let (today, now, zone) = (today_day(), todo::unix_now(), localtime::Zone::System);
         let selected = self.cal.selected;
 
-        if self.editing {
+        if self.edit.on {
             self.draw_editor(pm, s, alpha);
             return;
         }

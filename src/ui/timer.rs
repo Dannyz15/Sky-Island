@@ -158,7 +158,7 @@ impl App {
                 let shown = if typing && !self.timer_input.is_empty() { self.timer_input.clone() } else { format!("{value:02}") };
                 let ink = if typing && self.timer_input.is_empty() { [150, 150, 165, a] } else { ink };
                 draw_text_centered(pm, heading, &shown, (x - 5.0) * s, TIMER_VALUE_Y * s, 22.0 * s, ink, 40.0 * s);
-                if typing && (self.edit_started.elapsed().as_millis() / 500).is_multiple_of(2) {
+                if typing && (self.edit.started.elapsed().as_millis() / 500).is_multiple_of(2) {
                     let cx = (x - 5.0) * s + text_width(heading, &shown, 22.0 * s) / 2.0 + 1.5 * s;
                     fill_rect(pm, cx, (TIMER_VALUE_Y - 16.0) * s, 1.5 * s, 20.0 * s, accent);
                 }
@@ -195,12 +195,12 @@ impl App {
 
     /// Start typing one of the timer's numbers: take the keyboard, remembering where it came from.
     fn begin_timer_edit(&mut self, field: usize) {
-        if self.timer_field.is_none() && self.prev_foreground.is_none() {
+        if self.timer_field.is_none() && self.edit.prev_foreground.is_none() {
             self.remember_foreground();
         }
         self.timer_field = Some(field);
         self.timer_input.clear();
-        self.edit_started = Instant::now();
+        self.edit.started = Instant::now();
         if let Some(w) = &self.window {
             w.focus_window();
             w.request_redraw();
@@ -234,7 +234,7 @@ impl App {
         let Some(field) = self.timer_field else { return };
         self.apply_timer_input();
         self.timer_field = Some((field as isize + dir).rem_euclid(Unit::ALL.len() as isize) as usize);
-        self.edit_started = Instant::now();
+        self.edit.started = Instant::now();
     }
 
     /// A key pressed while a timer number is being typed.

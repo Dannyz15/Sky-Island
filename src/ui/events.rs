@@ -398,7 +398,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::Focused(false) if self.shelf_ui.selecting => {
                 // The user went to another app: the highlight and the keyboard are no longer ours.
                 self.shelf_ui.selecting = false;
-                self.prev_foreground = None;
+                self.edit.prev_foreground = None;
                 self.shelf_ui.selected.clear();
                 if let Some(w) = &self.window {
                     w.request_redraw();
@@ -427,7 +427,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.progress >= 0.9 && !self.editing && self.timer_field.is_none() && self.wheel_changes_tab() => {
+            WindowEvent::MouseWheel { delta, .. } if self.progress >= 0.9 && !self.edit.on && self.timer_field.is_none() && self.wheel_changes_tab() => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 // Scrolling down goes to the next tab, up to the one before; one step per flick.
                 if dy != 0.0 && self.last_wheel_tab.elapsed() > Duration::from_millis(220) {
@@ -442,7 +442,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.view == View::Timer && !self.editing && self.progress >= 0.9 => {
+            WindowEvent::MouseWheel { delta, .. } if self.view == View::Timer && !self.edit.on && self.progress >= 0.9 => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 let s = self.ui_scale() as f32;
                 let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
@@ -454,7 +454,7 @@ impl ApplicationHandler<UserEvent> for App {
                     w.request_redraw();
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.view == View::Lyrics && !self.editing && self.progress >= 0.9 => {
+            WindowEvent::MouseWheel { delta, .. } if self.view == View::Lyrics && !self.edit.on && self.progress >= 0.9 => {
                 let s = self.ui_scale() as f32;
                 let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
                 let lines = match &self.lyric.state {
@@ -474,12 +474,12 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.editing && self.progress >= 0.9 => {
+            WindowEvent::MouseWheel { delta, .. } if self.edit.on && self.progress >= 0.9 => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 let s = self.ui_scale() as f32;
                 let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
                 if dy != 0.0
-                    && self.editor.wheel(cx, cy, if dy > 0.0 { 1 } else { -1 }, clock_now())
+                    && self.edit.editor.wheel(cx, cy, if dy > 0.0 { 1 } else { -1 }, clock_now())
                     && let Some(w) = &self.window
                 {
                     w.request_redraw();
@@ -506,18 +506,18 @@ impl ApplicationHandler<UserEvent> for App {
                     w.request_redraw();
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } if self.editing && event.state == ElementState::Pressed => {
+            WindowEvent::KeyboardInput { event, .. } if self.edit.on && event.state == ElementState::Pressed => {
                 match &event.logical_key {
                     Key::Named(NamedKey::Enter) => self.commit_task(),
                     Key::Named(NamedKey::Escape) => self.stop_editing(),
                     Key::Named(NamedKey::Backspace) => {
-                        self.input.pop();
+                        self.edit.text.pop();
                     }
                     _ => {
                         if let Some(text) = &event.text {
                             for c in text.chars().filter(|c| !c.is_control()) {
-                                if self.input.chars().count() < 80 {
-                                    self.input.push(c);
+                                if self.edit.text.chars().count() < 80 {
+                                    self.edit.text.push(c);
                                 }
                             }
                         }
@@ -529,12 +529,12 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::Focused(false) if self.timer_field.is_some() => {
                 // The user clicked into another app: keep what was typed and don't steal focus back.
-                self.prev_foreground = None;
+                self.edit.prev_foreground = None;
                 self.end_timer_edit(true);
             }
-            WindowEvent::Focused(false) if self.editing => {
+            WindowEvent::Focused(false) if self.edit.on => {
                 // The user clicked into another app: stop typing without stealing focus back.
-                self.prev_foreground = None;
+                self.edit.prev_foreground = None;
                 self.stop_editing();
             }
             WindowEvent::HoveredFile(_) => {
@@ -744,7 +744,7 @@ impl ApplicationHandler<UserEvent> for App {
         // Periodic refresh for the progress bar / countdown. Only redraw when due, since a redraw
         // itself triggers another about_to_wait.
         let expanded = self.progress >= 1.0;
-        if (expanded && (self.media.playing || self.editing || self.timer_field.is_some() || matches!(self.view, View::Water | View::Todo))) || self.timer.running() {
+        if (expanded && (self.media.playing || self.edit.on || self.timer_field.is_some() || matches!(self.view, View::Water | View::Todo))) || self.timer.running() {
             let tick = if expanded && self.view == View::Timer && self.timer.running() { RING_TICK } else { PROGRESS_TICK };
             let due = self.last_ui_tick + tick;
             if now >= due {

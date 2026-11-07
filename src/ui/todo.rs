@@ -11,6 +11,24 @@ const TODO_ROW_H: f32 = 24.0;
 
 pub(crate) const TODO_AMBER: [u8; 3] = [255, 190, 70];
 
+/// Typing a task: whether the notch is taking keys for it, the text so far, and the window to give the keyboard back to.
+pub(crate) struct Editing {
+    /// Typing a new task. While true the notch stays open and keys go to `input`.
+    pub(crate) on: bool,
+    pub(crate) text: String,
+    pub(crate) started: Instant,
+    /// The day and reminder time of the task being added or edited.
+    pub(crate) editor: editor::Editor,
+    /// The window that had focus before we took it for typing, so it can be given back.
+    pub(crate) prev_foreground: Option<windows::Win32::Foundation::HWND>,
+}
+
+impl Default for Editing {
+    fn default() -> Self {
+        Self { on: false, text: String::new(), started: Instant::now(), editor: editor::Editor::new_task(None, clock_now()), prev_foreground: None }
+    }
+}
+
 impl App {
     /// Open the editor for a new task, or for the task at `target`. Remember which app had focus,
     /// then take it so key presses reach us.
@@ -19,18 +37,18 @@ impl App {
         let clock = clock_now();
         match target.and_then(|i| self.todo.tasks.get(i).map(|task| (i, task))) {
             Some((i, task)) => {
-                self.editor = editor::Editor::for_task(i, task, clock);
-                self.input = task.text.clone();
+                self.edit.editor = editor::Editor::for_task(i, task, clock);
+                self.edit.text = task.text.clone();
             }
             None => {
                 // A task added on the calendar starts on the selected day.
                 let date = (self.view == View::Calendar).then_some(self.cal.selected);
-                self.editor = editor::Editor::new_task(date, clock);
-                self.input.clear();
+                self.edit.editor = editor::Editor::new_task(date, clock);
+                self.edit.text.clear();
             }
         }
-        self.editing = true;
-        self.edit_started = Instant::now();
+        self.edit.on = true;
+        self.edit.started = Instant::now();
         if let Some(w) = &self.window {
             w.focus_window();
         }
@@ -38,10 +56,10 @@ impl App {
 
     /// Stop typing and give focus back to the app the user was in.
     pub(crate) fn stop_editing(&mut self) {
-        if !self.editing {
+        if !self.edit.on {
             return;
         }
-        self.editing = false;
+        self.edit.on = false;
         self.last_tick = Instant::now();
         self.restore_foreground();
         if let Some(w) = &self.window {
@@ -51,10 +69,10 @@ impl App {
 
     /// Save the task in the editor. Blank text is refused and the editor stays open.
     pub(crate) fn commit_task(&mut self) {
-        let (due, date) = (self.editor.due(clock_now()), self.editor.date);
-        let saved = match self.editor.index {
-            Some(i) => self.todo.update(i, &self.input, due, date),
-            None => self.todo.add(&self.input, due, date),
+        let (due, date) = (self.edit.editor.due(clock_now()), self.edit.editor.date);
+        let saved = match self.edit.editor.index {
+            Some(i) => self.todo.update(i, &self.edit.text, due, date),
+            None => self.todo.add(&self.edit.text, due, date),
         };
         if saved {
             self.stop_editing();
@@ -71,7 +89,7 @@ impl App {
         let width = EXPANDED.0 as f32 * s;
         let (now, today, zone) = (todo::unix_now(), today_day(), localtime::Zone::System);
 
-        if self.editing {
+        if self.edit.on {
             self.draw_editor(pm, s, alpha);
             return;
         }
@@ -205,7 +223,7 @@ impl App {
         let (white, grey) = ([255, 255, 255, a], [165, 165, 175, a]);
         let rgb = TODO_AMBER;
         let amber = [rgb[0], rgb[1], rgb[2], a];
-        let (clock, ed, clock_24h) = (clock_now(), &self.editor, self.settings.clock_24h);
+        let (clock, ed, clock_24h) = (clock_now(), &self.edit.editor, self.settings.clock_24h);
         // A pill that is lit when chosen, and brighter under the mouse.
         let pill = |pm: &mut Pixmap, action: editor::Action, on: bool| {
             let r = editor::rect(action);
@@ -229,13 +247,13 @@ impl App {
         gfx::gradient_rounded(pm, fx * s, fy * s, fw * s, fh * s, 10.0 * s, [255, 255, 255, (alpha * 36.0) as u8], [255, 255, 255, (alpha * 20.0) as u8], false);
         gfx::stroke_rounded(pm, fx * s + 0.5 * s, fy * s + 0.5 * s, fw * s - s, fh * s - s, 10.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 140.0) as u8]);
         let (tx, ty, max_w) = ((fx + 12.0) * s, (fy + 17.0) * s, (fw - 24.0) * s);
-        let shown = tail_fit(font, &self.input, 13.0 * s, max_w - 8.0 * s);
+        let shown = tail_fit(font, &self.edit.text, 13.0 * s, max_w - 8.0 * s);
         if shown.is_empty() {
             draw_text(pm, font, "What needs doing?", tx, ty, 13.0 * s, [135, 135, 148, a], max_w);
         } else {
             draw_text(pm, font, &shown, tx, ty, 13.0 * s, white, max_w);
         }
-        if (self.edit_started.elapsed().as_millis() / 500).is_multiple_of(2) {
+        if (self.edit.started.elapsed().as_millis() / 500).is_multiple_of(2) {
             let x = tx + text_width(font, &shown, 13.0 * s) + 1.0 * s;
             fill_rect(pm, x, (fy + 5.0) * s, 1.5 * s, 16.0 * s, amber);
         }
@@ -331,11 +349,11 @@ impl App {
 
     /// The editor panel covers the whole notch while a task is being added or changed. True when it took the click.
     pub(crate) fn click_editor(&mut self, cx: f32, cy: f32, window: &Window) -> bool {
-        if !self.editing {
+        if !self.edit.on {
             return false;
         }
-        if let Some(action) = editor::hit(cx, cy, self.editor.remind, self.settings.clock_24h) {
-            match self.editor.apply(action, clock_now()) {
+        if let Some(action) = editor::hit(cx, cy, self.edit.editor.remind, self.settings.clock_24h) {
+            match self.edit.editor.apply(action, clock_now()) {
                 editor::Outcome::Save => self.commit_task(),
                 editor::Outcome::Cancel => self.stop_editing(),
                 editor::Outcome::Continue => {}

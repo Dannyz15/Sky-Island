@@ -44,7 +44,7 @@ impl App {
     /// Take the keyboard while files are highlighted (the notch never takes focus on its own), so that
     /// Ctrl+A and Esc reach it, and give it back to the app the user was in once nothing is highlighted.
     pub(crate) fn sync_selection_focus(&mut self) {
-        if !self.shelf_ui.selected.is_empty() && !self.shelf_ui.selecting && !self.editing && self.timer_field.is_none() {
+        if !self.shelf_ui.selected.is_empty() && !self.shelf_ui.selecting && !self.edit.on && self.timer_field.is_none() {
             self.remember_foreground();
             self.shelf_ui.selecting = true;
             if let Some(w) = &self.window {

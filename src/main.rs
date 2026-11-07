@@ -199,14 +199,8 @@ struct App {
     tray: ui::Tray,
     todo: Todo,
     cal: calendar::Calendar,
-    /// Typing a new task. While true the notch stays open and keys go to `input`.
-    editing: bool,
-    input: String,
-    edit_started: Instant,
-    /// The day and reminder time of the task being added or edited.
-    editor: editor::Editor,
-    /// The window that had focus before we took it for typing, so it can be given back.
-    prev_foreground: Option<windows::Win32::Foundation::HWND>,
+    /// Typing a task: whether the notch is taking keys for it, the text so far, and the window to give the keyboard back to.
+    edit: ui::Editing,
     settings: Settings,
     /// Cached "start with Windows" state from the registry.
     autostart: bool,
@@ -361,11 +355,7 @@ impl App {
             tray: ui::Tray::default(),
             todo: Todo::new(),
             cal: calendar::Calendar::new(today_day()),
-            editing: false,
-            input: String::new(),
-            edit_started: Instant::now(),
-            editor: editor::Editor::new_task(None, clock_now()),
-            prev_foreground: None,
+            edit: ui::Editing::default(),
             settings: settings.clone(),
             autostart: settings::repair_autostart(),
             presence: Presence::Active,

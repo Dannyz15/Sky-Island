@@ -16,7 +16,7 @@ const TUCK_STRIP: f64 = 3.0;
 
 impl App {
     fn target(&self) -> f64 {
-        if self.hovered || self.shelf_ui.drag_hover || self.editing || self.timer_field.is_some() || self.alert_until.is_some() { 1.0 } else { 0.0 }
+        if self.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_field.is_some() || self.alert_until.is_some() { 1.0 } else { 0.0 }
     }
 
     /// With "Auto-hide notch" on, the notch slides away whenever there is nothing to show or touch.
@@ -24,7 +24,7 @@ impl App {
         let needed = self.hovered
             || self.enter_at.is_some()
             || self.shelf_ui.drag_hover
-            || self.editing
+            || self.edit.on
             || self.timer_field.is_some()
             || self.alert_until.is_some()
             || self.notice_until.is_some()
@@ -382,13 +382,13 @@ impl App {
     pub(crate) fn remember_foreground(&mut self) {
         use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
         let front = unsafe { GetForegroundWindow() };
-        self.prev_foreground = (!front.is_invalid()).then_some(front);
+        self.edit.prev_foreground = (!front.is_invalid()).then_some(front);
     }
 
     /// Give the keyboard back to the window remembered, if there is one.
     pub(crate) fn restore_foreground(&mut self) {
         use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
-        if let Some(window) = self.prev_foreground.take() {
+        if let Some(window) = self.edit.prev_foreground.take() {
             let _ = unsafe { SetForegroundWindow(window) };
         }
     }
