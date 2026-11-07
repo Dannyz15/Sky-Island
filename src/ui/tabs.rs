@@ -165,7 +165,7 @@ impl App {
     /// Whether the mouse wheel changes the tab where the mouse is: always over the tab bar, and over
     /// the tabs whose content has no scrolling of its own.
     pub(crate) fn wheel_changes_tab(&self) -> bool {
-        let over_bar = self.cursor.1 as f32 / self.ui_scale() as f32 >= self.window_h() - TAB_BOTTOM - 4.0;
+        let over_bar = self.pointer.cursor.1 as f32 / self.ui_scale() as f32 >= self.window_h() - TAB_BOTTOM - 4.0;
         over_bar || matches!(self.view, View::Player | View::Water | View::Weather | View::Prayer | View::Stats | View::Calendar)
     }
 

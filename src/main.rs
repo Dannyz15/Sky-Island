@@ -170,8 +170,8 @@ struct App {
     /// logical pixels, which Auto goes by.
     ui_k: f64,
     screen_w: f64,
-    /// When the mouse wheel last changed the tab, so one flick moves one tab.
-    last_wheel_tab: Instant,
+    /// The mouse: where it is, whether it is over the notch, when entering or leaving takes effect, and when the wheel last changed the tab.
+    pointer: ui::Pointer,
     /// Sky Island moved the song itself (a click on a lyric line or on the bar) and the song has not changed since.
     seeked: bool,
     /// Notices: the system notice on show and its fade, and the timer alert that keeps the notch open with its chime.
@@ -179,9 +179,6 @@ struct App {
     clips: History,
     /// A short message for the clipboard header, with when to remove it.
     clip_flash: Option<(&'static str, Instant)>,
-    /// When the cursor entering/leaving takes effect (see `hover_open`, `hover_close`).
-    enter_at: Option<Instant>,
-    leave_at: Option<Instant>,
     /// The tray icon and its menu.
     tray: ui::Tray,
     todo: Todo,
@@ -205,8 +202,6 @@ struct App {
     /// The closed notch's width for the album cover and bars while a song plays, and the bars' clock.
     music: ui::ClosedMusic,
     proxy: EventLoopProxy<UserEvent>,
-    cursor: (f64, f64),
-    hovered: bool,
     /// The song's cover colours: the tint taken from the cover and its glide, and the fade-in of a new track.
     art: ui::Art,
     /// The highlight under the tabs.
@@ -278,7 +273,7 @@ impl App {
             scrub: None,
             ui_k: 1.0,
             screen_w: 1536.0,
-            last_wheel_tab: Instant::now(),
+            pointer: ui::Pointer::default(),
             seeked: false,
             notices: ui::Notices::default(),
             clips: {
@@ -287,8 +282,6 @@ impl App {
                 clips
             },
             clip_flash: None,
-            enter_at: None,
-            leave_at: None,
             tray: ui::Tray::default(),
             todo: Todo::new(),
             cal: calendar::Calendar::new(today_day()),
@@ -305,8 +298,6 @@ impl App {
             last_ui_tick: Instant::now(),
             music: ui::ClosedMusic::default(),
             proxy,
-            cursor: (0.0, 0.0),
-            hovered: false,
             art: ui::Art::default(),
             tab_bar: ui::TabHighlight::default(),
             slides: ui::Slides::default(),

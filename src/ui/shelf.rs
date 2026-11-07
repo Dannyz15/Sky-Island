@@ -84,9 +84,9 @@ impl App {
         }
         // The file may also have been moved by the drop.
         self.shelf.prune();
-        self.hovered = back_on_notch;
-        self.enter_at = None;
-        self.leave_at = None;
+        self.pointer.hovered = back_on_notch;
+        self.pointer.enter_at = None;
+        self.pointer.leave_at = None;
         self.last_tick = Instant::now();
         if let Some(w) = &self.window {
             w.request_redraw();
@@ -234,7 +234,7 @@ impl App {
             self.sync_selection_focus();
             window.request_redraw();
         } else {
-            self.shelf_ui.press = Some((idx, self.cursor));
+            self.shelf_ui.press = Some((idx, self.pointer.cursor));
         }
     }
 

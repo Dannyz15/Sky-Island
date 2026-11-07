@@ -26,10 +26,10 @@ impl App {
 
     /// Whether the mouse is over a rectangle (logical pixels) of the open notch.
     pub(crate) fn hot(&self, r: (f32, f32, f32, f32), s: f32) -> bool {
-        if self.spring.progress < 0.9 || !self.hovered {
+        if self.spring.progress < 0.9 || !self.pointer.hovered {
             return false;
         }
-        let (x, y) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
+        let (x, y) = (self.pointer.cursor.0 as f32 / s, self.pointer.cursor.1 as f32 / s + TAB_SHIFT);
         x >= r.0 && x <= r.0 + r.2 && y >= r.1 && y <= r.1 + r.3
     }
 

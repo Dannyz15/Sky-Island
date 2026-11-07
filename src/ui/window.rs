@@ -31,6 +31,12 @@ pub(crate) struct Slides {
     pub(crate) cal_dir: f32,
 }
 
+impl Default for Slides {
+    fn default() -> Self {
+        Self { list_t: 1.0, list_v: 0.0, list_dir: 1.0, list_sig: (View::Player, 0, 0, 0), cal_t: 1.0, cal_v: 0.0, cal_dir: 1.0 }
+    }
+}
+
 /// The notch's springs: how far each view is from the player's height, the extra height for what is in the view, the closed notch's size, how open the notch is, and how far it is tucked away.
 pub(crate) struct Springs {
     /// 0.0 = player height, 1.0 = lyrics height
@@ -53,24 +59,6 @@ pub(crate) struct Springs {
     pub(crate) tuck_goal: f64,
 }
 
-/// Frame pacing: when the last frame was drawn, how long one frame is, when the screen's refresh rate was last read, and when the next frame is due.
-pub(crate) struct Pacing {
-    pub(crate) last_draw: Instant,
-    /// How long one frame of an animation is: one refresh of the screen the notch is on.
-    pub(crate) frame: Duration,
-    /// When the screen's refresh rate was last read. Windows can change it at any time (the user picks another
-    /// one, the notch moves to another screen), so it is read again every few seconds.
-    pub(crate) rate_read: Option<Instant>,
-    /// When a frame of the animation was last due; the next ones follow at steady steps of `frame`.
-    pub(crate) beat: Instant,
-}
-
-impl Default for Pacing {
-    fn default() -> Self {
-        Self { last_draw: Instant::now(), frame: Duration::from_micros(16_667), rate_read: None, beat: Instant::now() }
-    }
-}
-
 impl Springs {
     /// The springs at rest: the notch closed, and tucked away when `hidden` (the Auto-hide notch setting).
     pub(crate) fn new(hidden: bool) -> Self {
@@ -90,21 +78,33 @@ impl Springs {
     }
 }
 
-impl Default for Slides {
+/// Frame pacing: when the last frame was drawn, how long one frame is, when the screen's refresh rate was last read, and when the next frame is due.
+pub(crate) struct Pacing {
+    pub(crate) last_draw: Instant,
+    /// How long one frame of an animation is: one refresh of the screen the notch is on.
+    pub(crate) frame: Duration,
+    /// When the screen's refresh rate was last read. Windows can change it at any time (the user picks another
+    /// one, the notch moves to another screen), so it is read again every few seconds.
+    pub(crate) rate_read: Option<Instant>,
+    /// When a frame of the animation was last due; the next ones follow at steady steps of `frame`.
+    pub(crate) beat: Instant,
+}
+
+impl Default for Pacing {
     fn default() -> Self {
-        Self { list_t: 1.0, list_v: 0.0, list_dir: 1.0, list_sig: (View::Player, 0, 0, 0), cal_t: 1.0, cal_v: 0.0, cal_dir: 1.0 }
+        Self { last_draw: Instant::now(), frame: Duration::from_micros(16_667), rate_read: None, beat: Instant::now() }
     }
 }
 
 impl App {
     fn target(&self) -> f64 {
-        if self.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_entry.field.is_some() || self.notices.alert_until.is_some() { 1.0 } else { 0.0 }
+        if self.pointer.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_entry.field.is_some() || self.notices.alert_until.is_some() { 1.0 } else { 0.0 }
     }
 
     /// With "Auto-hide notch" on, the notch slides away whenever there is nothing to show or touch.
     pub(crate) fn tuck_target(&self) -> f64 {
-        let needed = self.hovered
-            || self.enter_at.is_some()
+        let needed = self.pointer.hovered
+            || self.pointer.enter_at.is_some()
             || self.shelf_ui.drag_hover
             || self.edit.on
             || self.timer_entry.field.is_some()
@@ -187,10 +187,10 @@ impl App {
         if self.hidden || self.window.is_none() {
             return;
         }
-        let open = self.hovered || self.spring.progress > 0.5;
-        self.hovered = !open;
-        self.enter_at = None;
-        self.leave_at = None;
+        let open = self.pointer.hovered || self.spring.progress > 0.5;
+        self.pointer.hovered = !open;
+        self.pointer.enter_at = None;
+        self.pointer.leave_at = None;
         self.last_tick = Instant::now();
         if let Some(w) = &self.window {
             w.request_redraw();
@@ -495,9 +495,9 @@ impl App {
             self.hidden = hide;
             if hide {
                 // A hidden window gets no cursor events, so don't leave it looking hovered.
-                self.hovered = false;
-                self.enter_at = None;
-                self.leave_at = None;
+                self.pointer.hovered = false;
+                self.pointer.enter_at = None;
+                self.pointer.leave_at = None;
             }
             if let Some(w) = &self.window {
                 w.set_visible(!hide);

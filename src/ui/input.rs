@@ -11,7 +11,7 @@ impl App {
         let Some(window) = self.window.clone() else { return };
         let s = self.ui_scale() as f32;
         // `ry` is the mouse in the window; `cy` is the same spot in the view's own coordinates.
-        let (cx, ry) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s);
+        let (cx, ry) = (self.pointer.cursor.0 as f32 / s, self.pointer.cursor.1 as f32 / s);
         let cy = ry + TAB_SHIFT;
         let bar_y = self.window_h();
 

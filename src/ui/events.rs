@@ -38,6 +38,23 @@ impl Default for Updates {
     }
 }
 
+/// The mouse: where it is, whether it is over the notch, when entering or leaving takes effect, and when the wheel last changed the tab.
+pub(crate) struct Pointer {
+    pub(crate) cursor: (f64, f64),
+    pub(crate) hovered: bool,
+    /// When the cursor entering/leaving takes effect (see `hover_open`, `hover_close`).
+    pub(crate) enter_at: Option<Instant>,
+    pub(crate) leave_at: Option<Instant>,
+    /// When the mouse wheel last changed the tab, so one flick moves one tab.
+    pub(crate) last_wheel_tab: Instant,
+}
+
+impl Default for Pointer {
+    fn default() -> Self {
+        Self { cursor: (0.0, 0.0), hovered: false, enter_at: None, leave_at: None, last_wheel_tab: Instant::now() }
+    }
+}
+
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -315,20 +332,20 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::CursorEntered { .. } => {
                 let now = Instant::now();
-                self.leave_at = None;
+                self.pointer.leave_at = None;
                 // With "Open the notch" on Click, resting on it does nothing, except to bring an auto-hidden
                 // island back into view.
                 let waits_for_click = self.settings.open_on_click && self.spring.tuck_t < 0.1;
-                if !self.hovered && !waits_for_click {
-                    self.enter_at = Some(now + self.hover_open());
+                if !self.pointer.hovered && !waits_for_click {
+                    self.pointer.enter_at = Some(now + self.hover_open());
                     event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.hover_open()));
                 }
             }
             WindowEvent::CursorLeft { .. } => {
                 let now = Instant::now();
-                self.enter_at = None; // a fly-by never opened it
-                if self.hovered && self.scrub.is_none() && !self.lyric.settle {
-                    self.leave_at = Some(now + self.hover_close());
+                self.pointer.enter_at = None; // a fly-by never opened it
+                if self.pointer.hovered && self.scrub.is_none() && !self.lyric.settle {
+                    self.pointer.leave_at = Some(now + self.hover_close());
                     event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.hover_close()));
                 }
             }
@@ -336,7 +353,7 @@ impl ApplicationHandler<UserEvent> for App {
                 // The window has a flare on each side of the notch; positions count from the notch itself.
                 let ear = EAR * self.ui_scale();
                 let position = PhysicalPosition::new(position.x - ear, position.y);
-                self.cursor = (position.x, position.y);
+                self.pointer.cursor = (position.x, position.y);
                 if self.scrub.is_some() {
                     let s = self.ui_scale();
                     self.scrub = Some(self.scrub_at((position.x / s) as f32));
@@ -359,11 +376,11 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                if self.settings.open_on_click && !self.hovered && self.spring.progress < 0.9 {
+                if self.settings.open_on_click && !self.pointer.hovered && self.spring.progress < 0.9 {
                     // A click on the closed notch opens it.
-                    self.hovered = true;
-                    self.enter_at = None;
-                    self.leave_at = None;
+                    self.pointer.hovered = true;
+                    self.pointer.enter_at = None;
+                    self.pointer.leave_at = None;
                     self.last_tick = Instant::now();
                     if let Some(w) = &self.window {
                         w.request_redraw();
@@ -430,13 +447,13 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseWheel { delta, .. } if self.spring.progress >= 0.9 && !self.edit.on && self.timer_entry.field.is_none() && self.wheel_changes_tab() => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 // Scrolling down goes to the next tab, up to the one before; one step per flick.
-                if dy != 0.0 && self.last_wheel_tab.elapsed() > Duration::from_millis(220) {
+                if dy != 0.0 && self.pointer.last_wheel_tab.elapsed() > Duration::from_millis(220) {
                     let tabs = self.visible_tabs();
                     let here = if self.view == View::Lyrics { View::Player } else { self.view };
                     if let Some(i) = tabs.iter().position(|(_, v)| *v == here) {
                         let next = if dy < 0.0 { (i + 1).min(tabs.len() - 1) } else { i.saturating_sub(1) };
                         if next != i {
-                            self.last_wheel_tab = Instant::now();
+                            self.pointer.last_wheel_tab = Instant::now();
                             self.go_to_view(tabs[next].1);
                         }
                     }
@@ -445,7 +462,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseWheel { delta, .. } if self.view == View::Timer && !self.edit.on && self.spring.progress >= 0.9 => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 let s = self.ui_scale() as f32;
-                let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
+                let (cx, cy) = (self.pointer.cursor.0 as f32 / s, self.pointer.cursor.1 as f32 / s + TAB_SHIFT);
                 let column = TIMER_COLS.iter().position(|x| (cx - x).abs() <= 28.0);
                 if let Some(i) = column.filter(|_| dy != 0.0 && (TIMER_PLUS_Y - 12.0..=TIMER_MINUS_Y + 12.0).contains(&cy))
                     && self.timer.adjust(Unit::ALL[i], if dy > 0.0 { 1 } else { -1 })
@@ -456,7 +473,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::MouseWheel { delta, .. } if self.view == View::Lyrics && !self.edit.on && self.spring.progress >= 0.9 => {
                 let s = self.ui_scale() as f32;
-                let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
+                let (cx, cy) = (self.pointer.cursor.0 as f32 / s, self.pointer.cursor.1 as f32 / s + TAB_SHIFT);
                 let lines = match &self.lyric.state {
                     LyricsState::Found(l) => l.len(),
                     _ => 0,
@@ -477,7 +494,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseWheel { delta, .. } if self.edit.on && self.spring.progress >= 0.9 => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 let s = self.ui_scale() as f32;
-                let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
+                let (cx, cy) = (self.pointer.cursor.0 as f32 / s, self.pointer.cursor.1 as f32 / s + TAB_SHIFT);
                 if dy != 0.0
                     && self.edit.editor.wheel(cx, cy, if dy > 0.0 { 1 } else { -1 }, clock_now())
                     && let Some(w) = &self.window
@@ -551,8 +568,8 @@ impl ApplicationHandler<UserEvent> for App {
                 self.shelf.add(path);
                 self.shelf_ui.drag_hover = false;
                 // The drop happened over the notch, so keep it open until the cursor leaves.
-                self.hovered = true;
-                self.leave_at = None;
+                self.pointer.hovered = true;
+                self.pointer.leave_at = None;
                 self.view = View::Shelf;
                 if let Some(w) = &self.window {
                     w.request_redraw();
@@ -582,7 +599,7 @@ impl ApplicationHandler<UserEvent> for App {
         let now = Instant::now();
 
         // Highlighted shelf files hold the keyboard; let go of both once the notch closes or the shelf is left.
-        if self.shelf_ui.selecting && (self.view != View::Shelf || !self.hovered) {
+        if self.shelf_ui.selecting && (self.view != View::Shelf || !self.pointer.hovered) {
             self.shelf_ui.selected.clear();
             self.sync_selection_focus();
             if let Some(w) = &self.window {
@@ -624,14 +641,14 @@ impl ApplicationHandler<UserEvent> for App {
             }
         }
 
-        if self.enter_at.is_some_and(|t| now >= t) {
-            self.enter_at = None;
-            self.hovered = true;
+        if self.pointer.enter_at.is_some_and(|t| now >= t) {
+            self.pointer.enter_at = None;
+            self.pointer.hovered = true;
             self.last_tick = now;
         }
-        if self.leave_at.is_some_and(|t| now >= t) {
-            self.leave_at = None;
-            self.hovered = false;
+        if self.pointer.leave_at.is_some_and(|t| now >= t) {
+            self.pointer.leave_at = None;
+            self.pointer.hovered = false;
             self.last_tick = now;
         }
 
@@ -639,8 +656,8 @@ impl ApplicationHandler<UserEvent> for App {
         // the sides in), give it a moment to come back before the notch closes.
         if self.lyric.settle && !self.animating() {
             self.lyric.settle = false;
-            if self.hovered && !self.cursor_over_window() {
-                self.leave_at = Some(now + LYRIC_GRACE);
+            if self.pointer.hovered && !self.cursor_over_window() {
+                self.pointer.leave_at = Some(now + LYRIC_GRACE);
             }
         }
 
@@ -808,7 +825,7 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(t) = panel_wake {
             at(t);
         }
-        for t in [self.enter_at, self.leave_at].into_iter().flatten() {
+        for t in [self.pointer.enter_at, self.pointer.leave_at].into_iter().flatten() {
             at(t);
         }
         if let Some(t) = self.notices.until {

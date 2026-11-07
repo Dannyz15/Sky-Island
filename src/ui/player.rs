@@ -264,7 +264,7 @@ impl App {
             return false;
         }
         let s = self.ui_scale() as f32;
-        let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
+        let (cx, cy) = (self.pointer.cursor.0 as f32 / s, self.pointer.cursor.1 as f32 / s + TAB_SHIFT);
         let vol = self.geo().volume();
         let right = if vol.track_w > 0.0 { vol.track_x + vol.track_w + 6.0 } else { vol.icon_x + CTRL_R };
         cx >= vol.icon_x - CTRL_R && cx <= right && (cy - CTRL_Y).abs() <= 16.0
