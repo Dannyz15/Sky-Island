@@ -85,11 +85,14 @@ pub fn vk_of(code: KeyCode) -> Option<u32> {
 pub fn start(proxy: EventLoopProxy<UserEvent>, wanted: Option<(u32, u32)>) {
     let _ = PROXY.set(proxy);
     WANT.store(wanted.map_or(0, |(m, v)| pack(m, v)), Ordering::Relaxed);
-    msgwin::spawn(w!("SkyIslandHotkey"), Some(window_proc), |window| {
-        WINDOW.store(window.0 as isize, Ordering::Relaxed);
-        report(apply(window));
-        true
-    });
+    // SAFETY: the class name is a `w!` literal, which lives for the whole run.
+    unsafe {
+        msgwin::spawn(w!("SkyIslandHotkey"), Some(window_proc), |window| {
+            WINDOW.store(window.0 as isize, Ordering::Relaxed);
+            report(apply(window));
+            true
+        })
+    };
 }
 
 /// Use another combination, or none.

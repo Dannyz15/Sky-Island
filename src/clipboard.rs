@@ -400,7 +400,9 @@ pub fn spawn_watcher(proxy: EventLoopProxy<UserEvent>) {
     if WATCH.set(proxy).is_err() {
         return;
     }
-    if !msgwin::spawn(w!("SkyIslandClipboard"), Some(watch_proc), |window| unsafe { AddClipboardFormatListener(window).is_ok() }) {
+    // SAFETY: the class name is a `w!` literal, which lives for the whole run.
+    let listening = unsafe { msgwin::spawn(w!("SkyIslandClipboard"), Some(watch_proc), |window| AddClipboardFormatListener(window).is_ok()) };
+    if !listening {
         thread::spawn(|| {
             loop {
                 thread::sleep(POLL);

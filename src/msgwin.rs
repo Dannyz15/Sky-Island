@@ -15,9 +15,13 @@ use windows::core::PCWSTR;
 /// Start the thread with a window of the class `class`, whose messages go to `proc`. `setup` runs on the
 /// thread once the window exists and says whether the notifications could be switched on. Returns whether
 /// all of that worked, so the caller can fall back to looking at regular intervals instead.
-pub fn spawn(class: PCWSTR, proc: WNDPROC, setup: fn(HWND) -> bool) -> bool {
+///
+/// # Safety
+/// `class` is a bare pointer that the new thread reads for as long as it runs, which is the rest of the program: it
+/// must point to a NUL-terminated UTF-16 string that is never freed (a `w!("...")` literal is).
+pub unsafe fn spawn(class: PCWSTR, proc: WNDPROC, setup: fn(HWND) -> bool) -> bool {
     let (tx, rx) = mpsc::channel();
-    // PCWSTR is a bare pointer; the class names passed in are string literals that live for the whole run.
+    // PCWSTR is a bare pointer and a thread needs `Send`: it is passed as a number and made a pointer again there.
     let class = class.0 as usize;
     thread::spawn(move || unsafe {
         let class = PCWSTR(class as *const u16);

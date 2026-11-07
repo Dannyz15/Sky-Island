@@ -305,12 +305,15 @@ fn battery(proxy: Proxy) {
         return; // no battery (desktop), nothing to watch
     }
     look_at_battery(); // the starting point; nothing is announced for it
-    let listening = msgwin::spawn(w!("SkyIslandPower"), Some(power_proc), |window| unsafe {
-        let target = HANDLE(window.0);
-        let source = RegisterPowerSettingNotification(target, &GUID_ACDC_POWER_SOURCE, DEVICE_NOTIFY_WINDOW_HANDLE);
-        let charge = RegisterPowerSettingNotification(target, &GUID_BATTERY_PERCENTAGE_REMAINING, DEVICE_NOTIFY_WINDOW_HANDLE);
-        source.is_ok() && charge.is_ok()
-    });
+    // SAFETY: the class name is a `w!` literal, which lives for the whole run.
+    let listening = unsafe {
+        msgwin::spawn(w!("SkyIslandPower"), Some(power_proc), |window| {
+            let target = HANDLE(window.0);
+            let source = RegisterPowerSettingNotification(target, &GUID_ACDC_POWER_SOURCE, DEVICE_NOTIFY_WINDOW_HANDLE);
+            let charge = RegisterPowerSettingNotification(target, &GUID_BATTERY_PERCENTAGE_REMAINING, DEVICE_NOTIFY_WINDOW_HANDLE);
+            source.is_ok() && charge.is_ok()
+        })
+    };
     if !listening {
         loop {
             thread::sleep(BATTERY_POLL);
@@ -457,12 +460,15 @@ fn brightness(proxy: Proxy) {
     if let Ok(mut panel) = PANEL.lock() {
         *panel = Some(Panel { lcd: lcd.0 as usize, seen: Seen::new(first, Instant::now()) });
     }
-    let listening = msgwin::spawn(w!("SkyIslandBrightness"), Some(brightness_proc), |window| unsafe {
-        let target = HANDLE(window.0);
-        let level = RegisterPowerSettingNotification(target, &GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS, DEVICE_NOTIFY_WINDOW_HANDLE);
-        let source = RegisterPowerSettingNotification(target, &GUID_ACDC_POWER_SOURCE, DEVICE_NOTIFY_WINDOW_HANDLE);
-        level.is_ok() && source.is_ok()
-    });
+    // SAFETY: the class name is a `w!` literal, which lives for the whole run.
+    let listening = unsafe {
+        msgwin::spawn(w!("SkyIslandBrightness"), Some(brightness_proc), |window| {
+            let target = HANDLE(window.0);
+            let level = RegisterPowerSettingNotification(target, &GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS, DEVICE_NOTIFY_WINDOW_HANDLE);
+            let source = RegisterPowerSettingNotification(target, &GUID_ACDC_POWER_SOURCE, DEVICE_NOTIFY_WINDOW_HANDLE);
+            level.is_ok() && source.is_ok()
+        })
+    };
     let mut quick_until = Instant::now();
     loop {
         let quick_left = quick_until.saturating_duration_since(Instant::now());
