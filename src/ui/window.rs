@@ -40,7 +40,7 @@ impl App {
 
     pub(crate) fn animating(&self) -> bool {
         (self.progress - self.target()).abs() > f64::EPSILON
-            || self.switch_t < 1.0
+            || self.switch.t < 1.0
             || self.list_t < 1.0
             || self.cal_t < 1.0
             || self.art.track_t < 1.0
@@ -197,9 +197,9 @@ impl App {
         let tuck_goal = self.tuck_target();
         spring(&mut self.tuck_t, &mut self.tuck_v, tuck_goal, dt, 22.0 * speed, 1.0);
 
-        spring(&mut self.switch_t, &mut self.switch_v, 1.0, dt, 24.0 * speed, 1.0);
-        if self.switch_t >= 1.0 {
-            self.prev_view = None;
+        spring(&mut self.switch.t, &mut self.switch.v, 1.0, dt, 24.0 * speed, 1.0);
+        if self.switch.t >= 1.0 {
+            self.switch.prev = None;
         }
 
         if let Some(target) = self.tab_target() {

@@ -114,7 +114,7 @@ impl App {
         if self.view != View::Shelf || self.shelf.items.is_empty() {
             return;
         }
-        let alpha = alpha * (self.switch_t as f32).clamp(0.0, 1.0);
+        let alpha = alpha * (self.switch.t as f32).clamp(0.0, 1.0);
         let r = shelf_clear_rect(pm.height() as f32 / s);
         let hot = self.hot_t((r.0, r.1 + TAB_SHIFT, r.2, r.3), s);
         draw_clear_pill(pm, font, (r.0 * s, r.1 * s, r.2 * s, r.3 * s), s, alpha, hot, 10.0 * s, 11.5 * s);

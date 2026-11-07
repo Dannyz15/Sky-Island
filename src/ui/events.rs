@@ -707,21 +707,21 @@ impl ApplicationHandler<UserEvent> for App {
             }
         }
 
-        if self.view != self.shown_view {
+        if self.view != self.switch.shown {
             // Moving between Music and its lyrics is the same page; any other change is a transition in
             // which the old view slides out as the new one slides in from the side of its tab.
             let tab = |v: View| self.visible_tabs().iter().position(|(_, t)| *t == if v == View::Lyrics { View::Player } else { v });
-            let (from, to) = (tab(self.shown_view), tab(self.view));
+            let (from, to) = (tab(self.switch.shown), tab(self.view));
             if from != to || from.is_none() {
-                self.prev_view = Some(self.shown_view);
-                self.switch_dir = match (from, to) {
+                self.switch.prev = Some(self.switch.shown);
+                self.switch.dir = match (from, to) {
                     (Some(a), Some(b)) if b < a => -1.0,
                     _ => 1.0,
                 };
-                self.switch_t = 0.0;
-                self.switch_v = 0.0;
+                self.switch.t = 0.0;
+                self.switch.v = 0.0;
             }
-            self.shown_view = self.view;
+            self.switch.shown = self.view;
             self.last_tick = now;
         }
         let goal = self.tuck_target();

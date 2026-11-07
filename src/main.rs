@@ -240,13 +240,8 @@ struct App {
     cal_t: f64,
     cal_v: f64,
     cal_dir: f32,
-    /// 0 right after the view changed, 1 once the new view has taken over.
-    switch_t: f64,
-    switch_v: f64,
-    /// The view that is fading out while the new one comes in, and which way the new one slides from.
-    prev_view: Option<View>,
-    switch_dir: f32,
-    shown_view: View,
+    /// The change from one view to another: how far the new view has taken over, the view fading out, and the way the new one slides from.
+    switch: ui::ViewSwitch,
     /// Hover glows, switch knobs and other small values that glide towards their goal.
     glows: Glows,
     last_draw: Instant,
@@ -366,10 +361,7 @@ impl App {
             cal_t: 1.0,
             cal_v: 0.0,
             cal_dir: 1.0,
-            switch_t: 1.0,
-            switch_v: 0.0,
-            prev_view: None,
-            switch_dir: 1.0,
+            switch: ui::ViewSwitch::default(),
             glows: Glows::default(),
             last_draw: Instant::now(),
             body: None,
@@ -388,7 +380,6 @@ impl App {
             volume: ui::Volume::default(),
             weather: ui::WeatherTab::default(),
             prayer: ui::PrayerTab::default(),
-            shown_view: View::Player,
             last_tick: Instant::now(),
         }
     }

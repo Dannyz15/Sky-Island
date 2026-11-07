@@ -39,6 +39,23 @@ fn tab_rect(i: usize, count: usize, height: f32) -> (f32, f32, f32, f32) {
     (x0 + i as f32 * (TAB_W + TAB_GAP), height - TAB_BOTTOM + (TAB_PILL_H - TAB_BUTTON) / 2.0, TAB_W, TAB_BUTTON)
 }
 
+/// The change from one view to another: how far the new view has taken over, the view fading out, and the way the new one slides from.
+pub(crate) struct ViewSwitch {
+    /// 0 right after the view changed, 1 once the new view has taken over.
+    pub(crate) t: f64,
+    pub(crate) v: f64,
+    /// The view that is fading out while the new one comes in, and which way the new one slides from.
+    pub(crate) prev: Option<View>,
+    pub(crate) dir: f32,
+    pub(crate) shown: View,
+}
+
+impl Default for ViewSwitch {
+    fn default() -> Self {
+        Self { t: 1.0, v: 0.0, prev: None, dir: 1.0, shown: View::Player }
+    }
+}
+
 impl App {
     /// The tab index the highlight is heading for, if the current view has a tab.
     pub(crate) fn tab_target(&self) -> Option<f32> {

@@ -306,7 +306,7 @@ impl App {
         self.draw_shelf_clear(pm, s, alpha);
         // The other views are drawn for the normal width, so keep them centred while it is still wide.
         let dx = if matches!(self.view, View::Player | View::Lyrics) { 0.0 } else { self.tab_dx() };
-        let t = self.switch_t.clamp(0.0, 1.0) as f32;
+        let t = self.switch.t.clamp(0.0, 1.0) as f32;
         let moving = t < 0.999;
         if !moving && dx <= 0.5 {
             self.draw_view(pm, s, alpha, self.view);
@@ -315,26 +315,26 @@ impl App {
         // Between two tabs the views move as one strip: the old one slides out to the side its tab is on
         // while the new one slides in behind it, across the notch. The notch's own outline clips them.
         let width = size.0 as f32;
-        let clip = if self.prev_view.is_some() && moving {
+        let clip = if self.switch.prev.is_some() && moving {
             let r = (size.1 as f32 / 2.0).min(28.0 * s);
             gfx::rounded_path(0.0, -r, width, size.1 as f32 + r, r).and_then(|shape| gfx::mask_of(size.0, size.1, &shape))
         } else {
             None
         };
-        if let (true, Some(old)) = (moving, self.prev_view)
+        if let (true, Some(old)) = (moving, self.switch.prev)
             && let Some(mut layer) = Pixmap::new(size.0, size.1)
         {
             self.draw_view(&mut layer, s, alpha, old);
             let paint = PixmapPaint { opacity: 1.0 - 0.6 * t, quality: FilterQuality::Bilinear, ..Default::default() };
-            let at = Transform::from_translate(-self.switch_dir * width * t, 0.0);
+            let at = Transform::from_translate(-self.switch.dir * width * t, 0.0);
             pm.draw_pixmap(0, 0, layer.as_ref(), &paint, at, clip.as_ref());
         }
         if let Some(mut layer) = Pixmap::new(size.0, size.1) {
             self.draw_view(&mut layer, s, alpha, self.view);
-            let fade_in = if self.prev_view.is_some() { 0.4 + 0.6 * t } else { t };
+            let fade_in = if self.switch.prev.is_some() { 0.4 + 0.6 * t } else { t };
             let paint = PixmapPaint { opacity: fade_in, quality: FilterQuality::Bilinear, ..Default::default() };
-            let slide = if self.prev_view.is_some() { self.switch_dir * width * (1.0 - t) } else { 0.0 };
-            let at = Transform::from_translate(dx * s + slide, if self.prev_view.is_some() { 0.0 } else { (1.0 - t) * 8.0 * s });
+            let slide = if self.switch.prev.is_some() { self.switch.dir * width * (1.0 - t) } else { 0.0 };
+            let at = Transform::from_translate(dx * s + slide, if self.switch.prev.is_some() { 0.0 } else { (1.0 - t) * 8.0 * s });
             pm.draw_pixmap(0, 0, layer.as_ref(), &paint, at, clip.as_ref());
         }
     }
