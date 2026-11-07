@@ -172,9 +172,8 @@ struct App {
     pointer: ui::Pointer,
     /// Notices: the system notice on show and its fade, and the timer alert that keeps the notch open with its chime.
     notices: ui::Notices,
-    clips: History,
-    /// A short message for the clipboard header, with when to remove it.
-    clip_flash: Option<(&'static str, Instant)>,
+    /// The Clipboard view's items and the short message in its header.
+    clip: ui::ClipTab,
     /// The tray icon and its menu.
     tray: ui::Tray,
     todo: Todo,
@@ -263,12 +262,7 @@ impl App {
             screen_w: 1536.0,
             pointer: ui::Pointer::default(),
             notices: ui::Notices::default(),
-            clips: {
-                let mut clips = History::new();
-                clips.load_pinned(clipboard::read_pinned());
-                clips
-            },
-            clip_flash: None,
+            clip: ui::ClipTab::new(),
             tray: ui::Tray::default(),
             todo: Todo::new(),
             cal: calendar::Calendar::new(today_day()),

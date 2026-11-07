@@ -18,6 +18,22 @@ pub(crate) const CLIP_TEAL: [u8; 3] = [70, 200, 210];
 /// How long the "Copied" / "Cleared" message stays in the clipboard header.
 const FLASH: Duration = Duration::from_millis(1400);
 
+/// The Clipboard view: the copied items (with the pinned ones loaded from disk) and a short message for its header
+/// with when to remove it.
+pub(crate) struct ClipTab {
+    pub(crate) history: History,
+    /// A short message for the clipboard header, with when to remove it.
+    pub(crate) flash: Option<(&'static str, Instant)>,
+}
+
+impl ClipTab {
+    pub(crate) fn new() -> Self {
+        let mut history = History::new();
+        history.load_pinned(clipboard::read_pinned());
+        Self { history, flash: None }
+    }
+}
+
 impl App {
     pub(crate) fn draw_clipboard(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
         let Some(font) = &self.font else { return };
@@ -29,12 +45,12 @@ impl App {
         let width = EXPANDED.0 as f32 * s;
 
         // Header: what the list holds, or a short message after copying or clearing.
-        let count = self.clips.items.len();
-        let (title, color) = match self.clip_flash {
+        let count = self.clip.history.items.len();
+        let (title, color) = match self.clip.flash {
             Some((msg, _)) => (msg.to_string(), teal),
             None if !self.settings.clipboard => ("Clipboard history is off".to_string(), grey),
             None => {
-                let pinned = self.clips.pinned_count();
+                let pinned = self.clip.history.pinned_count();
                 let pins = if pinned > 0 { format!(" \u{00B7} {pinned} pinned") } else { String::new() };
                 (format!("Clipboard \u{00B7} {count} {}{pins}", if count == 1 { "item" } else { "items" }), gfx::mix(grey, white, 0.4))
             }
@@ -62,7 +78,7 @@ impl App {
 
         for row in 0..clipboard::VISIBLE {
             self.animated_row(pm, s, row, clipboard::VISIBLE, |pm| {
-                let Some(i) = self.clips.index_at(row) else { return };
+                let Some(i) = self.clip.history.index_at(row) else { return };
                 let y = CLIP_ROWS_Y + row as f32 * CLIP_ROW_H;
                 let rect = (24.0, y + 1.0, 372.0, CLIP_ROW_H - 2.0);
                 let hot = self.hot_t(rect, s);
@@ -72,7 +88,7 @@ impl App {
                     let tab = [teal[0], teal[1], teal[2], (teal[3] as f32 * hot) as u8];
                     gfx::gradient_rounded(pm, 24.0 * s, (y + 8.0) * s, 3.0 * s, (CLIP_ROW_H - 16.0) * s, 1.5 * s, tab, [rgb[0], rgb[1], rgb[2], 0], false);
                 }
-                match &self.clips.items[i] {
+                match &self.clip.history.items[i] {
                     clipboard::Content::Text(text) => {
                         let baseline = (y + CLIP_ROW_H / 2.0 + 4.0) * s;
                         draw_text(pm, font, &clipboard::preview(text), 34.0 * s, baseline, 12.0 * s, white, (PIN_X - 42.0) * s);
@@ -97,8 +113,8 @@ impl App {
                     }
                 }
                 // The pin: always there on a pinned row, and on the others while the mouse is over the row.
-                if matches!(self.clips.items[i], clipboard::Content::Text(_)) {
-                    let pinned = self.clips.is_pinned(i);
+                if matches!(self.clip.history.items[i], clipboard::Content::Text(_)) {
+                    let pinned = self.clip.history.is_pinned(i);
                     let over_pin = self.hot_t((PIN_X - 12.0, y, 24.0, CLIP_ROW_H), s);
                     let strength = if pinned { 1.0 } else { hot * (0.35 + 0.65 * over_pin) };
                     if strength > 0.02 {
@@ -117,7 +133,7 @@ impl App {
             let (top, height) = (CLIP_ROWS_Y, CLIP_ROW_H * clipboard::VISIBLE as f32);
             fill_rounded(pm, 410.0 * s, top * s, 3.0 * s, height * s, 1.5 * s, [255, 255, 255, (alpha * 22.0) as u8]);
             let thumb = height * clipboard::VISIBLE as f32 / count as f32;
-            let at = top + (height - thumb) * self.clips.scroll as f32 / (count - clipboard::VISIBLE) as f32;
+            let at = top + (height - thumb) * self.clip.history.scroll as f32 / (count - clipboard::VISIBLE) as f32;
             fill_rounded(pm, 410.0 * s, at * s, 3.0 * s, thumb * s, 1.5 * s, teal);
         }
     }
@@ -127,25 +143,25 @@ impl App {
         let inside = |r: (f32, f32, f32, f32)| cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3;
         if inside(CLIP_CLEAR) {
             // Clears the history here (not the pinned items) and the Windows clipboard itself.
-            self.clips.clear();
+            self.clip.history.clear();
             clipboard::empty();
-            self.clip_flash = Some(("Cleared", Instant::now() + FLASH));
+            self.clip.flash = Some(("Cleared", Instant::now() + FLASH));
         } else {
             let row = ((cy - CLIP_ROWS_Y) / CLIP_ROW_H).floor();
-            let Some(idx) = (row >= 0.0).then(|| self.clips.index_at(row as usize)).flatten() else { return };
+            let Some(idx) = (row >= 0.0).then(|| self.clip.history.index_at(row as usize)).flatten() else { return };
             if cx >= REMOVE_X {
-                self.clips.remove(idx);
-                clipboard::save_pinned(&self.clips);
-            } else if cx >= PIN_X - 12.0 && matches!(self.clips.items.get(idx), Some(clipboard::Content::Text(_))) {
-                if self.clips.toggle_pin(idx) {
-                    clipboard::save_pinned(&self.clips);
+                self.clip.history.remove(idx);
+                clipboard::save_pinned(&self.clip.history);
+            } else if cx >= PIN_X - 12.0 && matches!(self.clip.history.items.get(idx), Some(clipboard::Content::Text(_))) {
+                if self.clip.history.toggle_pin(idx) {
+                    clipboard::save_pinned(&self.clip.history);
                 } else {
-                    self.clip_flash = Some(("Pin limit reached", Instant::now() + FLASH));
+                    self.clip.flash = Some(("Pin limit reached", Instant::now() + FLASH));
                 }
-            } else if let Some(content) = self.clips.items.get(idx).cloned() {
+            } else if let Some(content) = self.clip.history.items.get(idx).cloned() {
                 // The watcher will see this change and move the entry to the top.
                 if clipboard::set_content(&content) {
-                    self.clip_flash = Some(("Copied", Instant::now() + FLASH));
+                    self.clip.flash = Some(("Copied", Instant::now() + FLASH));
                 }
             } else {
                 return;

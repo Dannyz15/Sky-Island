@@ -49,7 +49,7 @@ impl App {
         match self.view {
             View::Todo => (View::Todo, self.todo.scroll, self.todo.tasks.len(), 0),
             View::Shelf => (View::Shelf, self.shelf.scroll, self.shelf.items.len(), 0),
-            View::Clipboard => (View::Clipboard, self.clips.scroll, self.clips.items.len(), 0),
+            View::Clipboard => (View::Clipboard, self.clip.history.scroll, self.clip.history.items.len(), 0),
             View::Calendar => (View::Calendar, 0, self.todo.on_day(self.cal.selected).len(), self.cal.selected),
             v => (v, 0, 0, 0),
         }

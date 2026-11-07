@@ -124,7 +124,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Clip(content) => {
                 if self.settings.clipboard
-                    && self.clips.add(content)
+                    && self.clip.history.add(content)
                     && self.view == View::Clipboard
                     && self.spring.progress > 0.0
                     && let Some(w) = &self.window
@@ -509,7 +509,7 @@ impl ApplicationHandler<UserEvent> for App {
                     let rows = if dy > 0.0 { -1 } else { 1 };
                     match self.view {
                         View::Todo => self.todo.scroll_by(rows),
-                        View::Clipboard => self.clips.scroll_by(rows),
+                        View::Clipboard => self.clip.history.scroll_by(rows),
                         _ => self.shelf.scroll_by(rows),
                     }
                     if let Some(w) = &self.window {
@@ -682,7 +682,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
         // Copied items are forgotten after the time the user chose.
         if let Some(keep) = self.settings.clip_keep.duration()
-            && self.clips.expire(now, keep)
+            && self.clip.history.expire(now, keep)
             && self.view == View::Clipboard
             && self.spring.progress > 0.0
             && let Some(w) = &self.window
@@ -717,8 +717,8 @@ impl ApplicationHandler<UserEvent> for App {
             self.notices.until = None;
             self.last_tick = now;
         }
-        if self.clip_flash.as_ref().is_some_and(|(_, t)| now >= *t) {
-            self.clip_flash = None;
+        if self.clip.flash.as_ref().is_some_and(|(_, t)| now >= *t) {
+            self.clip.flash = None;
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -831,10 +831,10 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(t) = self.notices.until {
             at(t);
         }
-        if let Some((_, t)) = self.clip_flash {
+        if let Some((_, t)) = self.clip.flash {
             at(t);
         }
-        if let Some(t) = self.settings.clip_keep.duration().and_then(|keep| self.clips.next_expiry(keep)) {
+        if let Some(t) = self.settings.clip_keep.duration().and_then(|keep| self.clip.history.next_expiry(keep)) {
             at(t);
         }
 
