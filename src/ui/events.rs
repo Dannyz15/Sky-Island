@@ -204,21 +204,21 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Lyrics { key, fetched, online } => {
                 // Ignore answers for a song that is no longer playing, and ones that began before the lyrics
                 // switch was turned the other way.
-                if key == self.lyrics_key && online == self.settings.lyrics_online {
+                if key == self.lyric.key && online == self.settings.lyrics_online {
                     // A second look that finds nothing does not take away what the first one found.
-                    let keep = !matches!(fetched, lyrics::Fetched::Lines(_)) && matches!(self.lyrics, LyricsState::Found(_));
-                    self.lyrics_retry_at = None;
-                    self.lyrics = match fetched {
+                    let keep = !matches!(fetched, lyrics::Fetched::Lines(_)) && matches!(self.lyric.state, LyricsState::Found(_));
+                    self.lyric.retry_at = None;
+                    self.lyric.state = match fetched {
                         lyrics::Fetched::Lines(l) => LyricsState::Found(l),
-                        _ if keep => std::mem::replace(&mut self.lyrics, LyricsState::None),
+                        _ if keep => std::mem::replace(&mut self.lyric.state, LyricsState::None),
                         lyrics::Fetched::NotFound => LyricsState::NotFound,
                         lyrics::Fetched::Off => LyricsState::Off,
                         lyrics::Fetched::Unreachable => {
-                            self.lyrics_retry_at = Some(Instant::now() + LYRICS_RETRY);
+                            self.lyric.retry_at = Some(Instant::now() + LYRICS_RETRY);
                             LyricsState::Unreachable
                         }
                     };
-                    self.lyric_manual = None;
+                    self.lyric.manual = None;
                     self.snap_lyrics();
                     if self.progress > 0.0
                         && let Some(w) = &self.window
@@ -237,29 +237,29 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 let key = format!("{}|{}", state.title, state.artist);
                 if !state.has_session || state.title.is_empty() {
-                    self.lyrics_key.clear();
-                    self.lyrics = LyricsState::None;
+                    self.lyric.key.clear();
+                    self.lyric.state = LyricsState::None;
                     self.seeked = false;
-                } else if key != self.lyrics_key {
+                } else if key != self.lyric.key {
                     self.seeked = false;
-                    self.lyrics_key = key.clone();
-                    self.lyrics = LyricsState::Loading;
-                    self.lyric_manual = None;
-                    self.lyric_pos = -1.0;
-                    self.lyric_v = 0.0;
+                    self.lyric.key = key.clone();
+                    self.lyric.state = LyricsState::Loading;
+                    self.lyric.manual = None;
+                    self.lyric.pos = -1.0;
+                    self.lyric.v = 0.0;
                     (self.track_t, self.track_v) = (0.0, 0.0);
-                    (self.lyrics_duration, self.lyrics_refetched) = (state.duration, false);
+                    (self.lyric.duration, self.lyric.refetched) = (state.duration, false);
                     lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.settings.lyrics_online, self.proxy.clone());
-                } else if !self.lyrics_refetched && !state.duration.is_zero() && state.duration.abs_diff(self.lyrics_duration) > Duration::from_secs(2) {
+                } else if !self.lyric.refetched && !state.duration.is_zero() && state.duration.abs_diff(self.lyric.duration) > Duration::from_secs(2) {
                     // The first look used no length or the old song's: look again, once, with the right one.
                     // What is shown stays until the answer comes.
-                    (self.lyrics_duration, self.lyrics_refetched) = (state.duration, true);
+                    (self.lyric.duration, self.lyric.refetched) = (state.duration, true);
                     lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.settings.lyrics_online, self.proxy.clone());
-                } else if self.lyrics_retry_at.is_some_and(|at| Instant::now() >= at) {
+                } else if self.lyric.retry_at.is_some_and(|at| Instant::now() >= at) {
                     // The lyrics site could not be reached a while ago: ask again. The message stays until the
                     // answer comes, and the next try is only planned if that one fails too.
-                    self.lyrics_retry_at = None;
-                    self.lyrics_duration = state.duration;
+                    self.lyric.retry_at = None;
+                    self.lyric.duration = state.duration;
                     lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.settings.lyrics_online, self.proxy.clone());
                 }
                 if let Some(art) = &state.art {
@@ -311,7 +311,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorLeft { .. } => {
                 let now = Instant::now();
                 self.enter_at = None; // a fly-by never opened it
-                if self.hovered && self.scrub.is_none() && !self.lyric_settle {
+                if self.hovered && self.scrub.is_none() && !self.lyric.settle {
                     self.leave_at = Some(now + self.hover_close());
                     event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.hover_close()));
                 }
@@ -441,18 +441,18 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseWheel { delta, .. } if self.view == View::Lyrics && !self.editing && self.progress >= 0.9 => {
                 let s = self.ui_scale() as f32;
                 let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
-                let lines = match &self.lyrics {
+                let lines = match &self.lyric.state {
                     LyricsState::Found(l) => l.len(),
                     _ => 0,
                 };
                 // Scroll the lyrics by hand: wheel up goes to earlier lines.
                 let step = wheel(&delta, 1.0, 1.0 / 24.0);
                 if lines > 0 && step != 0.0 && cx >= LYRIC_X - 8.0 && (LYRIC_AREA.0..=LYRIC_AREA.1).contains(&cy) {
-                    let from = self.lyric_manual.unwrap_or(self.lyric_pos.max(0.0));
+                    let from = self.lyric.manual.unwrap_or(self.lyric.pos.max(0.0));
                     let to = (from - step).clamp(0.0, lines as f64 - 1.0);
                     let sung = self.current_line();
                     // Back on the line being sung: carry on following the music.
-                    self.lyric_manual = if sung.is_some_and(|c| c == to.round() as usize) { None } else { Some(to) };
+                    self.lyric.manual = if sung.is_some_and(|c| c == to.round() as usize) { None } else { Some(to) };
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
@@ -621,8 +621,8 @@ impl ApplicationHandler<UserEvent> for App {
 
         // The notch has finished changing width. If the mouse is now outside it (closing the lyrics pulls
         // the sides in), give it a moment to come back before the notch closes.
-        if self.lyric_settle && !self.animating() {
-            self.lyric_settle = false;
+        if self.lyric.settle && !self.animating() {
+            self.lyric.settle = false;
             if self.hovered && !self.cursor_over_window() {
                 self.leave_at = Some(now + LYRIC_GRACE);
             }
@@ -767,7 +767,7 @@ impl ApplicationHandler<UserEvent> for App {
         if expanded
             && self.view == View::Lyrics
             && self.media.playing
-            && let LyricsState::Found(lines) = &self.lyrics
+            && let LyricsState::Found(lines) = &self.lyric.state
         {
             let next = self.current_line().map_or(0, |c| c + 1);
             if let Some(line) = lines.get(next) {

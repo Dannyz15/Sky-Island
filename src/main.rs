@@ -160,20 +160,8 @@ struct App {
     /// logical pixels, and how fast that is changing.
     grow_t: f64,
     grow_v: f64,
-    lyrics: LyricsState,
-    lyrics_key: String,
-    /// The song length the lyrics were looked up with, and whether they were looked up again once a
-    /// different length arrived (the browser often reports the length a moment after the title).
-    lyrics_duration: Duration,
-    lyrics_refetched: bool,
-    /// When to look the lyrics up again after the site could not be reached.
-    lyrics_retry_at: Option<Instant>,
-    /// The line (fractional) in the middle of the lyrics view. A spring follows the line being sung, or
-    /// wherever the wheel took it.
-    lyric_pos: f64,
-    lyric_v: f64,
-    /// Set while the lyrics were scrolled by hand: the line the wheel moved to. `None` follows the music.
-    lyric_manual: Option<f64>,
+    /// The lyrics view: the lyrics of the song, where they came from, and the line in the middle.
+    lyric: ui::LyricsView,
     timer: Timer,
     /// The timer number being typed (index into `Unit::ALL`), and the digits typed so far.
     timer_field: Option<usize>,
@@ -203,9 +191,6 @@ struct App {
     closed_v: f64,
     /// When the mouse wheel last changed the tab, so one flick moves one tab.
     last_wheel_tab: Instant,
-    /// The lyrics just opened or closed: the notch changes width under the mouse, so the system's
-    /// "mouse left" is ignored until it has settled.
-    lyric_settle: bool,
     /// Sky Island moved the song itself (a click on a lyric line or on the bar) and the song has not changed since.
     seeked: bool,
     /// Latest system notice, kept after it expires so it can fade out.
@@ -355,14 +340,7 @@ impl App {
             view_v: 0.0,
             grow_t: 0.0,
             grow_v: 0.0,
-            lyrics: LyricsState::None,
-            lyrics_key: String::new(),
-            lyrics_duration: Duration::ZERO,
-            lyrics_refetched: false,
-            lyrics_retry_at: None,
-            lyric_pos: -1.0,
-            lyric_v: 0.0,
-            lyric_manual: None,
+            lyric: ui::LyricsView::default(),
             timer: Timer::load(),
             timer_field: None,
             timer_input: String::new(),
@@ -386,7 +364,6 @@ impl App {
             closed_k: 1.0,
             closed_v: 0.0,
             last_wheel_tab: Instant::now(),
-            lyric_settle: false,
             seeked: false,
             notice: None,
             notice_until: None,

@@ -135,6 +135,33 @@ pub(crate) struct VolumeGeo {
     pub(crate) track_w: f32,
 }
 
+/// The lyrics view: the lyrics of the song, where they came from, and the line in the middle.
+pub(crate) struct LyricsView {
+    pub(crate) state: LyricsState,
+    pub(crate) key: String,
+    /// The song length the lyrics were looked up with, and whether they were looked up again once a
+    /// different length arrived (the browser often reports the length a moment after the title).
+    pub(crate) duration: Duration,
+    pub(crate) refetched: bool,
+    /// When to look the lyrics up again after the site could not be reached.
+    pub(crate) retry_at: Option<Instant>,
+    /// The line (fractional) in the middle of the lyrics view. A spring follows the line being sung, or
+    /// wherever the wheel took it.
+    pub(crate) pos: f64,
+    pub(crate) v: f64,
+    /// Set while the lyrics were scrolled by hand: the line the wheel moved to. `None` follows the music.
+    pub(crate) manual: Option<f64>,
+    /// The lyrics just opened or closed: the notch changes width under the mouse, so the system's
+    /// "mouse left" is ignored until it has settled.
+    pub(crate) settle: bool,
+}
+
+impl Default for LyricsView {
+    fn default() -> Self {
+        Self { state: LyricsState::None, key: String::new(), duration: Duration::ZERO, refetched: false, retry_at: None, pos: -1.0, v: 0.0, manual: None, settle: false }
+    }
+}
+
 impl PlayerGeo {
     pub(crate) fn volume(&self) -> VolumeGeo {
         let icon_x = self.ctrl_x[2] + 100.0;
@@ -162,29 +189,29 @@ impl App {
     /// The line the lyrics view is heading for: where the wheel took it, otherwise the line being sung
     /// (-1 before the first one starts).
     pub(crate) fn lyric_target(&self) -> f64 {
-        self.lyric_manual.unwrap_or_else(|| self.current_line().map_or(-1.0, |c| c as f64))
+        self.lyric.manual.unwrap_or_else(|| self.current_line().map_or(-1.0, |c| c as f64))
     }
 
     /// Put the middle of the view on its target at once, without gliding there.
     pub(crate) fn snap_lyrics(&mut self) {
-        self.lyric_pos = self.lyric_target();
-        self.lyric_v = 0.0;
+        self.lyric.pos = self.lyric_target();
+        self.lyric.v = 0.0;
     }
 
     /// Look for the lyrics of the song that plays again, at once: used when the Find lyrics online switch is turned,
     /// so the view does not wait for the player's next update to show the new state.
     pub(crate) fn restart_lyrics(&mut self) {
-        self.lyrics_key.clear();
+        self.lyric.key.clear();
         let m = &self.media;
         if !m.has_session || m.title.is_empty() {
-            self.lyrics = LyricsState::None;
+            self.lyric.state = LyricsState::None;
             return;
         }
         let key = format!("{}|{}", m.title, m.artist);
-        self.lyrics_key = key.clone();
-        self.lyrics = LyricsState::Loading;
-        (self.lyric_manual, self.lyrics_retry_at) = (None, None);
-        (self.lyrics_duration, self.lyrics_refetched) = (m.duration, false);
+        self.lyric.key = key.clone();
+        self.lyric.state = LyricsState::Loading;
+        (self.lyric.manual, self.lyric.retry_at) = (None, None);
+        (self.lyric.duration, self.lyric.refetched) = (m.duration, false);
         crate::lyrics::spawn_fetch(key, m.title.clone(), m.artist.clone(), m.duration, self.settings.lyrics_online, self.proxy.clone());
         self.snap_lyrics();
         if self.progress > 0.0
@@ -197,12 +224,12 @@ impl App {
     /// Whether the lyrics were scrolled to somewhere other than the line being sung, so Sync is offered.
     fn lyric_off_sync(&self) -> bool {
         let sung = self.current_line().map_or(-1.0, |c| c as f64);
-        self.lyric_manual.is_some_and(|m| (m - sung).abs() >= 1.0)
+        self.lyric.manual.is_some_and(|m| (m - sung).abs() >= 1.0)
     }
 
     /// Index of the lyric line being sung at the current position.
     pub(crate) fn current_line(&self) -> Option<usize> {
-        let LyricsState::Found(lines) = &self.lyrics else { return None };
+        let LyricsState::Found(lines) = &self.lyric.state else { return None };
         let pos = self.position();
         lines.iter().rposition(|l| l.at <= pos)
     }
@@ -243,13 +270,13 @@ impl App {
 
     /// Lay out the visible lyric lines around the middle of the view, wrapped, in logical pixels.
     fn layout_lyrics(&self) -> Vec<LyricItem> {
-        let (Some(font), LyricsState::Found(lines)) = (&self.font, &self.lyrics) else {
+        let (Some(font), LyricsState::Found(lines)) = (&self.font, &self.lyric.state) else {
             return Vec::new();
         };
         let cur = self.current_line();
         // The middle of the view is a fractional line while it glides. Before the first line starts it
         // is -1, so the upcoming lines start below the middle.
-        let pos = self.lyric_pos.clamp(-1.0, lines.len() as f64 - 1.0);
+        let pos = self.lyric.pos.clamp(-1.0, lines.len() as f64 - 1.0);
         let base = pos.floor() as isize;
         let frac = (pos - base as f64) as f32;
         let mid = (LYRIC_AREA.0 + LYRIC_AREA.1) / 2.0;
@@ -343,7 +370,7 @@ impl App {
         let a = (alpha * 255.0) as u8;
         let grey = [160, 160, 165, a];
 
-        if matches!(self.lyrics, LyricsState::Found(_)) {
+        if matches!(self.lyric.state, LyricsState::Found(_)) {
             for it in self.layout_lyrics() {
                 let (rgb, strength) = lyric_tone(it.near);
                 for (i, row) in it.rows.iter().enumerate() {
@@ -370,7 +397,7 @@ impl App {
             }
             self.draw_lyric_sync(pm, font, s, alpha, dx);
         } else {
-            let msg = match &self.lyrics {
+            let msg = match &self.lyric.state {
                 LyricsState::Loading => "Searching for lyrics\u{2026}",
                 LyricsState::NotFound => "No synced lyrics found",
                 LyricsState::Unreachable => "Lyrics site unreachable",
@@ -401,7 +428,7 @@ impl App {
         gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [ar, ag, ab, (k * 150.0) as u8]);
         // The arrow points up when the line being sung is above the middle, down when it is below.
         let sung = self.current_line().map_or(-1.0, |c| c as f64);
-        let dir = if sung < self.lyric_manual.unwrap_or(sung) { -1.0 } else { 1.0 };
+        let dir = if sung < self.lyric.manual.unwrap_or(sung) { -1.0 } else { 1.0 };
         let (ax, ay) = (x + 12.0 * s, y + h / 2.0);
         fill_path(pm, &[(ax - 3.5 * s, ay - 1.5 * s * dir), (ax + 3.5 * s, ay - 1.5 * s * dir), (ax, ay + 2.8 * s * dir)], [255, 255, 255, a]);
         draw_text(pm, font, "Sync", x + 22.0 * s, y + h / 2.0 + 4.0 * s, 11.0 * s, [255, 255, 255, a], 36.0 * s);
@@ -537,10 +564,10 @@ impl App {
             self.view = if self.view == View::Lyrics { View::Player } else { View::Lyrics };
             if self.view == View::Lyrics {
                 // Opening: start on the line being sung, not wherever it was left.
-                self.lyric_manual = None;
+                self.lyric.manual = None;
                 self.snap_lyrics();
             }
-            self.lyric_settle = true;
+            self.lyric.settle = true;
             self.last_tick = Instant::now();
             window.request_redraw();
             return;
@@ -559,7 +586,7 @@ impl App {
         }
         // Sync takes the lyrics back to the line being sung.
         if self.view == View::Lyrics && self.lyric_off_sync() && cx >= SYNC_RECT.0 && cx <= SYNC_RECT.0 + SYNC_RECT.2 && cy >= SYNC_RECT.1 && cy <= SYNC_RECT.1 + SYNC_RECT.3 {
-            self.lyric_manual = None;
+            self.lyric.manual = None;
             window.request_redraw();
             return;
         }
@@ -567,7 +594,7 @@ impl App {
         if self.view != View::Lyrics || cx < LYRIC_X - 8.0 || cy < LYRIC_AREA.0 || cy > LYRIC_AREA.1 {
             return;
         }
-        let LyricsState::Found(lines) = &self.lyrics else { return };
+        let LyricsState::Found(lines) = &self.lyric.state else { return };
         // A player that does not let other programs move the song would ignore the jump: leave the lyrics where they are.
         if !self.media.can_seek {
             return;
@@ -582,7 +609,7 @@ impl App {
             self.media.position = at;
             self.media_at = Instant::now();
             // The lyrics follow the music again from the line that was picked.
-            self.lyric_manual = None;
+            self.lyric.manual = None;
             window.request_redraw();
         }
     }

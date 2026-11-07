@@ -56,7 +56,7 @@ impl App {
             || (self.music.w - self.music_extra_goal()).abs() > 1e-3
             || (self.closed_k - self.closed_target()).abs() > 1e-4
             || (self.target_k() - self.ui_k).abs() > 1e-3
-            || (self.view == View::Lyrics && matches!(self.lyrics, LyricsState::Found(_)) && (self.lyric_pos - self.lyric_target()).abs() > f64::EPSILON)
+            || (self.view == View::Lyrics && matches!(self.lyric.state, LyricsState::Found(_)) && (self.lyric.pos - self.lyric_target()).abs() > f64::EPSILON)
     }
 
     fn ov_target(&self) -> f64 {
@@ -253,9 +253,9 @@ impl App {
         spring(&mut self.grow_t, &mut self.grow_v, grow, dt, omega, zeta);
 
         // The lyrics glide to the line being sung, or to wherever they were scrolled.
-        if self.view == View::Lyrics && matches!(self.lyrics, LyricsState::Found(_)) {
+        if self.view == View::Lyrics && matches!(self.lyric.state, LyricsState::Found(_)) {
             let goal = self.lyric_target();
-            spring(&mut self.lyric_pos, &mut self.lyric_v, goal, dt, 14.0 * speed, 1.0);
+            spring(&mut self.lyric.pos, &mut self.lyric.v, goal, dt, 14.0 * speed, 1.0);
         }
 
         let closed_goal = self.closed_target();
