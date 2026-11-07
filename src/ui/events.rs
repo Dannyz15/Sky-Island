@@ -152,7 +152,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::FollowTo(screen) => self.follow_to(screen),
             UserEvent::Icon { path, icon } => {
                 // Only for a file still on the shelf: it may have been removed while the icon was loading.
-                if let Some(slot) = self.icons.get_mut(&path) {
+                if let Some(slot) = self.shelf_ui.icons.get_mut(&path) {
                     *slot = icon;
                     if self.view == View::Shelf
                         && self.progress > 0.0
@@ -335,10 +335,10 @@ impl ApplicationHandler<UserEvent> for App {
                 {
                     w.request_redraw();
                 }
-                if let Some((idx, start)) = self.press
+                if let Some((idx, start)) = self.shelf_ui.press
                     && (position.x - start.0).hypot(position.y - start.1) > DRAG_THRESHOLD
                 {
-                    self.press = None;
+                    self.shelf_ui.press = None;
                     self.drag_out(idx);
                 }
             }
@@ -371,26 +371,26 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
                 // A press that never turned into a drag is a click: open the file.
-                if let Some((idx, _)) = self.press.take()
+                if let Some((idx, _)) = self.shelf_ui.press.take()
                     && let Some(path) = self.shelf.items.get(idx).cloned()
                 {
                     crate::open::open(&path);
-                    self.selected.clear();
+                    self.shelf_ui.selected.clear();
                     self.sync_selection_focus();
                 }
             }
-            WindowEvent::Focused(false) if self.selecting => {
+            WindowEvent::Focused(false) if self.shelf_ui.selecting => {
                 // The user went to another app: the highlight and the keyboard are no longer ours.
-                self.selecting = false;
+                self.shelf_ui.selecting = false;
                 self.prev_foreground = None;
-                self.selected.clear();
+                self.shelf_ui.selected.clear();
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if self.view == View::Shelf && event.state == ElementState::Pressed => {
                 match &event.logical_key {
-                    Key::Named(NamedKey::Escape) => self.selected.clear(),
+                    Key::Named(NamedKey::Escape) => self.shelf_ui.selected.clear(),
                     _ => return,
                 }
                 self.sync_selection_focus();
@@ -522,18 +522,18 @@ impl ApplicationHandler<UserEvent> for App {
                 self.stop_editing();
             }
             WindowEvent::HoveredFile(_) => {
-                self.drag_hover = true;
+                self.shelf_ui.drag_hover = true;
                 self.view = View::Shelf;
                 self.last_tick = Instant::now();
                 event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.frame));
             }
             WindowEvent::HoveredFileCancelled => {
-                self.drag_hover = false;
+                self.shelf_ui.drag_hover = false;
                 self.last_tick = Instant::now();
             }
             WindowEvent::DroppedFile(path) => {
                 self.shelf.add(path);
-                self.drag_hover = false;
+                self.shelf_ui.drag_hover = false;
                 // The drop happened over the notch, so keep it open until the cursor leaves.
                 self.hovered = true;
                 self.leave_at = None;
@@ -566,8 +566,8 @@ impl ApplicationHandler<UserEvent> for App {
         let now = Instant::now();
 
         // Highlighted shelf files hold the keyboard; let go of both once the notch closes or the shelf is left.
-        if self.selecting && (self.view != View::Shelf || !self.hovered) {
-            self.selected.clear();
+        if self.shelf_ui.selecting && (self.view != View::Shelf || !self.hovered) {
+            self.shelf_ui.selected.clear();
             self.sync_selection_focus();
             if let Some(w) = &self.window {
                 w.request_redraw();

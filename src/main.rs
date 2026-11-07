@@ -168,18 +168,8 @@ struct App {
     timer_input: String,
     water: Water,
     shelf: Shelf,
-    /// Shell icons for shelf files; `None` when the shell has no icon for a file.
-    icons: HashMap<PathBuf, Option<Pixmap>>,
-    /// Where to send a file whose icon is wanted; the thread that loads them starts with the first one.
-    icon_loader: Option<std::sync::mpsc::Sender<PathBuf>>,
-    /// A file is being dragged over the notch from outside.
-    drag_hover: bool,
-    /// Shelf item index and cursor position where the mouse went down.
-    press: Option<(usize, (f64, f64))>,
-    /// Shelf files highlighted with Ctrl+click; dragging one of them takes all of them.
-    selected: Vec<PathBuf>,
-    /// The notch took the keyboard for the shelf's Ctrl+A and Esc, so it hands it back when the highlight ends.
-    selecting: bool,
+    /// What the shelf shows on screen: file icons, a drag over the notch, and the highlighted files.
+    shelf_ui: ui::ShelfUi,
     /// Where the progress bar is being dragged to; the song jumps there when the button is let go.
     scrub: Option<Duration>,
     /// The scale the Size setting gives the whole island (1.0 is normal), and the width of the screen in
@@ -352,12 +342,7 @@ impl App {
                 }
                 shelf
             },
-            icons: HashMap::new(),
-            icon_loader: None,
-            drag_hover: false,
-            press: None,
-            selected: Vec::new(),
-            selecting: false,
+            shelf_ui: ui::ShelfUi::default(),
             scrub: None,
             ui_k: 1.0,
             screen_w: 1536.0,

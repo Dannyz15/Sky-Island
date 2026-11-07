@@ -16,14 +16,14 @@ const TUCK_STRIP: f64 = 3.0;
 
 impl App {
     fn target(&self) -> f64 {
-        if self.hovered || self.drag_hover || self.editing || self.timer_field.is_some() || self.alert_until.is_some() { 1.0 } else { 0.0 }
+        if self.hovered || self.shelf_ui.drag_hover || self.editing || self.timer_field.is_some() || self.alert_until.is_some() { 1.0 } else { 0.0 }
     }
 
     /// With "Auto-hide notch" on, the notch slides away whenever there is nothing to show or touch.
     pub(crate) fn tuck_target(&self) -> f64 {
         let needed = self.hovered
             || self.enter_at.is_some()
-            || self.drag_hover
+            || self.shelf_ui.drag_hover
             || self.editing
             || self.timer_field.is_some()
             || self.alert_until.is_some()

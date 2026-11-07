@@ -23,18 +23,35 @@ fn tile_rect(slot: usize) -> (f32, f32, f32, f32) {
     (TILES_ORIGIN.0 + col * (TILE.0 + TILE_GAP.0), TILES_ORIGIN.1 + row * (TILE.1 + TILE_GAP.1), TILE.0, TILE.1)
 }
 
+/// What the shelf shows on screen: file icons, a drag over the notch, and the highlighted files.
+#[derive(Default)]
+pub(crate) struct ShelfUi {
+    /// Shell icons for shelf files; `None` when the shell has no icon for a file.
+    pub(crate) icons: HashMap<PathBuf, Option<Pixmap>>,
+    /// Where to send a file whose icon is wanted; the thread that loads them starts with the first one.
+    pub(crate) icon_loader: Option<std::sync::mpsc::Sender<PathBuf>>,
+    /// A file is being dragged over the notch from outside.
+    pub(crate) drag_hover: bool,
+    /// Shelf item index and cursor position where the mouse went down.
+    pub(crate) press: Option<(usize, (f64, f64))>,
+    /// Shelf files highlighted with Ctrl+click; dragging one of them takes all of them.
+    pub(crate) selected: Vec<PathBuf>,
+    /// The notch took the keyboard for the shelf's Ctrl+A and Esc, so it hands it back when the highlight ends.
+    pub(crate) selecting: bool,
+}
+
 impl App {
     /// Take the keyboard while files are highlighted (the notch never takes focus on its own), so that
     /// Ctrl+A and Esc reach it, and give it back to the app the user was in once nothing is highlighted.
     pub(crate) fn sync_selection_focus(&mut self) {
-        if !self.selected.is_empty() && !self.selecting && !self.editing && self.timer_field.is_none() {
+        if !self.shelf_ui.selected.is_empty() && !self.shelf_ui.selecting && !self.editing && self.timer_field.is_none() {
             self.remember_foreground();
-            self.selecting = true;
+            self.shelf_ui.selecting = true;
             if let Some(w) = &self.window {
                 w.focus_window();
             }
-        } else if self.selected.is_empty() && self.selecting {
-            self.selecting = false;
+        } else if self.shelf_ui.selected.is_empty() && self.shelf_ui.selecting {
+            self.shelf_ui.selecting = false;
             self.restore_foreground();
         }
     }
@@ -43,10 +60,10 @@ impl App {
     pub(crate) fn drag_out(&mut self, idx: usize) {
         let Some(path) = self.shelf.items.get(idx).cloned() else { return };
         // Dragging a highlighted file takes every highlighted file; any other file goes alone.
-        let paths = if self.selected.contains(&path) {
-            self.shelf.items.iter().filter(|p| self.selected.contains(p)).cloned().collect()
+        let paths = if self.shelf_ui.selected.contains(&path) {
+            self.shelf.items.iter().filter(|p| self.shelf_ui.selected.contains(p)).cloned().collect()
         } else {
-            self.selected.clear();
+            self.shelf_ui.selected.clear();
             self.sync_selection_focus();
             vec![path]
         };
@@ -62,7 +79,7 @@ impl App {
                     self.shelf.remove(i);
                 }
             }
-            self.selected.clear();
+            self.shelf_ui.selected.clear();
             self.sync_selection_focus();
         }
         // The file may also have been moved by the drop.
@@ -79,15 +96,15 @@ impl App {
     /// Fetch icons for any shelf files that don't have one cached yet, and forget removed files.
     /// The icons are loaded on another thread; until one arrives the tile shows the plain file look.
     pub(crate) fn load_icons(&mut self) {
-        self.icons.retain(|p, _| self.shelf.items.contains(p));
-        let wanted: Vec<PathBuf> = self.shelf.items.iter().filter(|p| !self.icons.contains_key(*p)).cloned().collect();
+        self.shelf_ui.icons.retain(|p, _| self.shelf.items.contains(p));
+        let wanted: Vec<PathBuf> = self.shelf.items.iter().filter(|p| !self.shelf_ui.icons.contains_key(*p)).cloned().collect();
         if wanted.is_empty() {
             return;
         }
-        let loader = self.icon_loader.get_or_insert_with(|| icon::spawn_loader(self.proxy.clone()));
+        let loader = self.shelf_ui.icon_loader.get_or_insert_with(|| icon::spawn_loader(self.proxy.clone()));
         for path in wanted {
             let _ = loader.send(path.clone());
-            self.icons.insert(path, None);
+            self.shelf_ui.icons.insert(path, None);
         }
     }
 
@@ -113,7 +130,7 @@ impl App {
 
         let empty = self.shelf.items.is_empty();
         let zone = (24.0, 36.0, 372.0, 124.0);
-        if self.drag_hover {
+        if self.shelf_ui.drag_hover {
             gfx::glow(pm, width / 2.0, 98.0 * s, 150.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 40.0) as u8], None);
             gfx::gradient_rounded(
                 pm,
@@ -132,9 +149,9 @@ impl App {
         }
 
         if empty {
-            let ink = if self.drag_hover { white } else { [190, 195, 235, a] };
+            let ink = if self.shelf_ui.drag_hover { white } else { [190, 195, 235, a] };
             draw_tab_icon(pm, View::Shelf, width / 2.0, 70.0 * s, s * 2.2, ink);
-            let title = if self.drag_hover { "Release to add" } else { "Drop files here" };
+            let title = if self.shelf_ui.drag_hover { "Release to add" } else { "Drop files here" };
             draw_text_centered(pm, heading, title, width / 2.0, 108.0 * s, 15.0 * s, white, width - 80.0 * s);
             let hint = "They stay until you drag them out or remove them";
             draw_text_centered(pm, font, hint, width / 2.0, 128.0 * s, 11.0 * s, grey, width - 80.0 * s);
@@ -151,14 +168,14 @@ impl App {
                 let hot = self.hot_t(rect, s);
                 draw_card(pm, rect, 10.0, s, alpha, hot, rgb);
                 // A highlighted file glows in the accent colour; it eases in and out.
-                let chosen = self.toggle_t(motion::rect_key(rect) >> 1, self.selected.contains(path)).clamp(0.0, 1.0);
+                let chosen = self.toggle_t(motion::rect_key(rect) >> 1, self.shelf_ui.selected.contains(path)).clamp(0.0, 1.0);
                 if chosen > 0.01 {
                     let tint = |v: f32| [rgb[0], rgb[1], rgb[2], (alpha * v * chosen) as u8];
                     gfx::gradient_rounded(pm, x * s, y * s, w * s, h * s, 10.0 * s, tint(90.0), tint(40.0), false);
                     gfx::stroke_rounded(pm, x * s + s, y * s + s, w * s - 2.0 * s, h * s - 2.0 * s, 10.0 * s, 1.5 * s, tint(230.0));
                 }
 
-                if let Some(Some(icon)) = self.icons.get(path) {
+                if let Some(Some(icon)) = self.shelf_ui.icons.get(path) {
                     let size = 32.0 * s;
                     let scale = size / icon.width() as f32;
                     let paint = PixmapPaint { opacity: alpha, quality: FilterQuality::Bilinear, ..Default::default() };
@@ -208,16 +225,16 @@ impl App {
         } else if ctrl_down() {
             // Ctrl+click highlights or un-highlights one file without opening it.
             let path = self.shelf.items[idx].clone();
-            match self.selected.iter().position(|p| *p == path) {
+            match self.shelf_ui.selected.iter().position(|p| *p == path) {
                 Some(i) => {
-                    self.selected.remove(i);
+                    self.shelf_ui.selected.remove(i);
                 }
-                None => self.selected.push(path),
+                None => self.shelf_ui.selected.push(path),
             }
             self.sync_selection_focus();
             window.request_redraw();
         } else {
-            self.press = Some((idx, self.cursor));
+            self.shelf_ui.press = Some((idx, self.cursor));
         }
     }
 
@@ -228,7 +245,7 @@ impl App {
             if cx >= r.0 && cx <= r.0 + r.2 && ry >= r.1 && ry <= r.1 + r.3 {
                 // Takes every file off the shelf; the files themselves are never touched.
                 self.shelf.clear();
-                self.selected.clear();
+                self.shelf_ui.selected.clear();
                 self.sync_selection_focus();
                 window.request_redraw();
                 return true;
