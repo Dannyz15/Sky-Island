@@ -263,7 +263,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.lyric.manual = None;
                     self.lyric.pos = -1.0;
                     self.lyric.v = 0.0;
-                    (self.track_t, self.track_v) = (0.0, 0.0);
+                    (self.art.track_t, self.art.track_v) = (0.0, 0.0);
                     (self.lyric.duration, self.lyric.refetched) = (state.duration, false);
                     lyrics::spawn_fetch(key, state.title.clone(), state.artist.clone(), state.duration, self.settings.lyrics_online, self.proxy.clone());
                 } else if !self.lyric.refetched && !state.duration.is_zero() && state.duration.abs_diff(self.lyric.duration) > Duration::from_secs(2) {
@@ -280,9 +280,9 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 if let Some(art) = &state.art {
                     let art_key = format!("{}|{}|{}", state.title, state.artist, art.len());
-                    if art_key != self.art_key {
-                        self.art_tint = art_tint(art);
-                        self.art_key = art_key;
+                    if art_key != self.art.key {
+                        self.art.tint = art_tint(art);
+                        self.art.key = art_key;
                     }
                 }
                 self.media = state;

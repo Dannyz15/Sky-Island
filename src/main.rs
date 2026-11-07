@@ -224,10 +224,8 @@ struct App {
     tuck_v: f64,
     /// The `tuck_target` the animation is heading for, to restart its clock when that changes.
     tuck_goal: f64,
-    /// Colour of the current song's cover art, used to tint the player.
-    art_tint: [u8; 3],
-    /// Which song and cover `art_tint` was worked out for.
-    art_key: String,
+    /// The song's cover colours: the tint taken from the cover and its glide, and the fade-in of a new track.
+    art: ui::Art,
     /// The tab highlight's position, as a (fractional) tab index, so it can slide between tabs.
     tab_pos: f32,
     /// How fast it is moving, in tabs per second; the highlight stretches while it moves.
@@ -242,11 +240,6 @@ struct App {
     cal_t: f64,
     cal_v: f64,
     cal_dir: f32,
-    /// A new track fades its cover and title in.
-    track_t: f64,
-    track_v: f64,
-    /// The accent taken from the cover glides to a new colour instead of jumping.
-    art_shown: [f32; 3],
     /// 0 right after the view changed, 1 once the new view has taken over.
     switch_t: f64,
     switch_v: f64,
@@ -363,8 +356,7 @@ impl App {
             tuck_t: if settings.hide_island { 1.0 } else { 0.0 },
             tuck_v: 0.0,
             tuck_goal: if settings.hide_island { 1.0 } else { 0.0 },
-            art_tint: [255, 110, 140],
-            art_key: String::new(),
+            art: ui::Art::default(),
             tab_pos: 0.0,
             tab_vel: 0.0,
             list_t: 1.0,
@@ -374,9 +366,6 @@ impl App {
             cal_t: 1.0,
             cal_v: 0.0,
             cal_dir: 1.0,
-            track_t: 1.0,
-            track_v: 0.0,
-            art_shown: [255.0, 110.0, 140.0],
             switch_t: 1.0,
             switch_v: 0.0,
             prev_view: None,

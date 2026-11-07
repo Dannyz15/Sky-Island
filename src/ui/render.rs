@@ -6,7 +6,7 @@ impl App {
     /// The colour the current view is tinted with.
     pub(crate) fn accent(&self, view: View) -> [u8; 3] {
         match view {
-            View::Player | View::Lyrics => self.art_shown.map(|c| c.round().clamp(0.0, 255.0) as u8),
+            View::Player | View::Lyrics => self.art.shown.map(|c| c.round().clamp(0.0, 255.0) as u8),
             View::Timer => [255, 99, 71],
             View::Water => [64, 170, 255],
             View::Weather => [255, 190, 70],
@@ -83,7 +83,7 @@ impl App {
 
     /// The cover and the name of the track: after a new track began they fade in and slide a little.
     pub(crate) fn fade_in_track(&self, pm: &mut Pixmap, s: f32, draw: impl Fn(&mut Pixmap)) {
-        let t = self.track_t as f32;
+        let t = self.art.track_t as f32;
         if t >= 0.999 {
             return draw(pm);
         }

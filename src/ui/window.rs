@@ -43,8 +43,8 @@ impl App {
             || self.switch_t < 1.0
             || self.list_t < 1.0
             || self.cal_t < 1.0
-            || self.track_t < 1.0
-            || self.art_shown.iter().zip(self.art_tint).any(|(a, b)| (a - b as f32).abs() > 0.5)
+            || self.art.track_t < 1.0
+            || self.art.shown.iter().zip(self.art.tint).any(|(a, b)| (a - b as f32).abs() > 0.5)
             || self.tab_target().is_some_and(|t| (t - self.tab_pos).abs() > f32::EPSILON)
             || (self.tuck_t - self.tuck_target()).abs() > f64::EPSILON
             || (self.view_t - self.view_target()).abs() > f64::EPSILON
@@ -230,9 +230,9 @@ impl App {
         }
         spring(&mut self.list_t, &mut self.list_v, 1.0, dt, 17.0 * speed, if bounce { 0.9 } else { 1.0 });
         spring(&mut self.cal_t, &mut self.cal_v, 1.0, dt, 15.0 * speed, if bounce { 0.82 } else { 1.0 });
-        spring(&mut self.track_t, &mut self.track_v, 1.0, dt, 14.0 * speed, 1.0);
+        spring(&mut self.art.track_t, &mut self.art.track_v, 1.0, dt, 14.0 * speed, 1.0);
         let k = (1.0 - (-dt * 9.0 * speed).exp()) as f32;
-        for (shown, goal) in self.art_shown.iter_mut().zip(self.art_tint) {
+        for (shown, goal) in self.art.shown.iter_mut().zip(self.art.tint) {
             *shown += (goal as f32 - *shown) * k;
             if (*shown - goal as f32).abs() < 0.5 {
                 *shown = goal as f32;

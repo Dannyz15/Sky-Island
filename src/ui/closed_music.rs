@@ -211,7 +211,7 @@ impl App {
             Some(l) => (0.7 * l[0] + 0.3 * l[1]).powf(1.4),
             None => pulse(t, 0.0),
         };
-        let [ar, ag, ab] = self.art_shown.map(|c| c.round().clamp(0.0, 255.0) as u8);
+        let [ar, ag, ab] = self.art.shown.map(|c| c.round().clamp(0.0, 255.0) as u8);
         let accent = vivid([ar, ag, ab], 0.0);
         let rgba = |alpha: f32| [accent[0], accent[1], accent[2], (alpha.clamp(0.0, 1.0) * 255.0) as u8];
 

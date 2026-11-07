@@ -156,6 +156,25 @@ pub(crate) struct LyricsView {
     pub(crate) settle: bool,
 }
 
+/// The song's cover colours: the tint taken from the cover and its glide, and the fade-in of a new track.
+pub(crate) struct Art {
+    /// Colour of the current song's cover art, used to tint the player.
+    pub(crate) tint: [u8; 3],
+    /// Which song and cover `art_tint` was worked out for.
+    pub(crate) key: String,
+    /// The accent taken from the cover glides to a new colour instead of jumping.
+    pub(crate) shown: [f32; 3],
+    /// A new track fades its cover and title in.
+    pub(crate) track_t: f64,
+    pub(crate) track_v: f64,
+}
+
+impl Default for Art {
+    fn default() -> Self {
+        Self { tint: [255, 110, 140], key: String::new(), shown: [255.0, 110.0, 140.0], track_t: 1.0, track_v: 0.0 }
+    }
+}
+
 impl Default for LyricsView {
     fn default() -> Self {
         Self { state: LyricsState::None, key: String::new(), duration: Duration::ZERO, refetched: false, retry_at: None, pos: -1.0, v: 0.0, manual: None, settle: false }
@@ -332,7 +351,7 @@ impl App {
     fn draw_art(&self, pm: &mut Pixmap, rect: (f32, f32, f32), s: f32, alpha: f32) {
         let (ax, ay, asz) = rect;
         let radius = (asz * 0.16).min(10.0);
-        let [ar, ag, ab] = self.art_tint;
+        let [ar, ag, ab] = self.art.tint;
         if asz > 40.0 {
             // The cover's colour spreads softly behind it.
             gfx::glow(pm, (ax + asz / 2.0) * s, (ay + asz / 2.0) * s, asz * 0.95 * s, [ar, ag, ab, (alpha * 52.0) as u8], None);
