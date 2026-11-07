@@ -272,14 +272,14 @@ impl App {
             } else {
                 self.cal.shift_month(-1)
             }
-            (self.cal_t, self.cal_v, self.cal_dir) = (0.0, 0.0, -1.0);
+            (self.slides.cal_t, self.slides.cal_v, self.slides.cal_dir) = (0.0, 0.0, -1.0);
         } else if inside(CAL_NEXT) {
             if week {
                 self.cal.shift_week(1)
             } else {
                 self.cal.shift_month(1)
             }
-            (self.cal_t, self.cal_v, self.cal_dir) = (0.0, 0.0, 1.0);
+            (self.slides.cal_t, self.slides.cal_v, self.slides.cal_dir) = (0.0, 0.0, 1.0);
         } else if inside(CAL_TITLE) {
             self.cal = calendar::Calendar::new(today_day());
         } else if inside(CAL_ADD) {

@@ -14,6 +14,26 @@ pub(crate) const EXPANDED: (f64, f64) = (420.0, 176.0);
 /// How much of a hidden island stays on the top edge of the screen, in logical pixels.
 const TUCK_STRIP: f64 = 3.0;
 
+/// Lists and the calendar easing in after they changed: how far along they are, the way they come from, and what the list was.
+pub(crate) struct Slides {
+    /// Rows of a list ease in after the list changed (it scrolled, an entry came or went): 0 right after,
+    /// 1 once they have settled. `list_dir` is the way they come from, and `list_sig` what the list was.
+    pub(crate) list_t: f64,
+    pub(crate) list_v: f64,
+    pub(crate) list_dir: f32,
+    pub(crate) list_sig: (View, usize, usize, i64),
+    /// The calendar's month (or week) slides in the same way when the arrows are used.
+    pub(crate) cal_t: f64,
+    pub(crate) cal_v: f64,
+    pub(crate) cal_dir: f32,
+}
+
+impl Default for Slides {
+    fn default() -> Self {
+        Self { list_t: 1.0, list_v: 0.0, list_dir: 1.0, list_sig: (View::Player, 0, 0, 0), cal_t: 1.0, cal_v: 0.0, cal_dir: 1.0 }
+    }
+}
+
 impl App {
     fn target(&self) -> f64 {
         if self.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_field.is_some() || self.notices.alert_until.is_some() { 1.0 } else { 0.0 }
@@ -41,8 +61,8 @@ impl App {
     pub(crate) fn animating(&self) -> bool {
         (self.progress - self.target()).abs() > f64::EPSILON
             || self.switch.t < 1.0
-            || self.list_t < 1.0
-            || self.cal_t < 1.0
+            || self.slides.list_t < 1.0
+            || self.slides.cal_t < 1.0
             || self.art.track_t < 1.0
             || self.art.shown.iter().zip(self.art.tint).any(|(a, b)| (a - b as f32).abs() > 0.5)
             || self.tab_target().is_some_and(|t| (t - self.tab_pos).abs() > f32::EPSILON)
@@ -212,24 +232,24 @@ impl App {
 
         // A list that changed (scrolled, or an entry came or went) lets its rows ease in.
         let sig = self.list_signature();
-        if sig != self.list_sig {
-            if sig.0 == self.list_sig.0 && self.progress > 0.5 {
-                self.list_dir = if sig.1 != self.list_sig.1 {
-                    if sig.1 > self.list_sig.1 { 1.0 } else { -1.0 }
-                } else if sig.3 != self.list_sig.3 {
-                    if sig.3 > self.list_sig.3 { 1.0 } else { -1.0 }
-                } else if sig.2 > self.list_sig.2 {
+        if sig != self.slides.list_sig {
+            if sig.0 == self.slides.list_sig.0 && self.progress > 0.5 {
+                self.slides.list_dir = if sig.1 != self.slides.list_sig.1 {
+                    if sig.1 > self.slides.list_sig.1 { 1.0 } else { -1.0 }
+                } else if sig.3 != self.slides.list_sig.3 {
+                    if sig.3 > self.slides.list_sig.3 { 1.0 } else { -1.0 }
+                } else if sig.2 > self.slides.list_sig.2 {
                     -1.0
                 } else {
                     1.0
                 };
-                self.list_t = 0.0;
-                self.list_v = 0.0;
+                self.slides.list_t = 0.0;
+                self.slides.list_v = 0.0;
             }
-            self.list_sig = sig;
+            self.slides.list_sig = sig;
         }
-        spring(&mut self.list_t, &mut self.list_v, 1.0, dt, 17.0 * speed, if bounce { 0.9 } else { 1.0 });
-        spring(&mut self.cal_t, &mut self.cal_v, 1.0, dt, 15.0 * speed, if bounce { 0.82 } else { 1.0 });
+        spring(&mut self.slides.list_t, &mut self.slides.list_v, 1.0, dt, 17.0 * speed, if bounce { 0.9 } else { 1.0 });
+        spring(&mut self.slides.cal_t, &mut self.slides.cal_v, 1.0, dt, 15.0 * speed, if bounce { 0.82 } else { 1.0 });
         spring(&mut self.art.track_t, &mut self.art.track_v, 1.0, dt, 14.0 * speed, 1.0);
         let k = (1.0 - (-dt * 9.0 * speed).exp()) as f32;
         for (shown, goal) in self.art.shown.iter_mut().zip(self.art.tint) {

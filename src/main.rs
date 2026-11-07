@@ -230,16 +230,8 @@ struct App {
     tab_pos: f32,
     /// How fast it is moving, in tabs per second; the highlight stretches while it moves.
     tab_vel: f32,
-    /// Rows of a list ease in after the list changed (it scrolled, an entry came or went): 0 right after,
-    /// 1 once they have settled. `list_dir` is the way they come from, and `list_sig` what the list was.
-    list_t: f64,
-    list_v: f64,
-    list_dir: f32,
-    list_sig: (View, usize, usize, i64),
-    /// The calendar's month (or week) slides in the same way when the arrows are used.
-    cal_t: f64,
-    cal_v: f64,
-    cal_dir: f32,
+    /// Lists and the calendar easing in after they changed: how far along they are, the way they come from, and what the list was.
+    slides: ui::Slides,
     /// The change from one view to another: how far the new view has taken over, the view fading out, and the way the new one slides from.
     switch: ui::ViewSwitch,
     /// Hover glows, switch knobs and other small values that glide towards their goal.
@@ -354,13 +346,7 @@ impl App {
             art: ui::Art::default(),
             tab_pos: 0.0,
             tab_vel: 0.0,
-            list_t: 1.0,
-            list_v: 0.0,
-            list_dir: 1.0,
-            list_sig: (View::Player, 0, 0, 0),
-            cal_t: 1.0,
-            cal_v: 0.0,
-            cal_dir: 1.0,
+            slides: ui::Slides::default(),
             switch: ui::ViewSwitch::default(),
             glows: Glows::default(),
             last_draw: Instant::now(),

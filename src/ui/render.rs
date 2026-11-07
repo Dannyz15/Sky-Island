@@ -59,7 +59,7 @@ impl App {
     fn row_in(&self, row: usize, rows: usize) -> f32 {
         const STAGGER: f32 = 0.07;
         let span = 1.0 - STAGGER * (rows.max(1) - 1) as f32;
-        let t = ((self.list_t as f32 - row as f32 * STAGGER) / span).clamp(0.0, 1.0);
+        let t = ((self.slides.list_t as f32 - row as f32 * STAGGER) / span).clamp(0.0, 1.0);
         1.0 - (1.0 - t).powi(3)
     }
 
@@ -74,11 +74,11 @@ impl App {
 
     /// The calendar's month (or week): after the arrows were used it slides in from the side of the arrow.
     pub(crate) fn slide_in(&self, pm: &mut Pixmap, s: f32, draw: impl Fn(&mut Pixmap)) {
-        let t = self.cal_t as f32;
+        let t = self.slides.cal_t as f32;
         if t >= 0.999 {
             return draw(pm);
         }
-        self.eased_in(pm, t, ((1.0 - t) * 30.0 * self.cal_dir * s, 0.0), draw);
+        self.eased_in(pm, t, ((1.0 - t) * 30.0 * self.slides.cal_dir * s, 0.0), draw);
     }
 
     /// The cover and the name of the track: after a new track began they fade in and slide a little.
@@ -97,7 +97,7 @@ impl App {
         if e >= 0.999 {
             return draw(pm);
         }
-        self.eased_in(pm, e, (0.0, (1.0 - e) * 14.0 * self.list_dir * s), draw);
+        self.eased_in(pm, e, (0.0, (1.0 - e) * 14.0 * self.slides.list_dir * s), draw);
     }
 
     /// Whether the light look is on: the setting is on and Windows is using its light theme.
