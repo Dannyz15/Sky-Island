@@ -2,6 +2,39 @@
 
 use crate::*;
 
+/// The smallest rectangle (left, top, width, height) that holds every pixel of `layer` that is not fully transparent,
+/// with `margin` pixels of room all round; `None` when the layer is empty.
+fn drawn_bounds(layer: &Pixmap, margin: u32) -> Option<tiny_skia::IntRect> {
+    let (w, h) = (layer.width() as usize, layer.height() as usize);
+    let pixels = layer.pixels();
+    let row = |y: usize| &pixels[y * w..(y + 1) * w];
+    let top = (0..h).find(|&y| row(y).iter().any(|p| p.alpha() != 0))?;
+    let bottom = (top..h).rev().find(|&y| row(y).iter().any(|p| p.alpha() != 0))?;
+    let (mut left, mut right) = (w, 0);
+    for y in top..=bottom {
+        let r = row(y);
+        if let Some(first) = r.iter().position(|p| p.alpha() != 0) {
+            left = left.min(first);
+            right = right.max(r.iter().rposition(|p| p.alpha() != 0).unwrap_or(first));
+        }
+    }
+    let m = margin as usize;
+    let (x0, y0) = (left.saturating_sub(m), top.saturating_sub(m));
+    let (x1, y1) = ((right + 1 + m).min(w), (bottom + 1 + m).min(h));
+    tiny_skia::IntRect::from_xywh(x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32)
+}
+
+/// Paste `layer` onto `pm` through `paint` and `transform`, like `draw_pixmap(0, 0, ..)` but only the part of the
+/// layer that has anything in it: a row of a list is a small part of a layer as big as the whole picture, and pasting
+/// all of it for every row of every frame took about a millisecond a row. The part has a margin of transparent
+/// pixels all round, so the soft edge that a move by a fraction of a pixel makes comes out the same.
+fn paste_drawn_part(pm: &mut Pixmap, layer: &Pixmap, paint: &PixmapPaint, transform: Transform) {
+    let Some(bounds) = drawn_bounds(layer, 2) else { return };
+    if let Some(part) = layer.clone_rect(bounds) {
+        pm.draw_pixmap(bounds.x(), bounds.y(), part.as_ref(), paint, transform, None);
+    }
+}
+
 impl App {
     /// The colour the current view is tinted with.
     pub(crate) fn accent(&self, view: View) -> [u8; 3] {
@@ -69,7 +102,7 @@ impl App {
         let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else { return draw(pm) };
         draw(&mut layer);
         let paint = PixmapPaint { opacity: opacity.clamp(0.0, 1.0), quality: FilterQuality::Bilinear, ..Default::default() };
-        pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate(shift.0, shift.1), None);
+        paste_drawn_part(pm, &layer, &paint, Transform::from_translate(shift.0, shift.1));
     }
 
     /// The calendar's month (or week): after the arrows were used it slides in from the side of the arrow.
@@ -370,4 +403,62 @@ pub(crate) struct BodyKey {
     light: bool,
     open: bool,
     accent: [u8; 3],
+}
+
+#[cfg(test)]
+mod paste_tests {
+    use super::*;
+
+    fn background() -> Pixmap {
+        let mut pm = Pixmap::new(200, 120).unwrap();
+        pm.fill(Color::from_rgba8(20, 24, 40, 255));
+        pm
+    }
+
+    fn layer_with(rects: &[(f32, f32, f32, f32, [u8; 4])]) -> Pixmap {
+        let mut layer = Pixmap::new(200, 120).unwrap();
+        for &(x, y, w, h, c) in rects {
+            let mut paint = Paint::default();
+            paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+            layer.fill_rect(Rect::from_xywh(x, y, w, h).unwrap(), &paint, Transform::identity(), None);
+        }
+        layer
+    }
+
+    /// Pasting only the drawn part gives the very same picture as pasting the whole layer, for any move and any fade.
+    #[test]
+    fn pasting_the_drawn_part_gives_the_same_picture_as_pasting_the_whole_layer() {
+        let layers = [
+            layer_with(&[(30.5, 40.25, 90.0, 22.5, [255, 255, 255, 200])]),
+            layer_with(&[(0.0, 0.0, 200.0, 120.0, [200, 90, 40, 255])]),
+            layer_with(&[(0.0, 0.0, 3.0, 3.0, [255, 0, 0, 255]), (190.0, 110.0, 10.0, 10.0, [0, 255, 0, 128])]),
+            layer_with(&[(100.0, 60.0, 1.0, 1.0, [255, 255, 255, 255])]),
+        ];
+        for layer in &layers {
+            for opacity in [0.0, 0.3, 0.77, 1.0] {
+                for shift in [(0.0, 0.0), (3.0, 0.0), (0.3, 5.1), (-7.6, 2.2), (30.0, -14.0), (-1.0, 13.9)] {
+                    let paint = PixmapPaint { opacity, quality: FilterQuality::Bilinear, ..Default::default() };
+                    let transform = Transform::from_translate(shift.0, shift.1);
+                    let (mut whole, mut part) = (background(), background());
+                    whole.draw_pixmap(0, 0, layer.as_ref(), &paint, transform, None);
+                    paste_drawn_part(&mut part, layer, &paint, transform);
+                    assert!(whole.data() == part.data(), "differs at opacity {opacity}, shift {shift:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_layer_pastes_nothing_and_the_bounds_hold_what_was_drawn() {
+        let empty = Pixmap::new(50, 50).unwrap();
+        assert!(drawn_bounds(&empty, 2).is_none());
+        let mut pm = background();
+        let before = pm.data().to_vec();
+        paste_drawn_part(&mut pm, &Pixmap::new(200, 120).unwrap(), &PixmapPaint::default(), Transform::from_translate(4.0, 4.0));
+        assert!(pm.data() == before.as_slice());
+        let b = drawn_bounds(&layer_with(&[(30.0, 40.0, 10.0, 6.0, [255, 255, 255, 255])]), 0).unwrap();
+        assert_eq!((b.x(), b.y(), b.width(), b.height()), (30, 40, 10, 6));
+        let wide = drawn_bounds(&layer_with(&[(0.0, 0.0, 200.0, 120.0, [1, 2, 3, 255])]), 2).unwrap();
+        assert_eq!((wide.x(), wide.y(), wide.width(), wide.height()), (0, 0, 200, 120), "the margin stops at the edge of the layer");
+    }
 }
