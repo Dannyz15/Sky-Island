@@ -118,7 +118,7 @@ impl App {
 
     /// While the Prayer view is open its countdown changes with the minute: redraw then, and say when to wake.
     pub(crate) fn prayer_minute_tick(&mut self) -> Option<Duration> {
-        if self.progress < 1.0 || self.view != View::Prayer {
+        if self.spring.progress < 1.0 || self.view != View::Prayer {
             return None;
         }
         let (h, m, s, ms) = local_time();

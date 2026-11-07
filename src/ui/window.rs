@@ -31,6 +31,47 @@ pub(crate) struct Slides {
     pub(crate) cal_dir: f32,
 }
 
+/// The notch's springs: how far each view is from the player's height, the extra height for what is in the view, the closed notch's size, how open the notch is, and how far it is tucked away.
+pub(crate) struct Springs {
+    /// 0.0 = player height, 1.0 = lyrics height
+    pub(crate) view_t: f64,
+    pub(crate) view_v: f64,
+    /// How much taller than normal the open notch is for what is in its view (the Stats view with many drives), in
+    /// logical pixels, and how fast that is changing.
+    pub(crate) grow_t: f64,
+    pub(crate) grow_v: f64,
+    /// How much of its normal size the closed notch has (smaller for the minimal notch), with its speed.
+    pub(crate) closed_k: f64,
+    pub(crate) closed_v: f64,
+    /// 0.0 = collapsed, 1.0 = expanded. A spring, so it can swing a little past 1.0 when it opens.
+    pub(crate) progress: f64,
+    pub(crate) progress_v: f64,
+    /// 0.0 = in place, 1.0 = slid up out of view (the "Auto-hide notch" setting).
+    pub(crate) tuck_t: f64,
+    pub(crate) tuck_v: f64,
+    /// The `tuck_target` the animation is heading for, to restart its clock when that changes.
+    pub(crate) tuck_goal: f64,
+}
+
+impl Springs {
+    /// The springs at rest: the notch closed, and tucked away when `hidden` (the Auto-hide notch setting).
+    pub(crate) fn new(hidden: bool) -> Self {
+        Self {
+            view_t: 0.0,
+            view_v: 0.0,
+            grow_t: 0.0,
+            grow_v: 0.0,
+            closed_k: 1.0,
+            closed_v: 0.0,
+            progress: 0.0,
+            progress_v: 0.0,
+            tuck_t: if hidden { 1.0 } else { 0.0 },
+            tuck_v: 0.0,
+            tuck_goal: if hidden { 1.0 } else { 0.0 },
+        }
+    }
+}
+
 impl Default for Slides {
     fn default() -> Self {
         Self { list_t: 1.0, list_v: 0.0, list_dir: 1.0, list_sig: (View::Player, 0, 0, 0), cal_t: 1.0, cal_v: 0.0, cal_dir: 1.0 }
@@ -52,32 +93,32 @@ impl App {
             || self.notices.alert_until.is_some()
             || self.notices.until.is_some()
             || self.previewing()
-            || self.progress > 0.0;
+            || self.spring.progress > 0.0;
         if self.settings.hide_island && !needed { 1.0 } else { 0.0 }
     }
 
     /// Where the parts of the player sit right now.
     pub(crate) fn geo(&self) -> PlayerGeo {
-        player_geo(self.view_t.clamp(0.0, 1.0) as f32)
+        player_geo(self.spring.view_t.clamp(0.0, 1.0) as f32)
     }
 
     pub(crate) fn animating(&self) -> bool {
-        (self.progress - self.target()).abs() > f64::EPSILON
+        (self.spring.progress - self.target()).abs() > f64::EPSILON
             || self.switch.t < 1.0
             || self.slides.list_t < 1.0
             || self.slides.cal_t < 1.0
             || self.art.track_t < 1.0
             || self.art.shown.iter().zip(self.art.tint).any(|(a, b)| (a - b as f32).abs() > 0.5)
             || self.tab_target().is_some_and(|t| (t - self.tab_bar.pos).abs() > f32::EPSILON)
-            || (self.tuck_t - self.tuck_target()).abs() > f64::EPSILON
-            || (self.view_t - self.view_target()).abs() > f64::EPSILON
-            || (self.grow_t - self.stats_extra()).abs() > f64::EPSILON
+            || (self.spring.tuck_t - self.tuck_target()).abs() > f64::EPSILON
+            || (self.spring.view_t - self.view_target()).abs() > f64::EPSILON
+            || (self.spring.grow_t - self.stats_extra()).abs() > f64::EPSILON
             || (self.notices.t - self.ov_target()).abs() > f64::EPSILON
             || self.glows.busy()
             || self.eyes_moving()
             || (self.music.k - self.music_target()).abs() > 1e-4
             || (self.music.w - self.music_extra_goal()).abs() > 1e-3
-            || (self.closed_k - self.closed_target()).abs() > 1e-4
+            || (self.spring.closed_k - self.closed_target()).abs() > 1e-4
             || (self.target_k() - self.ui_k).abs() > 1e-3
             || (self.view == View::Lyrics && matches!(self.lyric.state, LyricsState::Found(_)) && (self.lyric.pos - self.lyric_target()).abs() > f64::EPSILON)
     }
@@ -128,7 +169,7 @@ impl App {
         if self.hidden || self.window.is_none() {
             return;
         }
-        let open = self.hovered || self.progress > 0.5;
+        let open = self.hovered || self.spring.progress > 0.5;
         self.hovered = !open;
         self.enter_at = None;
         self.leave_at = None;
@@ -215,10 +256,10 @@ impl App {
         // settles; closing and hiding glide in without bouncing.
         let target = self.target();
         let (omega, zeta) = if target > 0.5 { tune(24.0, 0.74) } else { tune(28.0, 1.0) };
-        spring(&mut self.progress, &mut self.progress_v, target, dt, omega, zeta);
+        spring(&mut self.spring.progress, &mut self.spring.progress_v, target, dt, omega, zeta);
 
         let tuck_goal = self.tuck_target();
-        spring(&mut self.tuck_t, &mut self.tuck_v, tuck_goal, dt, 22.0 * speed, 1.0);
+        spring(&mut self.spring.tuck_t, &mut self.spring.tuck_v, tuck_goal, dt, 22.0 * speed, 1.0);
 
         spring(&mut self.switch.t, &mut self.switch.v, 1.0, dt, 24.0 * speed, 1.0);
         if self.switch.t >= 1.0 {
@@ -236,7 +277,7 @@ impl App {
         // A list that changed (scrolled, or an entry came or went) lets its rows ease in.
         let sig = self.list_signature();
         if sig != self.slides.list_sig {
-            if sig.0 == self.slides.list_sig.0 && self.progress > 0.5 {
+            if sig.0 == self.slides.list_sig.0 && self.spring.progress > 0.5 {
                 self.slides.list_dir = if sig.1 != self.slides.list_sig.1 {
                     if sig.1 > self.slides.list_sig.1 { 1.0 } else { -1.0 }
                 } else if sig.3 != self.slides.list_sig.3 {
@@ -268,12 +309,12 @@ impl App {
 
         let vt = self.view_target();
         let (omega, zeta) = if vt > 0.5 { tune(24.0, 0.85) } else { tune(28.0, 1.0) };
-        spring(&mut self.view_t, &mut self.view_v, vt, dt, omega, zeta);
+        spring(&mut self.spring.view_t, &mut self.spring.view_v, vt, dt, omega, zeta);
 
         // The notch grows taller when what is in the open view needs more room (many drives in the Stats view).
         let grow = self.stats_extra();
-        let (omega, zeta) = if grow > self.grow_t { tune(24.0, 0.85) } else { tune(28.0, 1.0) };
-        spring(&mut self.grow_t, &mut self.grow_v, grow, dt, omega, zeta);
+        let (omega, zeta) = if grow > self.spring.grow_t { tune(24.0, 0.85) } else { tune(28.0, 1.0) };
+        spring(&mut self.spring.grow_t, &mut self.spring.grow_v, grow, dt, omega, zeta);
 
         // The lyrics glide to the line being sung, or to wherever they were scrolled.
         if self.view == View::Lyrics && matches!(self.lyric.state, LyricsState::Found(_)) {
@@ -282,7 +323,7 @@ impl App {
         }
 
         let closed_goal = self.closed_target();
-        spring(&mut self.closed_k, &mut self.closed_v, closed_goal, dt, 24.0 * speed, 1.0);
+        spring(&mut self.spring.closed_k, &mut self.spring.closed_v, closed_goal, dt, 24.0 * speed, 1.0);
         // The closed notch widens for the album cover and the bars while a song plays, and goes back when it stops.
         let (omega, zeta) = tune(22.0, 0.85);
         let music_goal = self.music_target();
@@ -294,9 +335,9 @@ impl App {
 
         let Some(window) = self.window.clone() else { return };
         // The size may swing a little past its goal while the notch opens.
-        let t = self.progress.max(0.0);
-        let wide = self.view_t.clamp(0.0, 1.0);
-        let full_h = lerp(EXPANDED.1, LYRICS_H, wide) + self.grow_t.max(0.0);
+        let t = self.spring.progress.max(0.0);
+        let wide = self.spring.view_t.clamp(0.0, 1.0);
+        let full_h = lerp(EXPANDED.1, LYRICS_H, wide) + self.spring.grow_t.max(0.0);
         // The closed notch grows to the compact notice size while a notice is showing.
         let ov = self.notices.t.clamp(0.0, 1.0);
         let closed = self.closed_size();
@@ -328,7 +369,7 @@ impl App {
             // Tucked away, only a thin strip stays on screen, so the cursor can still find the island. A taskbar
             // along the top of the screen keeps it below, instead of covering the middle of the bar.
             let top = mpos.y as f64 + top_inset(&monitor) as f64;
-            let y = top - self.tuck_t.clamp(0.0, 1.0) * (h - TUCK_STRIP) * scale;
+            let y = top - self.spring.tuck_t.clamp(0.0, 1.0) * (h - TUCK_STRIP) * scale;
             window.set_outer_position(PhysicalPosition::new(x, y));
         }
         window.request_redraw();
@@ -373,7 +414,7 @@ impl App {
 
     /// The closed notch, in logical pixels.
     pub(crate) fn closed_size(&self) -> (f64, f64) {
-        (COLLAPSED.0 * self.closed_k + self.music.w.max(0.0), COLLAPSED.1 * self.closed_k)
+        (COLLAPSED.0 * self.spring.closed_k + self.music.w.max(0.0), COLLAPSED.1 * self.spring.closed_k)
     }
 
     /// The height of the window in logical pixels, which the tab bar is measured from.

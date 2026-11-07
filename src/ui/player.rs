@@ -237,7 +237,7 @@ impl App {
         (self.lyric.duration, self.lyric.refetched) = (m.duration, false);
         crate::lyrics::spawn_fetch(key, m.title.clone(), m.artist.clone(), m.duration, self.settings.lyrics_online, self.proxy.clone());
         self.snap_lyrics();
-        if self.progress > 0.0
+        if self.spring.progress > 0.0
             && let Some(w) = &self.window
         {
             w.request_redraw();
@@ -463,7 +463,7 @@ impl App {
         let accent = [rgb[0], rgb[1], rgb[2], a];
         let white = [255, 255, 255, a];
         let grey = [165, 165, 175, a];
-        let open = self.view_t.clamp(0.0, 1.0) as f32;
+        let open = self.spring.view_t.clamp(0.0, 1.0) as f32;
         let geo = self.geo();
 
         let (title, sub) = if self.media.has_session && !self.media.title.is_empty() {

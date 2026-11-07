@@ -179,12 +179,12 @@ impl App {
             return 0.0;
         }
         let needed = 2.0 * (EDGE + SLOT + GAP) + self.centre_width();
-        (needed as f64 - COLLAPSED.0 * self.closed_k).max(0.0)
+        (needed as f64 - COLLAPSED.0 * self.spring.closed_k).max(0.0)
     }
 
     /// Whether the music is on the closed notch and something on it moves, so it needs a frame now and then.
     pub(crate) fn bars_running(&self) -> bool {
-        self.music.k > 0.02 && self.media.playing && !self.hidden && self.tuck_t < 1.0 && self.progress <= 0.0 && self.notices.until.is_none()
+        self.music.k > 0.02 && self.media.playing && !self.hidden && self.spring.tuck_t < 1.0 && self.spring.progress <= 0.0 && self.notices.until.is_none()
     }
 
     /// How often it is drawn again: 30 times a second while the bars, the turning record or the edge line move, and only

@@ -126,14 +126,14 @@ impl App {
         if self.mirrors.list.is_empty() {
             return;
         }
-        let every = if self.progress <= 0.001 { CLOSED_EVERY } else { OPEN_EVERY };
+        let every = if self.spring.progress <= 0.001 { CLOSED_EVERY } else { OPEN_EVERY };
         if !force && self.mirrors.drawn.elapsed() < every {
             return;
         }
         self.mirrors.drawn = Instant::now();
         let Some(window) = self.window.clone() else { return };
         let monitors: Vec<_> = window.available_monitors().collect();
-        let tucked = self.tuck_t > 0.5;
+        let tucked = self.spring.tuck_t > 0.5;
         let raise = self.mirrors.raised.elapsed() >= RAISE_EVERY;
         if raise {
             self.mirrors.raised = Instant::now();

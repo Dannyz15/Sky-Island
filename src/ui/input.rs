@@ -5,7 +5,7 @@ use crate::*;
 
 impl App {
     pub(crate) fn click(&mut self) {
-        if self.progress < 0.9 {
+        if self.spring.progress < 0.9 {
             return;
         }
         let Some(window) = self.window.clone() else { return };

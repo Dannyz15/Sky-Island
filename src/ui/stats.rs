@@ -228,7 +228,7 @@ impl App {
     /// thirty times a second. Nothing is looked at, or drawn, while it is closed; its numbers are forgotten, so that
     /// it starts afresh next time.
     pub(crate) fn stats_tick(&mut self, now: Instant) -> Option<Instant> {
-        if self.progress < 1.0 || self.view != View::Stats {
+        if self.spring.progress < 1.0 || self.view != View::Stats {
             if self.stats.data.started {
                 // The drives and the names of the graphics chips stay, so the view keeps its shape while it slides out
                 // and opens at the right height.

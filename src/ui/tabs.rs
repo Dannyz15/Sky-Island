@@ -83,7 +83,7 @@ impl App {
     /// How far the tab bar (and the views other than Music) shift right to stay centred while the
     /// notch is wider than usual because the lyrics are open.
     pub(crate) fn tab_dx(&self) -> f32 {
-        ((LYRICS_W - EXPANDED.0) * self.view_t.clamp(0.0, 1.0) / 2.0) as f32
+        ((LYRICS_W - EXPANDED.0) * self.spring.view_t.clamp(0.0, 1.0) / 2.0) as f32
     }
 
     /// The tabs in the bar: the ones that are switched on in the settings.

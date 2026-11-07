@@ -26,7 +26,7 @@ impl App {
 
     /// Whether the mouse is over a rectangle (logical pixels) of the open notch.
     pub(crate) fn hot(&self, r: (f32, f32, f32, f32), s: f32) -> bool {
-        if self.progress < 0.9 || !self.hovered {
+        if self.spring.progress < 0.9 || !self.hovered {
             return false;
         }
         let (x, y) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
@@ -133,7 +133,7 @@ impl App {
         // The notch's body, glow and border only change with its size, the look and the tab's colour. Once it
         // is at rest (fully open or closed) it is drawn once and copied in the following frames.
         let fw = w.get() as f32;
-        let open = self.progress.clamp(0.0, 1.0) as f32;
+        let open = self.spring.progress.clamp(0.0, 1.0) as f32;
         let key = (open == 0.0 || open >= 1.0).then(|| BodyKey {
             size: (w.get(), h.get()),
             scale: s.to_bits(),
@@ -152,14 +152,14 @@ impl App {
         }
 
         // Fade content in over the second half of the expand animation.
-        let alpha = ((self.progress.clamp(0.0, 1.0) - 0.5) * 2.0).clamp(0.0, 1.0) as f32;
+        let alpha = ((self.spring.progress.clamp(0.0, 1.0) - 0.5) * 2.0).clamp(0.0, 1.0) as f32;
         if alpha > 0.0 {
-            if self.progress < 0.995 {
+            if self.spring.progress < 0.995 {
                 // While opening or closing the content also grows from slightly smaller, so it seems to
                 // unfold with the notch.
                 if let Some(mut layer) = Pixmap::new(w.get(), h.get()) {
                     self.draw_content(&mut layer, s, alpha, (w.get(), h.get()));
-                    let k = (0.93 + 0.07 * self.progress.clamp(0.0, 1.0)) as f32;
+                    let k = (0.93 + 0.07 * self.spring.progress.clamp(0.0, 1.0)) as f32;
                     let at = Transform::from_scale(k, k).post_translate(fw * (1.0 - k) / 2.0, 0.0);
                     let paint = PixmapPaint { quality: FilterQuality::Bilinear, ..Default::default() };
                     pixmap.draw_pixmap(0, 0, layer.as_ref(), &paint, at, None);
@@ -170,8 +170,8 @@ impl App {
         }
 
         // What the closed notch shows (the clock or eyes, the song, the timer's countdown) and a notice, while closed.
-        let collapsed_alpha = ((1.0 - self.progress.clamp(0.0, 1.0) * 2.0).clamp(0.0, 1.0) * (1.0 - self.notices.t.clamp(0.0, 1.0))) as f32;
-        let notice_alpha = self.notices.t.clamp(0.0, 1.0) as f32 * (1.0 - self.progress.clamp(0.0, 1.0) as f32 * 2.0).clamp(0.0, 1.0);
+        let collapsed_alpha = ((1.0 - self.spring.progress.clamp(0.0, 1.0) * 2.0).clamp(0.0, 1.0) * (1.0 - self.notices.t.clamp(0.0, 1.0))) as f32;
+        let notice_alpha = self.notices.t.clamp(0.0, 1.0) as f32 * (1.0 - self.spring.progress.clamp(0.0, 1.0) as f32 * 2.0).clamp(0.0, 1.0);
         self.draw_closed_content(&mut pixmap, s, fw, collapsed_alpha, notice_alpha);
 
         // Put the notch in the middle of the window and add the flares on both sides of its top edge.

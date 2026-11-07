@@ -83,7 +83,7 @@ impl ApplicationHandler<UserEvent> for App {
                 if let sys::Notice::Volume { percent, muted } = &notice {
                     self.volume.level = Some((*percent, *muted));
                     // The open notch has its own volume slider: no popup for a change made there.
-                    if self.progress > 0.5 {
+                    if self.spring.progress > 0.5 {
                         if let Some(w) = &self.window {
                             w.request_redraw();
                         }
@@ -109,7 +109,7 @@ impl ApplicationHandler<UserEvent> for App {
                 if self.settings.clipboard
                     && self.clips.add(content)
                     && self.view == View::Clipboard
-                    && self.progress > 0.0
+                    && self.spring.progress > 0.0
                     && let Some(w) = &self.window
                 {
                     w.request_redraw();
@@ -171,7 +171,7 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(slot) = self.shelf_ui.icons.get_mut(&path) {
                     *slot = icon;
                     if self.view == View::Shelf
-                        && self.progress > 0.0
+                        && self.spring.progress > 0.0
                         && let Some(w) = &self.window
                     {
                         w.request_redraw();
@@ -236,7 +236,7 @@ impl ApplicationHandler<UserEvent> for App {
                     };
                     self.lyric.manual = None;
                     self.snap_lyrics();
-                    if self.progress > 0.0
+                    if self.spring.progress > 0.0
                         && let Some(w) = &self.window
                     {
                         w.request_redraw();
@@ -288,7 +288,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.media = state;
                 self.media_at = Instant::now();
                 // Only worth repainting if the player is visible.
-                if self.progress > 0.0
+                if self.spring.progress > 0.0
                     && let Some(w) = &self.window
                 {
                     w.request_redraw();
@@ -318,7 +318,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.leave_at = None;
                 // With "Open the notch" on Click, resting on it does nothing, except to bring an auto-hidden
                 // island back into view.
-                let waits_for_click = self.settings.open_on_click && self.tuck_t < 0.1;
+                let waits_for_click = self.settings.open_on_click && self.spring.tuck_t < 0.1;
                 if !self.hovered && !waits_for_click {
                     self.enter_at = Some(now + self.hover_open());
                     event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.hover_open()));
@@ -346,7 +346,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.set_volume_at((position.x / s) as f32);
                 }
                 // Hover highlights follow the mouse.
-                if self.progress >= 0.9
+                if self.spring.progress >= 0.9
                     && let Some(w) = &self.window
                 {
                     w.request_redraw();
@@ -359,7 +359,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                if self.settings.open_on_click && !self.hovered && self.progress < 0.9 {
+                if self.settings.open_on_click && !self.hovered && self.spring.progress < 0.9 {
                     // A click on the closed notch opens it.
                     self.hovered = true;
                     self.enter_at = None;
@@ -414,7 +414,7 @@ impl ApplicationHandler<UserEvent> for App {
                     w.request_redraw();
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.progress >= 0.9 && self.over_volume() => {
+            WindowEvent::MouseWheel { delta, .. } if self.spring.progress >= 0.9 && self.over_volume() => {
                 // The wheel over the volume control changes the volume, five percent a notch.
                 let dy = wheel(&delta, 1.0, 1.0);
                 if dy != 0.0 {
@@ -427,7 +427,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.progress >= 0.9 && !self.edit.on && self.timer_entry.field.is_none() && self.wheel_changes_tab() => {
+            WindowEvent::MouseWheel { delta, .. } if self.spring.progress >= 0.9 && !self.edit.on && self.timer_entry.field.is_none() && self.wheel_changes_tab() => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 // Scrolling down goes to the next tab, up to the one before; one step per flick.
                 if dy != 0.0 && self.last_wheel_tab.elapsed() > Duration::from_millis(220) {
@@ -442,7 +442,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.view == View::Timer && !self.edit.on && self.progress >= 0.9 => {
+            WindowEvent::MouseWheel { delta, .. } if self.view == View::Timer && !self.edit.on && self.spring.progress >= 0.9 => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 let s = self.ui_scale() as f32;
                 let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
@@ -454,7 +454,7 @@ impl ApplicationHandler<UserEvent> for App {
                     w.request_redraw();
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.view == View::Lyrics && !self.edit.on && self.progress >= 0.9 => {
+            WindowEvent::MouseWheel { delta, .. } if self.view == View::Lyrics && !self.edit.on && self.spring.progress >= 0.9 => {
                 let s = self.ui_scale() as f32;
                 let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
                 let lines = match &self.lyric.state {
@@ -474,7 +474,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.edit.on && self.progress >= 0.9 => {
+            WindowEvent::MouseWheel { delta, .. } if self.edit.on && self.spring.progress >= 0.9 => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 let s = self.ui_scale() as f32;
                 let (cx, cy) = (self.cursor.0 as f32 / s, self.cursor.1 as f32 / s + TAB_SHIFT);
@@ -485,7 +485,7 @@ impl ApplicationHandler<UserEvent> for App {
                     w.request_redraw();
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if matches!(self.view, View::Shelf | View::Todo | View::Clipboard) && self.progress >= 0.9 => {
+            WindowEvent::MouseWheel { delta, .. } if matches!(self.view, View::Shelf | View::Todo | View::Clipboard) && self.spring.progress >= 0.9 => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 if dy != 0.0 {
                     // Wheel up shows earlier rows.
@@ -667,7 +667,7 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(keep) = self.settings.clip_keep.duration()
             && self.clips.expire(now, keep)
             && self.view == View::Clipboard
-            && self.progress > 0.0
+            && self.spring.progress > 0.0
             && let Some(w) = &self.window
         {
             w.request_redraw();
@@ -725,8 +725,8 @@ impl ApplicationHandler<UserEvent> for App {
             self.last_tick = now;
         }
         let goal = self.tuck_target();
-        if goal != self.tuck_goal {
-            self.tuck_goal = goal;
+        if goal != self.spring.tuck_goal {
+            self.spring.tuck_goal = goal;
             self.last_tick = now;
         }
 
@@ -743,7 +743,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         // Periodic refresh for the progress bar / countdown. Only redraw when due, since a redraw
         // itself triggers another about_to_wait.
-        let expanded = self.progress >= 1.0;
+        let expanded = self.spring.progress >= 1.0;
         if (expanded && (self.media.playing || self.edit.on || self.timer_entry.field.is_some() || matches!(self.view, View::Water | View::Todo))) || self.timer.running() {
             let tick = if expanded && self.view == View::Timer && self.timer.running() { RING_TICK } else { PROGRESS_TICK };
             let due = self.last_ui_tick + tick;

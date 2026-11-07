@@ -193,7 +193,7 @@ impl App {
     }
 
     pub(crate) fn companion_tick(&mut self, now: Instant, wake: &mut Option<Instant>) {
-        if self.hidden || self.tuck_t >= 1.0 || self.progress > 0.0 || self.notices.until.is_some() || self.timer.running() {
+        if self.hidden || self.spring.tuck_t >= 1.0 || self.spring.progress > 0.0 || self.notices.until.is_some() || self.timer.running() {
             return;
         }
         let mut redraw = false;

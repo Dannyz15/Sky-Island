@@ -153,13 +153,8 @@ struct App {
     media_at: Instant,
     media_handle: Option<MediaHandle>,
     view: View,
-    /// 0.0 = player height, 1.0 = lyrics height
-    view_t: f64,
-    view_v: f64,
-    /// How much taller than normal the open notch is for what is in its view (the Stats view with many drives), in
-    /// logical pixels, and how fast that is changing.
-    grow_t: f64,
-    grow_v: f64,
+    /// The notch's springs: how far each view is from the player's height, the extra height for what is in the view, the closed notch's size, how open the notch is, and how far it is tucked away.
+    spring: ui::Springs,
     /// x
     lyric: ui::LyricsView,
     timer: Timer,
@@ -175,9 +170,6 @@ struct App {
     /// logical pixels, which Auto goes by.
     ui_k: f64,
     screen_w: f64,
-    /// How much of its normal size the closed notch has (smaller for the minimal notch), with its speed.
-    closed_k: f64,
-    closed_v: f64,
     /// When the mouse wheel last changed the tab, so one flick moves one tab.
     last_wheel_tab: Instant,
     /// Sky Island moved the song itself (a click on a lyric line or on the bar) and the song has not changed since.
@@ -215,14 +207,6 @@ struct App {
     proxy: EventLoopProxy<UserEvent>,
     cursor: (f64, f64),
     hovered: bool,
-    /// 0.0 = collapsed, 1.0 = expanded. A spring, so it can swing a little past 1.0 when it opens.
-    progress: f64,
-    progress_v: f64,
-    /// 0.0 = in place, 1.0 = slid up out of view (the "Auto-hide notch" setting).
-    tuck_t: f64,
-    tuck_v: f64,
-    /// The `tuck_target` the animation is heading for, to restart its clock when that changes.
-    tuck_goal: f64,
     /// The song's cover colours: the tint taken from the cover and its glide, and the fade-in of a new track.
     art: ui::Art,
     /// The highlight under the tabs.
@@ -284,10 +268,7 @@ impl App {
             media_at: Instant::now(),
             media_handle: None,
             view: View::Player,
-            view_t: 0.0,
-            view_v: 0.0,
-            grow_t: 0.0,
-            grow_v: 0.0,
+            spring: ui::Springs::new(settings.hide_island),
             lyric: ui::LyricsView::default(),
             timer: Timer::load(),
             timer_entry: ui::TimerEntry::default(),
@@ -303,8 +284,6 @@ impl App {
             scrub: None,
             ui_k: 1.0,
             screen_w: 1536.0,
-            closed_k: 1.0,
-            closed_v: 0.0,
             last_wheel_tab: Instant::now(),
             seeked: false,
             notices: ui::Notices::default(),
@@ -334,11 +313,6 @@ impl App {
             proxy,
             cursor: (0.0, 0.0),
             hovered: false,
-            progress: 0.0,
-            progress_v: 0.0,
-            tuck_t: if settings.hide_island { 1.0 } else { 0.0 },
-            tuck_v: 0.0,
-            tuck_goal: if settings.hide_island { 1.0 } else { 0.0 },
             art: ui::Art::default(),
             tab_bar: ui::TabHighlight::default(),
             slides: ui::Slides::default(),
