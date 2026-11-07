@@ -188,12 +188,8 @@ struct App {
     settings: Settings,
     /// Cached "start with Windows" state from the registry.
     autostart: bool,
-    presence: Presence,
-    fullscreen: presence::Fullscreen,
-    /// Where the monitor the notch is on lies, so only a full-screen app on that monitor hides it.
-    monitor_area: Option<presence::Area>,
-    /// The window is hidden because a full-screen app is in front.
-    hidden: bool,
+    /// Whether the notch is shown: awake or dozing, hidden for a full-screen app, the monitor it is on, and the screen it last followed the mouse to.
+    vis: ui::Visibility,
     /// x
     eyes: ui::Eyes,
     last_minute: u32,
@@ -240,8 +236,6 @@ struct App {
     hotkey_ok: bool,
     /// What the Stats tab keeps.
     stats: ui::StatsTab,
-    /// With Show on All screens: the number of the screen the notch last followed the mouse to (none until it has).
-    follow: Option<u32>,
     last_tick: Instant,
 }
 
@@ -288,10 +282,7 @@ impl App {
             edit: ui::Editing::default(),
             settings: settings.clone(),
             autostart: settings::repair_autostart(),
-            presence: Presence::Active,
-            fullscreen: presence::Fullscreen::No,
-            monitor_area: None,
-            hidden: false,
+            vis: ui::Visibility::default(),
             eyes: ui::Eyes::default(),
             last_minute: u32::MAX,
             quit: false,
@@ -311,7 +302,6 @@ impl App {
             panel_wanted: false,
             panel_page: None,
             updates: ui::Updates::default(),
-            follow: None,
             hotkey_ok: true,
             stats: ui::StatsTab::default(),
             volume: ui::Volume::default(),

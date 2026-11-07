@@ -96,6 +96,24 @@ impl Default for Pacing {
     }
 }
 
+/// Whether the notch is shown: awake or dozing, hidden for a full-screen app, the monitor it is on, and the screen it last followed the mouse to.
+pub(crate) struct Visibility {
+    pub(crate) presence: Presence,
+    pub(crate) fullscreen: presence::Fullscreen,
+    /// Where the monitor the notch is on lies, so only a full-screen app on that monitor hides it.
+    pub(crate) monitor_area: Option<presence::Area>,
+    /// The window is hidden because a full-screen app is in front.
+    pub(crate) hidden: bool,
+    /// With Show on All screens: the number of the screen the notch last followed the mouse to (none until it has).
+    pub(crate) follow: Option<u32>,
+}
+
+impl Default for Visibility {
+    fn default() -> Self {
+        Self { presence: Presence::Active, fullscreen: presence::Fullscreen::No, monitor_area: None, hidden: false, follow: None }
+    }
+}
+
 impl App {
     fn target(&self) -> f64 {
         if self.pointer.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_entry.field.is_some() || self.notices.alert_until.is_some() { 1.0 } else { 0.0 }
@@ -170,7 +188,7 @@ impl App {
         // With All, the notch is on the screen the mouse last touched the top of (the main one until then).
         let monitors: Vec<_> = window.available_monitors().collect();
         let wanted = if self.settings.screen.follows() {
-            self.follow
+            self.vis.follow
         } else {
             // "Display 2" is the second screen in order, not the one whose device name ends in 2: the names count up
             // every time a screen is plugged in (a second screen is often DISPLAY5), Windows' own Display 2 does not.
@@ -184,7 +202,7 @@ impl App {
     /// The hotkey: open the notch, or close it if it is open. (Opened this way it stays open until the key is pressed
     /// again or the mouse has been over it and left.) Nothing happens while a full-screen app hides the notch.
     pub(crate) fn toggle_by_key(&mut self) {
-        if self.hidden || self.window.is_none() {
+        if self.vis.hidden || self.window.is_none() {
             return;
         }
         let open = self.pointer.hovered || self.spring.progress > 0.5;
@@ -210,7 +228,7 @@ impl App {
         self.mirrors.wanted = true;
         let Some(window) = self.window.clone() else { return };
         if !self.settings.screen.follows() {
-            self.follow = None;
+            self.vis.follow = None;
             edge::disable();
             return;
         }
@@ -240,11 +258,11 @@ impl App {
     /// The notch goes to a screen (given by its device number): the one the mouse touched the top of, or came onto a
     /// copy of the notch on. Only with a Show on setting that follows the mouse.
     pub(crate) fn follow_to(&mut self, screen: u32) {
-        if self.settings.screen.follows() && self.follow != Some(screen) {
+        if self.settings.screen.follows() && self.vis.follow != Some(screen) {
             // The notch moves there, and the other screens are watched instead.
-            self.follow = Some(screen);
+            self.vis.follow = Some(screen);
             self.pacing.rate_read = None;
-            self.monitor_area = None;
+            self.vis.monitor_area = None;
             self.last_tick = Instant::now();
             self.refresh_edges();
             self.step();
@@ -378,8 +396,8 @@ impl App {
                 }
             }
             let area = (mpos.x, mpos.y, mpos.x + msize.width as i32, mpos.y + msize.height as i32);
-            if self.monitor_area != Some(area) {
-                self.monitor_area = Some(area);
+            if self.vis.monitor_area != Some(area) {
+                self.vis.monitor_area = Some(area);
                 self.apply_visibility();
             }
             let pw = (w + 2.0 * EAR) * scale;
@@ -490,9 +508,9 @@ impl App {
 
     /// Hide the window while a full-screen app is in front, if that setting is on.
     pub(crate) fn apply_visibility(&mut self) {
-        let hide = self.fullscreen.hides(self.monitor_area) && self.settings.hide_fullscreen;
-        if hide != self.hidden {
-            self.hidden = hide;
+        let hide = self.vis.fullscreen.hides(self.vis.monitor_area) && self.settings.hide_fullscreen;
+        if hide != self.vis.hidden {
+            self.vis.hidden = hide;
             if hide {
                 // A hidden window gets no cursor events, so don't leave it looking hovered.
                 self.pointer.hovered = false;

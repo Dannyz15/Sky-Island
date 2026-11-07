@@ -151,14 +151,14 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Presence { presence, fullscreen } => {
                 let now = Instant::now();
                 // Coming back from idle: greet first, then back to the clock.
-                if self.presence != Presence::Active && presence == Presence::Active {
+                if self.vis.presence != Presence::Active && presence == Presence::Active {
                     self.eyes.greeting_until = Some(now + GREETING);
                 }
                 if presence == Presence::Idle {
                     self.eyes.next_blink = now + Duration::from_millis(1500);
                 }
-                self.presence = presence;
-                self.fullscreen = fullscreen;
+                self.vis.presence = presence;
+                self.vis.fullscreen = fullscreen;
                 self.apply_visibility();
                 if let Some(w) = &self.window {
                     w.request_redraw();
@@ -173,7 +173,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Screens => {
                 // Place the island again, on the screen it belongs on, and read the refresh rate afresh.
                 self.pacing.rate_read = None;
-                self.monitor_area = None;
+                self.vis.monitor_area = None;
                 self.last_tick = Instant::now();
                 self.refresh_edges();
                 self.step();

@@ -101,7 +101,7 @@ impl App {
     /// the place of the clock (so only when the clock is off), and after a while without use they come
     /// from "Idle eyes".
     fn eyes_open(&self) -> bool {
-        match self.presence {
+        match self.vis.presence {
             Presence::Active => self.settings.eyes && !self.settings.show_clock,
             Presence::Idle => self.settings.idle_eyes,
             Presence::Dozing => false,
@@ -111,8 +111,8 @@ impl App {
     /// Whether the middle of the closed notch shows eyes (open, asleep, the greeting, or the preview) and not the clock.
     pub(crate) fn centre_is_eyes(&self) -> bool {
         let greeting = self.settings.idle_eyes && self.eyes.greeting_until.is_some();
-        let asleep = matches!(self.presence, Presence::Dozing) && self.settings.idle_eyes;
-        self.previewing() || greeting || asleep || (!matches!(self.presence, Presence::Dozing) && self.eyes_open())
+        let asleep = matches!(self.vis.presence, Presence::Dozing) && self.settings.idle_eyes;
+        self.previewing() || greeting || asleep || (!matches!(self.vis.presence, Presence::Dozing) && self.eyes_open())
     }
 
     /// Whether the closed notch is showing the eyes as a preview of the Eye style.
@@ -193,7 +193,7 @@ impl App {
     }
 
     pub(crate) fn companion_tick(&mut self, now: Instant, wake: &mut Option<Instant>) {
-        if self.hidden || self.spring.tuck_t >= 1.0 || self.spring.progress > 0.0 || self.notices.until.is_some() || self.timer.running() {
+        if self.vis.hidden || self.spring.tuck_t >= 1.0 || self.spring.progress > 0.0 || self.notices.until.is_some() || self.timer.running() {
             return;
         }
         let mut redraw = false;
@@ -224,7 +224,7 @@ impl App {
             }
         }
 
-        match self.presence {
+        match self.vis.presence {
             Presence::Active if self.settings.show_clock => {
                 let (_, minute, sec, ms) = local_time();
                 if minute != self.last_minute {
@@ -273,7 +273,7 @@ impl App {
             return;
         }
 
-        match self.presence {
+        match self.vis.presence {
             _ if self.previewing() => {
                 let pose = self.eye_pose();
                 for x in [left, right] {

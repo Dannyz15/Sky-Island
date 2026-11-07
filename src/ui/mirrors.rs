@@ -150,7 +150,7 @@ impl App {
             let (pos, size) = (monitor.position(), monitor.size());
             let area = (pos.x, pos.y, pos.x + size.width as i32, pos.y + size.height as i32);
             // Like the real notch: out of the way for a full-screen app on this screen and while auto-hide has it away.
-            if tucked || (self.settings.hide_fullscreen && self.fullscreen.hides(Some(area))) {
+            if tucked || (self.settings.hide_fullscreen && self.vis.fullscreen.hides(Some(area))) {
                 if mirror.shown {
                     mirror.window.set_visible(false);
                     mirror.shown = false;

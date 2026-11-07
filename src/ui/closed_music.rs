@@ -160,7 +160,7 @@ impl App {
             return 54.0;
         }
         // Asleep, the eyes have a "z" and a "Z" beside them.
-        if matches!(self.presence, Presence::Dozing) && self.settings.idle_eyes {
+        if matches!(self.vis.presence, Presence::Dozing) && self.settings.idle_eyes {
             return 84.0;
         }
         if self.centre_is_eyes() || !self.settings.show_clock {
@@ -184,7 +184,7 @@ impl App {
 
     /// Whether the music is on the closed notch and something on it moves, so it needs a frame now and then.
     pub(crate) fn bars_running(&self) -> bool {
-        self.music.k > 0.02 && self.media.playing && !self.hidden && self.spring.tuck_t < 1.0 && self.spring.progress <= 0.0 && self.notices.until.is_none()
+        self.music.k > 0.02 && self.media.playing && !self.vis.hidden && self.spring.tuck_t < 1.0 && self.spring.progress <= 0.0 && self.notices.until.is_none()
     }
 
     /// How often it is drawn again: 30 times a second while the bars, the turning record or the edge line move, and only

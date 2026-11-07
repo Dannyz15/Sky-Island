@@ -140,9 +140,9 @@ impl App {
         self.settings.screen = screen;
         // The screen the mouse had last touched (for All) does not carry over, and the notch goes to its new screen
         // now, not at the next frame that happens to come: the place and the refresh rate are read afresh.
-        self.follow = None;
+        self.vis.follow = None;
         self.pacing.rate_read = None;
-        self.monitor_area = None;
+        self.vis.monitor_area = None;
         self.settings_changed();
         self.step();
     }
