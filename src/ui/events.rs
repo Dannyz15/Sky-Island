@@ -592,6 +592,8 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Files dropped on the shelf are saved once, after all of the drop's events were handled (and before quitting).
+        self.shelf.flush();
         if self.quit {
             event_loop.exit();
             return;

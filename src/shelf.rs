@@ -50,25 +50,28 @@ pub struct Shelf {
     pub items: Vec<PathBuf>,
     /// First visible row.
     pub scroll: usize,
+    /// Files were added and the list was not saved yet (see `add` and `flush`).
+    dirty: bool,
 }
 
 impl Shelf {
     pub fn new() -> Self {
         let items =
             Self::path().and_then(|p| store::read_json(&p)).and_then(|v| v.as_array().map(|a| a.iter().filter_map(Value::as_str).map(PathBuf::from).collect())).unwrap_or_default();
-        Self { items, scroll: 0 }
+        Self { items, scroll: 0, dirty: false }
     }
 
     #[cfg(test)]
     fn empty() -> Self {
-        Self { items: Vec::new(), scroll: 0 }
+        Self { items: Vec::new(), scroll: 0, dirty: false }
     }
 
     fn path() -> Option<PathBuf> {
         store::path("shelf.json")
     }
 
-    fn save(&self) {
+    fn save(&mut self) {
+        self.dirty = false;
         // Tests must not overwrite the user's real data.
         if cfg!(test) {
             return;
@@ -79,13 +82,22 @@ impl Shelf {
         }
     }
 
-    /// Add a file, newest first. Duplicates move to the front; the oldest fall off the end.
+    /// Add a file, newest first. Duplicates move to the front; the oldest fall off the end. The list is not saved
+    /// here: dropping several files at once delivers them one by one, and saving after each would write (and flush
+    /// to disk) the same file once per file. The event loop calls `flush` when it has handled them all.
     pub fn add(&mut self, path: PathBuf) {
         self.items.retain(|p| p != &path);
         self.items.insert(0, path);
         self.items.truncate(MAX_ITEMS);
         self.scroll = 0;
-        self.save();
+        self.dirty = true;
+    }
+
+    /// Save the list if files were added since it was last saved (once, however many were added).
+    pub fn flush(&mut self) {
+        if self.dirty {
+            self.save();
+        }
     }
 
     pub fn remove(&mut self, index: usize) {
@@ -205,6 +217,23 @@ mod tests {
         s.add(p("b.txt"));
         s.add(p("a.txt"));
         assert_eq!(s.items, vec![p("a.txt"), p("b.txt")]);
+    }
+
+    #[test]
+    fn files_added_one_by_one_are_saved_once_when_flushed() {
+        let mut s = Shelf::empty();
+        assert!(!s.dirty, "a fresh shelf has nothing to save");
+        s.flush();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            s.add(p(name));
+            assert!(s.dirty, "adding waits for the flush instead of saving each file");
+        }
+        s.flush();
+        assert!(!s.dirty, "one flush saved them all");
+        s.add(p("d.txt"));
+        s.remove(0);
+        assert!(!s.dirty, "any other change is saved at once, and that includes the files added before it");
+        assert_eq!(s.items, vec![p("c.txt"), p("b.txt"), p("a.txt")]);
     }
 
     #[test]
