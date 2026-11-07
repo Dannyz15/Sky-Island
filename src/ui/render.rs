@@ -113,8 +113,8 @@ impl App {
         theme::set_light(self.light());
         let frame_start = Instant::now();
         self.glows.set_motion(self.settings.motion.speed(), self.settings.motion.bounce());
-        self.glows.begin(frame_start.duration_since(self.last_draw).as_secs_f64().min(1.0 / 30.0));
-        self.last_draw = frame_start;
+        self.glows.begin(frame_start.duration_since(self.pacing.last_draw).as_secs_f64().min(1.0 / 30.0));
+        self.pacing.last_draw = frame_start;
         if self.view == View::Shelf {
             self.load_icons();
         }

@@ -53,6 +53,24 @@ pub(crate) struct Springs {
     pub(crate) tuck_goal: f64,
 }
 
+/// Frame pacing: when the last frame was drawn, how long one frame is, when the screen's refresh rate was last read, and when the next frame is due.
+pub(crate) struct Pacing {
+    pub(crate) last_draw: Instant,
+    /// How long one frame of an animation is: one refresh of the screen the notch is on.
+    pub(crate) frame: Duration,
+    /// When the screen's refresh rate was last read. Windows can change it at any time (the user picks another
+    /// one, the notch moves to another screen), so it is read again every few seconds.
+    pub(crate) rate_read: Option<Instant>,
+    /// When a frame of the animation was last due; the next ones follow at steady steps of `frame`.
+    pub(crate) beat: Instant,
+}
+
+impl Default for Pacing {
+    fn default() -> Self {
+        Self { last_draw: Instant::now(), frame: Duration::from_micros(16_667), rate_read: None, beat: Instant::now() }
+    }
+}
+
 impl Springs {
     /// The springs at rest: the notch closed, and tucked away when `hidden` (the Auto-hide notch setting).
     pub(crate) fn new(hidden: bool) -> Self {
@@ -225,7 +243,7 @@ impl App {
         if self.settings.screen.follows() && self.follow != Some(screen) {
             // The notch moves there, and the other screens are watched instead.
             self.follow = Some(screen);
-            self.rate_read = None;
+            self.pacing.rate_read = None;
             self.monitor_area = None;
             self.last_tick = Instant::now();
             self.refresh_edges();
@@ -236,8 +254,8 @@ impl App {
     /// When the next frame of a running animation is due: the next step of the screen's rhythm after `now`,
     /// so frames come at its refresh rate however long drawing one takes (as long as it fits in one).
     pub(crate) fn next_frame(&mut self, now: Instant) -> Instant {
-        let (beat, next) = next_beat(self.beat, self.frame, now);
-        self.beat = beat;
+        let (beat, next) = next_beat(self.pacing.beat, self.pacing.frame, now);
+        self.pacing.beat = beat;
         next
     }
 
@@ -353,10 +371,10 @@ impl App {
             let mpos = monitor.position();
             let msize = monitor.size();
             self.screen_w = msize.width as f64 / window.scale_factor();
-            if self.rate_read.is_none_or(|at| at.elapsed() > RATE_RECHECK) {
-                self.rate_read = Some(Instant::now());
+            if self.pacing.rate_read.is_none_or(|at| at.elapsed() > RATE_RECHECK) {
+                self.pacing.rate_read = Some(Instant::now());
                 if let Some(millihertz) = monitor.refresh_rate_millihertz() {
-                    self.frame = frame_length(millihertz);
+                    self.pacing.frame = frame_length(millihertz);
                 }
             }
             let area = (mpos.x, mpos.y, mpos.x + msize.width as i32, mpos.y + msize.height as i32);

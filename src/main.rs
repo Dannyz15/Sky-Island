@@ -217,16 +217,10 @@ struct App {
     switch: ui::ViewSwitch,
     /// Hover glows, switch knobs and other small values that glide towards their goal.
     glows: Glows,
-    last_draw: Instant,
+    /// Frame pacing: when the last frame was drawn, how long one frame is, when the screen's refresh rate was last read, and when the next frame is due.
+    pacing: ui::Pacing,
     /// The open notch's background (body, glow and border), kept while nothing about it changes.
     body: Option<(ui::BodyKey, Pixmap)>,
-    /// How long one frame of an animation is: one refresh of the screen the notch is on.
-    frame: Duration,
-    /// When the screen's refresh rate was last read. Windows can change it at any time (the user picks another
-    /// one, the notch moves to another screen), so it is read again every few seconds.
-    rate_read: Option<Instant>,
-    /// When a frame of the animation was last due; the next ones follow at steady steps of `frame`.
-    beat: Instant,
     /// Windows is using its light theme (apps), as last reported by the system.
     system_light: bool,
     /// The settings window, while it is open.
@@ -318,11 +312,8 @@ impl App {
             slides: ui::Slides::default(),
             switch: ui::ViewSwitch::default(),
             glows: Glows::default(),
-            last_draw: Instant::now(),
+            pacing: ui::Pacing::default(),
             body: None,
-            frame: Duration::from_micros(16_667),
-            rate_read: None,
-            beat: Instant::now(),
             system_light: false,
             panel: None,
             mirrors: ui::Mirrors::default(),

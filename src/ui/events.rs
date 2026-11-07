@@ -155,7 +155,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Screens => {
                 // Place the island again, on the screen it belongs on, and read the refresh rate afresh.
-                self.rate_read = None;
+                self.pacing.rate_read = None;
                 self.monitor_area = None;
                 self.last_tick = Instant::now();
                 self.refresh_edges();
@@ -541,7 +541,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.shelf_ui.drag_hover = true;
                 self.view = View::Shelf;
                 self.last_tick = Instant::now();
-                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.frame));
+                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.pacing.frame));
             }
             WindowEvent::HoveredFileCancelled => {
                 self.shelf_ui.drag_hover = false;
@@ -603,7 +603,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
         // The settings window asks for frames while its controls are moving.
         let mut panel_wake = None;
-        let frame = self.frame;
+        let frame = self.pacing.frame;
         if let Some(p) = &mut self.panel {
             if p.reset_armed.is_some_and(|t| now >= t) {
                 p.reset_armed = None;
