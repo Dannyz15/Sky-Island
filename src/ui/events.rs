@@ -427,7 +427,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.progress >= 0.9 && !self.edit.on && self.timer_field.is_none() && self.wheel_changes_tab() => {
+            WindowEvent::MouseWheel { delta, .. } if self.progress >= 0.9 && !self.edit.on && self.timer_entry.field.is_none() && self.wheel_changes_tab() => {
                 let dy = wheel(&delta, 1.0, 1.0);
                 // Scrolling down goes to the next tab, up to the one before; one step per flick.
                 if dy != 0.0 && self.last_wheel_tab.elapsed() > Duration::from_millis(220) {
@@ -500,7 +500,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } if self.timer_field.is_some() && event.state == ElementState::Pressed => {
+            WindowEvent::KeyboardInput { event, .. } if self.timer_entry.field.is_some() && event.state == ElementState::Pressed => {
                 self.timer_key(&event);
                 if let Some(w) = &self.window {
                     w.request_redraw();
@@ -527,7 +527,7 @@ impl ApplicationHandler<UserEvent> for App {
                     w.request_redraw();
                 }
             }
-            WindowEvent::Focused(false) if self.timer_field.is_some() => {
+            WindowEvent::Focused(false) if self.timer_entry.field.is_some() => {
                 // The user clicked into another app: keep what was typed and don't steal focus back.
                 self.edit.prev_foreground = None;
                 self.end_timer_edit(true);
@@ -744,7 +744,7 @@ impl ApplicationHandler<UserEvent> for App {
         // Periodic refresh for the progress bar / countdown. Only redraw when due, since a redraw
         // itself triggers another about_to_wait.
         let expanded = self.progress >= 1.0;
-        if (expanded && (self.media.playing || self.edit.on || self.timer_field.is_some() || matches!(self.view, View::Water | View::Todo))) || self.timer.running() {
+        if (expanded && (self.media.playing || self.edit.on || self.timer_entry.field.is_some() || matches!(self.view, View::Water | View::Todo))) || self.timer.running() {
             let tick = if expanded && self.view == View::Timer && self.timer.running() { RING_TICK } else { PROGRESS_TICK };
             let due = self.last_ui_tick + tick;
             if now >= due {

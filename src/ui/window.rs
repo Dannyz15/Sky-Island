@@ -36,7 +36,7 @@ impl Default for Slides {
 
 impl App {
     fn target(&self) -> f64 {
-        if self.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_field.is_some() || self.notices.alert_until.is_some() { 1.0 } else { 0.0 }
+        if self.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_entry.field.is_some() || self.notices.alert_until.is_some() { 1.0 } else { 0.0 }
     }
 
     /// With "Auto-hide notch" on, the notch slides away whenever there is nothing to show or touch.
@@ -45,7 +45,7 @@ impl App {
             || self.enter_at.is_some()
             || self.shelf_ui.drag_hover
             || self.edit.on
-            || self.timer_field.is_some()
+            || self.timer_entry.field.is_some()
             || self.notices.alert_until.is_some()
             || self.notices.until.is_some()
             || self.previewing()

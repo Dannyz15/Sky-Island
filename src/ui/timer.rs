@@ -56,6 +56,14 @@ fn preset_label(secs: u64) -> String {
     if secs.is_multiple_of(3600) { format!("{}h", secs / 3600) } else { format!("{}m", secs / 60) }
 }
 
+/// Typing a number into the timer.
+#[derive(Default)]
+pub(crate) struct TimerEntry {
+    /// The timer number being typed (index into `Unit::ALL`), and the digits typed so far.
+    pub(crate) field: Option<usize>,
+    pub(crate) digits: String,
+}
+
 impl App {
     /// How long the timer's alarm keeps ringing if nobody stops it, and how often it sounds again.
     pub(crate) fn alarm_for(&self) -> Duration {
@@ -79,7 +87,7 @@ impl App {
         let finished = self.notices.alert_until.is_some() && self.notices.alert_msg == TIMES_UP;
 
         // Quick choices for the length, or a reminder of the keys while a number is being typed.
-        if self.timer_field.is_some() && !finished {
+        if self.timer_entry.field.is_some() && !finished {
             draw_text_centered(pm, font, "Type digits \u{00B7} Enter to set \u{00B7} Tab for next", TIMER_COLS[1] * s, 47.0 * s, 10.0 * s, grey, 200.0 * s);
         } else if !finished {
             for (i, secs) in timer::PRESETS.iter().enumerate() {
@@ -125,7 +133,7 @@ impl App {
                 }
                 let ink = if idle { white } else { [120, 120, 130, a] };
                 let area = timer_value_rect(i);
-                let typing = self.timer_field == Some(i);
+                let typing = self.timer_entry.field == Some(i);
                 if typing {
                     gfx::gradient_rounded(
                         pm,
@@ -155,8 +163,8 @@ impl App {
                     }
                 }
                 // While typing, the digits so far replace the number (the old one stays until the first digit).
-                let shown = if typing && !self.timer_input.is_empty() { self.timer_input.clone() } else { format!("{value:02}") };
-                let ink = if typing && self.timer_input.is_empty() { [150, 150, 165, a] } else { ink };
+                let shown = if typing && !self.timer_entry.digits.is_empty() { self.timer_entry.digits.clone() } else { format!("{value:02}") };
+                let ink = if typing && self.timer_entry.digits.is_empty() { [150, 150, 165, a] } else { ink };
                 draw_text_centered(pm, heading, &shown, (x - 5.0) * s, TIMER_VALUE_Y * s, 22.0 * s, ink, 40.0 * s);
                 if typing && (self.edit.started.elapsed().as_millis() / 500).is_multiple_of(2) {
                     let cx = (x - 5.0) * s + text_width(heading, &shown, 22.0 * s) / 2.0 + 1.5 * s;
@@ -195,11 +203,11 @@ impl App {
 
     /// Start typing one of the timer's numbers: take the keyboard, remembering where it came from.
     fn begin_timer_edit(&mut self, field: usize) {
-        if self.timer_field.is_none() && self.edit.prev_foreground.is_none() {
+        if self.timer_entry.field.is_none() && self.edit.prev_foreground.is_none() {
             self.remember_foreground();
         }
-        self.timer_field = Some(field);
-        self.timer_input.clear();
+        self.timer_entry.field = Some(field);
+        self.timer_entry.digits.clear();
         self.edit.started = Instant::now();
         if let Some(w) = &self.window {
             w.focus_window();
@@ -212,8 +220,8 @@ impl App {
         if keep {
             self.apply_timer_input();
         }
-        self.timer_field = None;
-        self.timer_input.clear();
+        self.timer_entry.field = None;
+        self.timer_entry.digits.clear();
         self.last_tick = Instant::now();
         self.restore_foreground();
         if let Some(w) = &self.window {
@@ -223,28 +231,28 @@ impl App {
 
     /// Put the digits typed so far into the timer's length.
     fn apply_timer_input(&mut self) {
-        if let (Some(field), Ok(value)) = (self.timer_field, self.timer_input.parse::<u64>()) {
+        if let (Some(field), Ok(value)) = (self.timer_entry.field, self.timer_entry.digits.parse::<u64>()) {
             self.timer.set_part(Unit::ALL[field], value);
         }
-        self.timer_input.clear();
+        self.timer_entry.digits.clear();
     }
 
     /// Carry on typing in the next (`dir` = 1) or previous (-1) number.
     fn move_timer_field(&mut self, dir: isize) {
-        let Some(field) = self.timer_field else { return };
+        let Some(field) = self.timer_entry.field else { return };
         self.apply_timer_input();
-        self.timer_field = Some((field as isize + dir).rem_euclid(Unit::ALL.len() as isize) as usize);
+        self.timer_entry.field = Some((field as isize + dir).rem_euclid(Unit::ALL.len() as isize) as usize);
         self.edit.started = Instant::now();
     }
 
     /// A key pressed while a timer number is being typed.
     pub(crate) fn timer_key(&mut self, event: &winit::event::KeyEvent) {
-        let Some(field) = self.timer_field else { return };
+        let Some(field) = self.timer_entry.field else { return };
         match &event.logical_key {
             Key::Named(NamedKey::Enter) => self.end_timer_edit(true),
             Key::Named(NamedKey::Escape) => self.end_timer_edit(false),
             Key::Named(NamedKey::Backspace) => {
-                self.timer_input.pop();
+                self.timer_entry.digits.pop();
             }
             Key::Named(NamedKey::Tab) | Key::Named(NamedKey::ArrowRight) => self.move_timer_field(1),
             Key::Named(NamedKey::ArrowLeft) => self.move_timer_field(-1),
@@ -257,8 +265,8 @@ impl App {
                 if let Some(text) = &event.text {
                     for c in text.chars() {
                         if c.is_ascii_digit() {
-                            if self.timer_input.len() < 2 {
-                                self.timer_input.push(c);
+                            if self.timer_entry.digits.len() < 2 {
+                                self.timer_entry.digits.push(c);
                             }
                         } else if matches!(c, ':' | '.' | ',' | ' ') {
                             // Typing 1:30:00 moves along as you go.

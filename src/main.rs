@@ -163,9 +163,8 @@ struct App {
     /// The lyrics view: the lyrics of the song, where they came from, and the line in the middle.
     lyric: ui::LyricsView,
     timer: Timer,
-    /// The timer number being typed (index into `Unit::ALL`), and the digits typed so far.
-    timer_field: Option<usize>,
-    timer_input: String,
+    /// Typing a number into the timer.
+    timer_entry: ui::TimerEntry,
     water: Water,
     shelf: Shelf,
     /// What the shelf shows on screen: file icons, a drag over the notch, and the highlighted files.
@@ -291,8 +290,7 @@ impl App {
             grow_v: 0.0,
             lyric: ui::LyricsView::default(),
             timer: Timer::load(),
-            timer_field: None,
-            timer_input: String::new(),
+            timer_entry: ui::TimerEntry::default(),
             water: Water::new(today(), Instant::now()),
             shelf: {
                 let mut shelf = Shelf::new();

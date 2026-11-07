@@ -20,7 +20,7 @@ impl App {
         }
 
         // A click anywhere finishes the number being typed; it is then handled as usual.
-        if self.timer_field.is_some() {
+        if self.timer_entry.field.is_some() {
             self.end_timer_edit(true);
         }
 
