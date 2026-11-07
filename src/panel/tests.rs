@@ -9,8 +9,8 @@ fn every_page_fits_inside_the_window() {
         let lay = layout(page, frame_for(WIDTH as f32));
         for g in &lay.groups {
             assert!(g.rect.0 >= SIDEBAR_W && g.rect.0 + g.rect.2 <= WIDTH as f32, "{} is outside on {}", g.title, page.title());
-            // About, Notch and Tabs are taller than the default window and scroll; every other page fits.
-            assert!(matches!(page, Page::About | Page::Notch | Page::Tabs) || g.rect.1 + g.rect.3 <= HEIGHT as f32 - 14.0, "{} runs past the bottom on {}", g.title, page.title());
+            // About and Closed notch are taller than the default window and scroll; every other page fits.
+            assert!(matches!(page, Page::About | Page::ClosedNotch) || g.rect.1 + g.rect.3 <= HEIGHT as f32 - 14.0, "{} runs past the bottom on {}", g.title, page.title());
         }
         for item in &lay.items {
             assert!(item.row.0 + item.row.2 <= WIDTH as f32, "{} is too wide", item.label);
@@ -52,11 +52,10 @@ fn the_content_grows_with_the_window_and_stays_in_the_middle() {
 fn a_page_scrolls_only_as_far_as_it_is_taller_than_the_window() {
     for page in Page::ALL {
         let lay = layout(page, frame_for(WIDTH as f32));
-        // Most pages fit the default window; About (a tall card) and Notch (all the notch settings) scroll a little.
+        // Most pages fit the default window; About (a tall card) and Closed notch (the eye picker) scroll a little.
         let limit = match page {
             Page::About => 330.0,
-            Page::Notch => 760.0,
-            Page::Tabs => 220.0,
+            Page::ClosedNotch => 220.0,
             _ => 0.0,
         };
         assert!(scroll_limit(&lay, HEIGHT as f32) <= limit, "{} needs too much scrolling in the default window", page.title());
@@ -125,7 +124,7 @@ fn the_window_comes_back_where_it_was_left() {
     assert_eq!(Spot::from_json(&spot.to_json()), Some(spot));
     assert_eq!(Spot::from_json(&json!({})), None, "no file content");
     assert_eq!(Spot::from_json(&json!({ "width": 50.0, "height": 800.0, "x": 0, "y": 0 })), None, "far too narrow to be a window");
-    let rounded = Spot::from_json(&json!({ "width": 839.9999, "height": 519.9999, "x": 5, "y": 6 }));
+    let rounded = Spot::from_json(&json!({ "width": 839.9999, "height": 639.9999, "x": 5, "y": 6 }));
     assert!(rounded.is_some(), "the smallest window, rounded down, still counts");
     let spot = rounded.unwrap();
     assert_eq!(size_on_screen(spot.width, spot.height, 1920.0, 1200.0, 1.25, 1.0), (WIDTH, MIN_HEIGHT));
@@ -171,7 +170,8 @@ fn groups_on_a_page_do_not_overlap() {
 fn labels_have_room_next_to_their_controls() {
     for page in Page::ALL {
         for item in layout(page, frame_for(WIDTH as f32)).items {
-            if item.ctrl.2 > 0.0 {
+            // A control under its label has the whole row above it for the text.
+            if item.ctrl.2 > 0.0 && !under_label(item.kind) {
                 assert!(item.ctrl.0 - item.row.0 > 230.0, "{} leaves too little room for its text", item.label);
             }
         }
@@ -189,6 +189,8 @@ fn every_setting_is_on_exactly_one_page() {
                 Kind::Seg(g) => segs.push(g),
                 Kind::Slider(l) => slides.push(l),
                 Kind::Pick => picks += 1,
+                // The tab switches are the tiles of the tab grid.
+                Kind::TabGrid => toggles.extend(TAB_TILES.iter().map(|t| t.1)),
                 _ => {}
             }
         }
@@ -275,10 +277,50 @@ fn the_eye_picker_has_a_tile_for_every_style_and_they_fit_its_control() {
         }
     }
     assert_eq!(eye_tile_at(ctrl, ctrl.0 - 5.0, ctrl.1 - 5.0), None);
-    // The row is tall enough for the picker, and the picker is on the Notch page, once.
+    // The row is tall enough for the picker, and the picker is on the Closed notch page, once.
     assert!(row_height("x", Kind::EyeGrid, 1) > EYE_GRID.1);
-    let on_notch = layout(Page::Notch, frame_for(WIDTH as f32)).items.iter().filter(|i| matches!(i.kind, Kind::EyeGrid)).count();
-    assert_eq!(on_notch, 1);
+    let on_page = layout(Page::ClosedNotch, frame_for(WIDTH as f32)).items.iter().filter(|i| matches!(i.kind, Kind::EyeGrid)).count();
+    assert_eq!(on_page, 1);
+}
+
+#[test]
+fn the_tab_grid_has_a_tile_for_every_tab_inside_its_row() {
+    let lay = layout(Page::Tabs, frame_for(WIDTH as f32));
+    let rows: Vec<_> = lay.items.iter().filter(|i| matches!(i.kind, Kind::TabGrid)).collect();
+    assert_eq!(rows.len(), 1, "one grid, on the Tabs page");
+    let (row, ctrl) = (rows[0].row, rows[0].ctrl);
+    assert!(ctrl.1 >= row.1 + 40.0 && ctrl.1 + ctrl.3 <= row.1 + row.3, "under the label, inside the row");
+    assert!(ctrl.0 >= row.0 && ctrl.0 + ctrl.2 <= row.0 + row.2);
+    // Every tab of the notch has a tile, and each one only once.
+    let views: Vec<View> = TAB_TILES.iter().map(|t| t.0).collect();
+    for view in [View::Player, View::Timer, View::Water, View::Weather, View::Prayer, View::Stats, View::Shelf, View::Todo, View::Calendar, View::Clipboard] {
+        assert_eq!(views.iter().filter(|v| **v == view).count(), 1, "{:?}", view as u8);
+    }
+    for i in 0..TAB_TILES.len() {
+        let t = tab_tile(ctrl, i);
+        assert!(t.0 >= ctrl.0 - 0.01 && t.0 + t.2 <= ctrl.0 + ctrl.2 + 0.01 && t.1 >= ctrl.1 && t.1 + t.3 <= ctrl.1 + ctrl.3 + 0.01, "tile {i} is inside");
+        assert_eq!(tab_tile_at(ctrl, t.0 + t.2 / 2.0, t.1 + t.3 / 2.0), Some(i));
+        for j in 0..i {
+            let o = tab_tile(ctrl, j);
+            assert!(t.0 >= o.0 + o.2 || o.0 >= t.0 + t.2 || t.1 >= o.1 + o.3 || o.1 >= t.1 + t.3, "tiles {i} and {j} do not overlap");
+        }
+    }
+    assert_eq!(tab_tile_at(ctrl, ctrl.0 - 5.0, ctrl.1 - 5.0), None, "the gap around the grid is no tile");
+}
+
+#[test]
+fn the_sidebar_has_its_section_headings_in_the_gaps_between_rows() {
+    for pair in Page::ALL.windows(2) {
+        let (a, b) = (side_rect(pair[0]), side_rect(pair[1]));
+        let gap = b.1 - (a.1 + a.3);
+        if pair[1].section().is_some() {
+            assert!(gap >= SIDE_HEAD_H, "room for the heading above {}", pair[1].title());
+        } else if pair[1] == Page::About {
+            assert!(gap > SIDE_ITEM_H - a.3, "About stands a little apart");
+        } else {
+            assert!((gap - (SIDE_ITEM_H - a.3)).abs() < 0.01, "{} follows {} closely", pair[1].title(), pair[0].title());
+        }
+    }
 }
 
 #[test]

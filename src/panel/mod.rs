@@ -1,6 +1,6 @@
-//! The Sky Island settings window: an ordinary Windows window with a sidebar of pages (General, Notch,
-//! Appearance, Tabs, Location, Sounds, Calendar, Shelf, Notices, About) and the settings of the chosen page on the right,
-//! grouped in cards.
+//! The Sky Island settings window: an ordinary Windows window with a sidebar of pages in sections (General,
+//! Appearance, Notices; Notch: Behaviour, Closed notch; Tabs: Tabs, Music, Weather & Prayer, Timer & Sounds, Calendar,
+//! Shelf & Clipboard; About) and the settings of the chosen page on the right, grouped in cards.
 //! It holds every setting, including the ones that do not fit in the notch.
 //!
 //! It is drawn with the same tools as the notch, so it moves the same way: switches slide, the choice
@@ -59,13 +59,16 @@ const WIDTH: f64 = 840.0;
 const HEIGHT: f64 = 700.0;
 const SIDEBAR_W: f32 = 212.0;
 const SIDE_TOP: f32 = 62.0;
-const SIDE_ITEM_H: f32 = 42.0;
+const SIDE_ITEM_H: f32 = 38.0;
+/// The room a section heading takes in the sidebar, and the gap above About.
+const SIDE_HEAD_H: f32 = 28.0;
+const SIDE_ABOUT_GAP: f32 = 14.0;
 const CONTENT_TOP: f32 = 100.0;
 /// The page's content is at least this wide (the width it has in the default window) and at most MAX_CONTENT_W.
 const MIN_CONTENT_W: f32 = WIDTH as f32 - SIDEBAR_W - 60.0;
 const MAX_CONTENT_W: f32 = 720.0;
 /// The smallest the window can be made, in logical pixels: as wide as the default, and tall enough for the sidebar.
-const MIN_HEIGHT: f64 = 520.0;
+const MIN_HEIGHT: f64 = 640.0;
 /// Where the scrolling part of a page starts, below the title and its line.
 const SCROLL_TOP: f32 = 88.0;
 /// Room left under the last card when a page is scrolled to the end.

@@ -69,7 +69,7 @@
 | 📅 **Calendar** | Month or week view with your tasks. |
 | 📋 **Clipboard** | History of text and pictures; pin text to keep it. |
 
-Every tab can be switched off in Settings. Weather and Prayer need your city (Settings > Location).
+Every tab can be switched off in Settings > Tabs. Weather and Prayer need your city (Settings > Weather & Prayer).
 
 ## Installation
 
@@ -85,7 +85,7 @@ To update, run a newer setup, or use **Check for updates** in Settings > About. 
 
 Hover over the notch at the top edge of your screen to open it. Move away and it closes. It also pops up briefly when something changes on your PC, such as the volume or the battery.
 
-Closed, the notch shows the clock, or a pair of blinking eyes in one of ten styles. While a song plays it also shows the album cover as a spinning record, with a ring that fills as the song goes on, and five bars that rise and fall with the real loudness of the music. Choose the look in Settings > Notch.
+Closed, the notch shows the clock, or a pair of blinking eyes in one of ten styles. While a song plays it also shows the album cover as a spinning record, with a ring that fills as the song goes on, and five bars that rise and fall with the real loudness of the music. Choose the look in Settings > Closed notch.
 
 ## Questions
 
@@ -98,25 +98,25 @@ The setup is not code-signed, so Windows may show "Windows protected your PC". C
 <details>
 <summary>The notch disappeared.</summary>
 
-It hides while a full-screen app, such as a game or a video, is on the same screen (Settings > Notch > **Hide in full screen**). **Auto-hide notch** in the same page slides it away when you are not using it: move the mouse to the top edge to bring it back.
+It hides while a full-screen app, such as a game or a video, is on the same screen (Settings > Behaviour > **Hide in full screen**). **Auto-hide notch** in the same page slides it away when you are not using it: move the mouse to the top edge to bring it back.
 </details>
 
 <details>
 <summary>Weather and Prayer ask for a city.</summary>
 
-Open Settings > Location, type your city and press Enter, or press **Detect my location**.
+Open Settings > Weather & Prayer, type your city and press Enter, or press **Detect my location**.
 </details>
 
 <details>
 <summary>I want the notch on another screen.</summary>
 
-Settings > Notch > **Show on**: it shows a small map of the screens that are connected, so click the one you want (the number is the one on the map), **All** to have the notch follow the mouse to the top edge of whichever screen you use, or **Every** to keep a closed notch on each screen at once (the one you point at opens).
+Settings > Behaviour > **Show on**: it shows a small map of the screens that are connected, so click the one you want (the number is the one on the map), **All** to have the notch follow the mouse to the top edge of whichever screen you use, or **Every** to keep a closed notch on each screen at once (the one you point at opens).
 </details>
 
 <details>
 <summary>How do I change the eyes, or turn off the record and the bars?</summary>
 
-Settings > Notch. **Eye style** is a grid of ten styles; pick one to see it on the notch. Under **Closed notch**, **Show music** turns the record and the bars off, or you can keep it and switch off **Moving bars**, **Spinning record** or **Edge glow** one by one. **Bars follow the sound** makes the bars listen to the sound your PC plays; switched off, they move to a made-up beat.
+Settings > Closed notch. **Eye style** is a grid of ten styles; pick one to see it on the notch. **Show music** turns the record and the bars off, or you can keep it and switch off **Moving bars**, **Spinning record** or **Edge glow** one by one. **Bars follow the sound** makes the bars listen to the sound your PC plays; switched off, they move to a made-up beat.
 </details>
 
 <details>
@@ -148,10 +148,10 @@ Network requests, and why:
 - **Prayer times:** Aladhan, with your city's coordinates. In Malaysia, JAKIM's e-Solat is asked instead, with only the code of your zone (for example SGR01).
 - **Your city** (only when you type it and press Enter): OpenStreetMap's Nominatim, with the name you typed.
 - **Detect my location** (only when you press it): Windows Location, then OpenStreetMap's Nominatim to name the place. The position is rounded to about a kilometre first, so it is never more exact than your area, and that is also all that is saved and sent for the weather and prayer times. If Windows Location is off, ipwho.is is asked instead and sees your IP address.
-- **Lyrics:** LRCLIB, with the title, artist and length of what plays, also from a browser tab. Switch it off with **Find lyrics online** in Settings > Tabs; then only lyrics already saved on this PC show.
+- **Lyrics:** LRCLIB, with the title, artist and length of what plays, also from a browser tab. Switch it off with **Find lyrics online** in Settings > Music; then only lyrics already saved on this PC show.
 - **Updates:** GitHub, to look for a newer version at start and every 6 hours (switch off in Settings > Notices). Nothing is downloaded until you press Download.
 
-**Sound:** while a song plays and the closed notch shows its bars, Sky Island listens to the sound your PC sends to the speakers or headphones (Windows calls it loopback) to make the bars follow the music. It only measures how loud each pitch is, about 45 times a second. Nothing is recorded, saved or sent, the microphone is not used, and it stops a moment after the bars go away. Switch it off with **Bars follow the sound** in Settings > Notch. It hears everything the PC plays, not only the song.
+**Sound:** while a song plays and the closed notch shows its bars, Sky Island listens to the sound your PC sends to the speakers or headphones (Windows calls it loopback) to make the bars follow the music. It only measures how loud each pitch is, about 45 times a second. Nothing is recorded, saved or sent, the microphone is not used, and it stops a moment after the bars go away. Switch it off with **Bars follow the sound** in Settings > Closed notch. It hears everything the PC plays, not only the song.
 
 To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whether one of those two keys was pressed. It never records or sends what you type. **Start with Windows** adds one startup entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 </details>

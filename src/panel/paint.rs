@@ -159,8 +159,12 @@ impl App {
             self.paint_changelog(target, panel, font, heading, tint, s, frame, lh);
             return;
         }
-        crate::draw_text(target, heading, page.title(), frame.x * s, 52.0 * s, 24.0 * s, [255, 255, 255, 255], 400.0 * s);
-        crate::draw_text(target, font, page.subtitle(), frame.x * s, 74.0 * s, 11.5 * s, [150, 150, 164, 255], frame.w * s);
+        // The page's own icon, big, beside its title, with a soft glow of its colour behind it.
+        gfx::glow(target, (frame.x + 22.0) * s, 50.0 * s, 46.0 * s, [tint[0], tint[1], tint[2], 34], None);
+        draw_page_icon(target, page, frame.x, 28.0, 44.0, s);
+        let text_x = frame.x + 60.0;
+        crate::draw_text(target, heading, page.title(), text_x * s, 52.0 * s, 24.0 * s, [255, 255, 255, 255], (frame.w - 60.0) * s);
+        crate::draw_text(target, font, page.subtitle(), text_x * s, 72.0 * s, 11.5 * s, [150, 150, 164, 255], (frame.w - 60.0) * s);
         let lay = self.layout_of(panel, page, frame);
         panel.scroll_max = scroll_limit(&lay, lh);
         panel.scroll = panel.scroll.clamp(0.0, panel.scroll_max);
@@ -205,7 +209,11 @@ impl App {
         // The highlight glides to the chosen page, tinted with that page's colour.
         let pos = panel.glows.follow(KEY_SIDE, panel.page.index() as f64, 30.0, 0.8) as f32;
         let tint = panel.page.tint();
-        let (hx, hy, hw, hh) = (12.0, SIDE_TOP + pos * SIDE_ITEM_H, SIDEBAR_W - 24.0, SIDE_ITEM_H - 4.0);
+        // Between two pages the highlight is part way between their rows (which a heading can push apart).
+        let (lo, hi) = (pos.floor().clamp(0.0, (Page::ALL.len() - 1) as f32), pos.ceil().clamp(0.0, (Page::ALL.len() - 1) as f32));
+        let (a, b) = (side_rect(Page::ALL[lo as usize]), side_rect(Page::ALL[hi as usize]));
+        let hy = a.1 + (b.1 - a.1) * (pos - lo);
+        let (hx, hw, hh) = (12.0, SIDEBAR_W - 24.0, SIDE_ITEM_H - 4.0);
         gfx::gradient_rounded(pm, hx * s, hy * s, hw * s, hh * s, 10.0 * s, [255, 255, 255, 30], [255, 255, 255, 16], false);
         gfx::stroke_rounded(pm, hx * s + 0.5 * s, hy * s + 0.5 * s, hw * s - s, hh * s - s, 10.0 * s, s, [tint[0], tint[1], tint[2], 90]);
 
@@ -216,9 +224,13 @@ impl App {
                 crate::fill_rounded(pm, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 10.0 * s, [255, 255, 255, (12.0 * hot) as u8]);
             }
             let near = 1.0 - (pos - i as f32).abs().min(1.0);
-            draw_page_icon(pm, page, r.0 + 8.0, r.1 + (r.3 - 26.0) / 2.0, s);
+            // A section of pages starts with its heading.
+            if let Some(heading) = page.section() {
+                crate::draw_text(pm, font, heading, (r.0 + 10.0) * s, (r.1 - 9.0) * s, 10.0 * s, [118, 118, 134, 255], (r.2 - 20.0) * s);
+            }
+            draw_page_icon(pm, page, r.0 + 6.0, r.1 + (r.3 - 24.0) / 2.0, 24.0, s);
             let ink = crate::pick(white, [200, 200, 212, 255], near.max(hot * 0.6));
-            crate::draw_text(pm, font, page.title(), (r.0 + 44.0) * s, (r.1 + r.3 / 2.0 + 4.5) * s, 13.0 * s, ink, (r.2 - 52.0) * s);
+            crate::draw_text(pm, font, page.title(), (r.0 + 40.0) * s, (r.1 + r.3 / 2.0 + 4.5) * s, 13.0 * s, ink, (r.2 - 48.0) * s);
             // A dot on About while a new version is waiting.
             if page == Page::About
                 && matches!(self.updates.status, crate::update::Status::Available { .. } | crate::update::Status::Downloading { .. } | crate::update::Status::Ready { .. })
@@ -246,7 +258,8 @@ impl App {
             }
         }
         for g in &lay.groups {
-            crate::draw_text(pm, font, g.title, (g.rect.0 + 4.0) * s, (g.rect.1 - 8.0) * s, 11.5 * s, grey, 300.0 * s);
+            let ink = gfx::mix(grey, [tint[0], tint[1], tint[2], 255], 0.45);
+            crate::draw_text(pm, heading, g.title, (g.rect.0 + 4.0) * s, (g.rect.1 - 8.0) * s, 12.0 * s, ink, 300.0 * s);
             crate::draw_card(pm, g.rect, 14.0, s, 1.0, 0.0, tint);
         }
         for (idx, item) in lay.items.iter().enumerate() {
@@ -270,7 +283,7 @@ impl App {
             }
             // The label and the line under it. The About page's update row shows what the check found.
             let (desc, desc_ink) = self.row_text(panel, item.kind, item.desc);
-            let text_w = item.ctrl.0 - item.row.0 - 36.0;
+            let text_w = if under_label(item.kind) { item.row.2 - 36.0 } else { item.ctrl.0 - item.row.0 - 36.0 };
             // A row with no line under its label has the label in the middle.
             let label_y = if desc.is_empty() { item.row.3 / 2.0 + 5.0 } else { 24.0 };
             crate::draw_text(pm, font, item.label, (item.row.0 + 18.0) * s, (item.row.1 + label_y) * s, 13.5 * s, crate::pick(white, [232, 232, 240, 255], hot), text_w * s);

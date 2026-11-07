@@ -124,26 +124,46 @@ pub(super) enum Kind {
     EyeGrid,
     /// The map of the connected screens, to choose where the notch is.
     ScreenMap,
+    /// A tile for each tab of the notch, with its icon; a click switches that tab on or off.
+    TabGrid,
 }
 
 /// The pages of the window, in the order of the sidebar.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Page {
     General,
-    Notch,
     Appearance,
+    Notices,
+    /// How the notch opens, hides and which screen it is on (called Behaviour in the sidebar, under Notch).
+    Notch,
+    ClosedNotch,
     Tabs,
+    Music,
+    /// Weather and Prayer: the city they use and their own settings.
     Location,
+    /// Timer and Sounds: the chimes and the timer's alarm.
     Sounds,
     Calendar,
+    /// Shelf and Clipboard.
     Shelf,
-    Notices,
     About,
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 10] =
-        [Page::General, Page::Notch, Page::Appearance, Page::Tabs, Page::Location, Page::Sounds, Page::Calendar, Page::Shelf, Page::Notices, Page::About];
+    pub(super) const ALL: [Page; 12] = [
+        Page::General,
+        Page::Appearance,
+        Page::Notices,
+        Page::Notch,
+        Page::ClosedNotch,
+        Page::Tabs,
+        Page::Music,
+        Page::Location,
+        Page::Sounds,
+        Page::Calendar,
+        Page::Shelf,
+        Page::About,
+    ];
 
     pub(super) fn index(self) -> usize {
         Self::ALL.iter().position(|p| *p == self).unwrap_or(0)
@@ -152,14 +172,16 @@ impl Page {
     pub(super) fn title(self) -> &'static str {
         match self {
             Page::General => "General",
-            Page::Notch => "Notch",
             Page::Appearance => "Appearance",
-            Page::Tabs => "Tabs",
-            Page::Location => "Location",
-            Page::Sounds => "Sounds",
-            Page::Calendar => "Calendar",
-            Page::Shelf => "Shelf",
             Page::Notices => "Notices",
+            Page::Notch => "Behaviour",
+            Page::ClosedNotch => "Closed notch",
+            Page::Tabs => "Tabs",
+            Page::Music => "Music",
+            Page::Location => "Weather & Prayer",
+            Page::Sounds => "Timer & Sounds",
+            Page::Calendar => "Calendar",
+            Page::Shelf => "Shelf & Clipboard",
             Page::About => "About",
         }
     }
@@ -167,15 +189,26 @@ impl Page {
     pub(super) fn subtitle(self) -> &'static str {
         match self {
             Page::General => "How Sky Island starts, and the key that opens it.",
-            Page::Notch => "How the notch opens and hides, how big it is, and what the closed notch shows.",
-            Page::Appearance => "The colours and the motion.",
-            Page::Tabs => "Choose which tabs the notch has. It always keeps at least one.",
-            Page::Location => "Where you are, for the weather and the prayer times.",
-            Page::Sounds => "Chimes and the timer alarm.",
-            Page::Calendar => "How the calendar counts its weeks and what it shows.",
-            Page::Shelf => "What happens to the files on the shelf.",
+            Page::Appearance => "The colours, the motion and the size of the notch.",
             Page::Notices => "Choose which changes pop up on the notch.",
+            Page::Notch => "How the notch opens and hides, and which screen it is on.",
+            Page::ClosedNotch => "What the closed notch shows: the clock, the music and the eyes.",
+            Page::Tabs => "Click a tab to switch it on or off. The notch always keeps at least one.",
+            Page::Music => "The lyrics of what plays, and where they come from.",
+            Page::Location => "Your city, the weather and the prayer times.",
+            Page::Sounds => "Chimes for reminders, and the timer's alarm.",
+            Page::Calendar => "How the calendar counts its weeks and what it shows.",
+            Page::Shelf => "The files you park on the shelf, and what you copy.",
             Page::About => "This version, updates and your data.",
+        }
+    }
+
+    /// The heading the sidebar shows above this page, where a new section of pages starts.
+    pub(super) fn section(self) -> Option<&'static str> {
+        match self {
+            Page::Notch => Some("NOTCH"),
+            Page::Tabs => Some("TABS"),
+            _ => None,
         }
     }
 
@@ -183,17 +216,53 @@ impl Page {
     pub(super) fn tint(self) -> [u8; 3] {
         match self {
             Page::General => [142, 148, 168],
-            Page::Notch => [96, 110, 255],
             Page::Appearance => [170, 112, 255],
-            Page::Tabs => [255, 176, 64],
-            Page::Location => [64, 196, 124],
-            Page::Sounds => [255, 92, 120],
-            Page::Calendar => [255, 96, 86],
-            Page::Shelf => [255, 140, 56],
             Page::Notices => [56, 176, 240],
+            Page::Notch => [96, 110, 255],
+            Page::ClosedNotch => [230, 96, 200],
+            Page::Tabs => [255, 176, 64],
+            Page::Music => [255, 82, 124],
+            Page::Location => [64, 196, 124],
+            Page::Sounds => [255, 136, 64],
+            Page::Calendar => [255, 96, 86],
+            Page::Shelf => [140, 200, 70],
             Page::About => [70, 190, 210],
         }
     }
+}
+
+/// The tabs of the notch on the Tabs page: the view, the switch behind it, its name and a few words.
+pub(super) const TAB_TILES: [(View, Toggle, &str, &str); 10] = [
+    (View::Player, Toggle::TabMusic, "Music", "Song and lyrics"),
+    (View::Timer, Toggle::Timer, "Timer", "Countdown"),
+    (View::Water, Toggle::Water, "Water", "Daily glasses"),
+    (View::Weather, Toggle::Weather, "Weather", "Now and ahead"),
+    (View::Prayer, Toggle::Prayer, "Prayer", "Today's times"),
+    (View::Stats, Toggle::TabStats, "Stats", "Live graphs"),
+    (View::Shelf, Toggle::TabShelf, "Shelf", "Parked files"),
+    (View::Todo, Toggle::TabTodo, "To-do", "Tasks"),
+    (View::Calendar, Toggle::TabCalendar, "Calendar", "Month or week"),
+    (View::Clipboard, Toggle::TabClipboard, "Clipboard", "What you copy"),
+];
+
+/// The tab grid: five tiles across and two down.
+const TAB_COLS: usize = 5;
+const TAB_TILE_H: f32 = 96.0;
+const TAB_GAP: f32 = 10.0;
+pub(super) const TAB_GRID_H: f32 = 2.0 * TAB_TILE_H + TAB_GAP;
+/// How far below the top of its row the tab grid starts (under the row's label and its line).
+const TAB_GRID_TOP: f32 = 58.0;
+
+/// Tile `i` of the tab grid whose control is `ctrl`.
+pub(super) fn tab_tile(ctrl: Rect, i: usize) -> Rect {
+    let w = (ctrl.2 - (TAB_COLS - 1) as f32 * TAB_GAP) / TAB_COLS as f32;
+    let (col, row) = ((i % TAB_COLS) as f32, (i / TAB_COLS) as f32);
+    (ctrl.0 + col * (w + TAB_GAP), ctrl.1 + row * (TAB_TILE_H + TAB_GAP), w, TAB_TILE_H)
+}
+
+/// The tab tile under (`x`, `y`), if any.
+pub(super) fn tab_tile_at(ctrl: Rect, x: f32, y: f32) -> Option<usize> {
+    (0..TAB_TILES.len()).find(|&i| inside(tab_tile(ctrl, i), x, y))
 }
 
 /// One row of a page: its label, a line under it, what it controls, and the text of a button.
@@ -201,7 +270,7 @@ pub(super) type RowSpec = (&'static str, &'static str, Kind, &'static str);
 
 /// The groups (title and rows) on a page.
 pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
-    use Kind::{Button, Cycle, EyeGrid, Link, Pick, ScreenMap, Seg as S, Slider, Text, Toggle as T};
+    use Kind::{Button, Cycle, EyeGrid, Link, Pick, ScreenMap, Seg as S, Slider, TabGrid, Text, Toggle as T};
     match page {
         Page::General => vec![
             ("Startup", vec![("Start with Windows", "Open Sky Island when you sign in", T(Toggle::Autostart), "")]),
@@ -213,6 +282,36 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 ],
             ),
         ],
+        Page::Appearance => vec![
+            ("Look", vec![("Theme", "Dark, light, or the same as Windows", S(Seg::Theme), ""), ("Animation", "How lively the movement is", S(Seg::Motion), "")]),
+            (
+                "Size",
+                vec![
+                    ("Notch size", "Make the whole notch bigger or smaller", S(Seg::Size), ""),
+                    ("Minimal notch", "A smaller pill when nothing is playing", T(Toggle::Minimal), ""),
+                ],
+            ),
+        ],
+        Page::Notices => vec![
+            (
+                "Indicators",
+                vec![
+                    ("Volume", "When you change the volume or mute", T(Toggle::HudVolume), ""),
+                    ("Brightness", "On laptop screens", T(Toggle::HudBrightness), ""),
+                    ("Caps Lock and Num Lock", "When you press the lock keys", T(Toggle::HudLock), ""),
+                ],
+            ),
+            (
+                "Popups",
+                vec![
+                    ("Battery", "Charging, unplugged and low battery", T(Toggle::HudBattery), ""),
+                    ("Wi-Fi and internet", "When the connection changes", T(Toggle::HudNetwork), ""),
+                    ("Headphones and speakers", "When an audio device is connected", T(Toggle::HudAudio), ""),
+                    ("Prayer time", "When a prayer time comes, with the Prayer tab on", T(Toggle::HudPrayer), ""),
+                ],
+            ),
+            ("Updates", vec![("New version", "Looks on GitHub at start and every 6 hours, and tells you when there is one", T(Toggle::HudUpdate), "")]),
+        ],
         Page::Notch => vec![
             (
                 "Opening",
@@ -223,29 +322,23 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 ],
             ),
             (
-                "Behaviour",
+                "Hiding",
                 vec![
                     ("Hide in full screen", "Games, videos and slides that fill the screen", T(Toggle::HideFullscreen), ""),
                     ("Auto-hide notch", "Slide out of view when you are not using it", T(Toggle::HideIsland), ""),
                 ],
             ),
-            (
-                "Size",
-                vec![
-                    ("Notch size", "Make the whole notch bigger or smaller", S(Seg::Size), ""),
-                    ("Minimal notch", "A smaller pill when nothing is playing", T(Toggle::Minimal), ""),
-                ],
-            ),
             ("Screen", vec![("Show on", "Click a screen. All follows your mouse; Every keeps a closed notch on each screen", ScreenMap, "")]),
+        ],
+        Page::ClosedNotch => vec![
+            ("Clock", vec![("Show clock", "The time on the closed notch", T(Toggle::ShowClock), ""), ("24-hour clock", "13:00 instead of 1:00 PM", T(Toggle::Clock24), "")]),
             (
-                "Closed notch",
+                "Music",
                 vec![
-                    ("Show clock", "The time on the closed notch", T(Toggle::ShowClock), ""),
-                    ("24-hour clock", "13:00 instead of 1:00 PM", T(Toggle::Clock24), ""),
                     ("Show music", "The album cover and moving bars on the closed notch while a song plays", T(Toggle::ClosedMusic), ""),
-                    ("Moving bars", "Five bars that rise and fall beside the clock (with Show music)", T(Toggle::ClosedBars), ""),
-                    ("Spinning record", "The cover turns like a record; off keeps it still (with Show music)", T(Toggle::ClosedSpin), ""),
-                    ("Edge glow", "A thin line along the notch in the cover's colour that breathes (with Show music)", T(Toggle::ClosedEdge), ""),
+                    ("Moving bars", "Five bars that rise and fall beside the clock", T(Toggle::ClosedBars), ""),
+                    ("Spinning record", "The cover turns like a record; off keeps it still", T(Toggle::ClosedSpin), ""),
+                    ("Edge glow", "A thin line along the notch in the cover's colour that breathes", T(Toggle::ClosedEdge), ""),
                     (
                         "Bars follow the sound",
                         "Listens to the sound this PC plays, only while the bars show and only on this PC, so they rise with the music. Off, they move to a made-up beat",
@@ -263,39 +356,19 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                 ],
             ),
         ],
-        Page::Appearance => {
-            vec![("Look", vec![("Theme", "Dark, light, or the same as Windows", S(Seg::Theme), ""), ("Animation", "How lively the movement is", S(Seg::Motion), "")])]
-        }
-        Page::Tabs => vec![
-            (
-                "Tabs",
-                vec![
-                    ("Music", "What is playing, its controls and the lyrics", T(Toggle::TabMusic), ""),
-                    (
-                        "Find lyrics online",
-                        "Sends the title and artist of what plays to LRCLIB to find its lyrics. Off, only lyrics saved on this PC show",
-                        T(Toggle::LyricsOnline),
-                        "",
-                    ),
-                    ("Timer", "A countdown timer with an alarm", T(Toggle::Timer), ""),
-                    ("Water tracker", "A daily glass counter with reminders", T(Toggle::Water), ""),
-                    ("Weather", "The weather now and the days ahead for your city", T(Toggle::Weather), ""),
-                    ("Prayer times", "Today's prayers and the next one for your city", T(Toggle::Prayer), ""),
-                    ("System stats", "Processor, memory, graphics, drives and network, with live graphs, while the notch is open", T(Toggle::TabStats), ""),
-                    ("Shelf", "A place to park files", T(Toggle::TabShelf), ""),
-                    ("To-do", "Tasks with reminders", T(Toggle::TabTodo), ""),
-                    ("Calendar", "A month or a week with your tasks", T(Toggle::TabCalendar), ""),
-                    ("Clipboard", "The history of what you copy", T(Toggle::TabClipboard), ""),
-                ],
-            ),
-            (
-                "Clipboard",
-                vec![
-                    ("Clipboard history", "Keep what you copy, text and pictures", T(Toggle::Clipboard), ""),
-                    ("Forget copied items", "Remove them from the history after a while", S(Seg::ClipKeep), ""),
-                ],
-            ),
-        ],
+        Page::Tabs => vec![("Tabs on the notch", vec![("Your tabs", "Lit tabs are on. The settings of each tab are on the pages below Tabs", TabGrid, "")])],
+        Page::Music => vec![(
+            "Lyrics",
+            vec![
+                (
+                    "Find lyrics online",
+                    "Sends the title and artist of what plays to LRCLIB to find its lyrics. Off, only lyrics saved on this PC show",
+                    T(Toggle::LyricsOnline),
+                    "",
+                ),
+                ("Lyrics cache", "Lyrics saved on this PC for the songs you played", Button(Act::ClearLyrics), "Clear"),
+            ],
+        )],
         Page::Location => vec![
             (
                 "Your city",
@@ -329,26 +402,15 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
         Page::Calendar => {
             vec![("Options", vec![("Week starts on", "The first column of the month", S(Seg::WeekStart), ""), ("Default view", "A month, or just one week", S(Seg::CalView), "")])]
         }
-        Page::Shelf => vec![("Shelf", vec![("Start with an empty shelf", "Files from your last session are cleared when Sky Island starts", T(Toggle::EmptyShelf), "")])],
-        Page::Notices => vec![
+        Page::Shelf => vec![
+            ("Shelf", vec![("Start with an empty shelf", "Files from your last session are cleared when Sky Island starts", T(Toggle::EmptyShelf), "")]),
             (
-                "Indicators",
+                "Clipboard",
                 vec![
-                    ("Volume", "When you change the volume or mute", T(Toggle::HudVolume), ""),
-                    ("Brightness", "On laptop screens", T(Toggle::HudBrightness), ""),
-                    ("Caps Lock and Num Lock", "When you press the lock keys", T(Toggle::HudLock), ""),
+                    ("Clipboard history", "Keep what you copy, text and pictures", T(Toggle::Clipboard), ""),
+                    ("Forget copied items", "Remove them from the history after a while", S(Seg::ClipKeep), ""),
                 ],
             ),
-            (
-                "Popups",
-                vec![
-                    ("Battery", "Charging, unplugged and low battery", T(Toggle::HudBattery), ""),
-                    ("Wi-Fi and internet", "When the connection changes", T(Toggle::HudNetwork), ""),
-                    ("Headphones and speakers", "When an audio device is connected", T(Toggle::HudAudio), ""),
-                    ("Prayer time", "When a prayer time comes, with the Prayer tab on", T(Toggle::HudPrayer), ""),
-                ],
-            ),
-            ("Updates", vec![("New version", "Looks on GitHub at start and every 6 hours, and tells you when there is one", T(Toggle::HudUpdate), "")]),
         ],
         Page::About => vec![
             (
@@ -357,7 +419,6 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
                     ("Check for updates", "", Button(Act::CheckUpdate), "Check for updates"),
                     ("Changelog", "What changed in each version", Button(Act::Changelog), "View"),
                     ("Open data folder", "Your settings, tasks and shelf live here", Button(Act::OpenFolder), "Open"),
-                    ("Lyrics cache", "Lyrics saved on this PC for the songs you played", Button(Act::ClearLyrics), "Clear"),
                     ("Reset to defaults", "Put every setting back to what a fresh install has", Button(Act::Reset), "Reset"),
                 ],
             ),
@@ -450,12 +511,22 @@ fn ctrl_rect(kind: Kind, btn: &str, row: Rect) -> Rect {
         Kind::Link(_) => (right - 260.0, mid - 14.0, 260.0, 28.0),
         Kind::EyeGrid => (right - EYE_GRID.0, mid - EYE_GRID.1 / 2.0, EYE_GRID.0, EYE_GRID.1),
         Kind::ScreenMap => (right - SCREEN_MAP.0, mid - SCREEN_MAP.1 / 2.0, SCREEN_MAP.0, SCREEN_MAP.1),
+        // The tab grid goes under the row's label, across the whole row.
+        Kind::TabGrid => (row.0 + 18.0, row.1 + TAB_GRID_TOP, row.2 - 36.0, TAB_GRID_H),
     }
 }
 
 /// The width a row's text has before it reaches the control, in logical pixels.
 pub(super) fn text_room(kind: Kind, btn: &str, frame: Frame) -> f32 {
+    if under_label(kind) {
+        return frame.w - 36.0;
+    }
     ctrl_rect(kind, btn, (frame.x, 0.0, frame.w, 0.0)).0 - frame.x - 36.0
+}
+
+/// Whether the control sits under the row's label (across the row) instead of beside it.
+pub(super) fn under_label(kind: Kind) -> bool {
+    matches!(kind, Kind::TabGrid)
 }
 
 /// Everything on a page, laid out in logical pixels. `lines` says how many lines the text under a row's label
@@ -502,6 +573,9 @@ pub(super) fn row_height(desc: &str, kind: Kind, lines: usize) -> f32 {
     if matches!(kind, Kind::ScreenMap) {
         return SCREEN_MAP.1 + 28.0;
     }
+    if matches!(kind, Kind::TabGrid) {
+        return TAB_GRID_TOP + TAB_GRID_H + 18.0;
+    }
     if desc.is_empty() && !matches!(kind, Kind::Button(Act::CheckUpdate)) {
         return 40.0;
     }
@@ -531,9 +605,13 @@ pub(super) const CAL_PREVIEW_H: f32 = 232.0;
 /// The height of the card at the top of the About page: the logo with three centred lines under it.
 pub(super) const ABOUT_HERO_H: f32 = 152.0;
 
-/// The sidebar row of a page.
+/// The sidebar row of a page: the pages go down in order, with room for a heading where a section starts and a
+/// little gap before About.
 pub(super) fn side_rect(page: Page) -> Rect {
-    (12.0, SIDE_TOP + page.index() as f32 * SIDE_ITEM_H, SIDEBAR_W - 24.0, SIDE_ITEM_H - 4.0)
+    let i = page.index();
+    let headings = Page::ALL[..=i].iter().filter(|p| p.section().is_some()).count() as f32;
+    let gap = if page == Page::About { SIDE_ABOUT_GAP } else { 0.0 };
+    (12.0, SIDE_TOP + i as f32 * SIDE_ITEM_H + headings * SIDE_HEAD_H + gap, SIDEBAR_W - 24.0, SIDE_ITEM_H - 4.0)
 }
 
 pub(super) fn inside(r: Rect, x: f32, y: f32) -> bool {

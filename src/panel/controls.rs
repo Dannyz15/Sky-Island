@@ -52,16 +52,17 @@ pub(super) fn arc_points(cx: f32, cy: f32, r: f32, from: f32, to: f32, steps: us
         .collect()
 }
 
-/// The coloured tile with a white picture on it, for a page in the sidebar. `x`, `y` is its top left.
-pub(super) fn draw_page_icon(pm: &mut Pixmap, page: Page, x: f32, y: f32, s: f32) {
+/// The coloured tile with a white picture on it, for a page: `size` logical pixels square (26 in the sidebar, bigger
+/// beside the page's title), with `x`, `y` its top left.
+pub(super) fn draw_page_icon(pm: &mut Pixmap, page: Page, x: f32, y: f32, size: f32, s: f32) {
     let t = page.tint();
     let from = gfx::mix([t[0], t[1], t[2], 255], [255, 255, 255, 255], 0.22);
     let to = [t[0], t[1], t[2], 255];
-    let size = 26.0;
-    gfx::gradient_rounded(pm, x * s, y * s, size * s, size * s, 7.0 * s, from, to, false);
+    gfx::gradient_rounded(pm, x * s, y * s, size * s, size * s, size * 0.27 * s, from, to, false);
     let (cx, cy) = ((x + size / 2.0) * s, (y + size / 2.0) * s);
     let w = [255, 255, 255, 255];
-    let u = s; // one logical pixel
+    // One logical pixel of the 26 pixel tile the pictures are drawn for.
+    let u = s * size / 26.0;
     match page {
         Page::General => {
             // A gear: a ring of teeth with a hole in the middle.
@@ -80,6 +81,17 @@ pub(super) fn draw_page_icon(pm: &mut Pixmap, page: Page, x: f32, y: f32, s: f32
             // A screen with the notch at the top.
             gfx::stroke_rounded(pm, cx - 8.0 * u, cy - 6.0 * u, 16.0 * u, 12.0 * u, 2.5 * u, 1.6 * u, w);
             crate::fill_rounded(pm, cx - 3.4 * u, cy - 6.4 * u, 6.8 * u, 3.4 * u, 1.7 * u, w);
+        }
+        Page::ClosedNotch => {
+            // The closed notch: a pill with two eyes in it.
+            crate::fill_rounded(pm, cx - 8.5 * u, cy - 3.6 * u, 17.0 * u, 7.2 * u, 3.6 * u, w);
+            let eye = gfx::mix(from, to, 0.6);
+            crate::fill_rounded(pm, cx - 3.6 * u, cy - 1.8 * u, 2.0 * u, 3.6 * u, 1.0 * u, eye);
+            crate::fill_rounded(pm, cx + 1.6 * u, cy - 1.8 * u, 2.0 * u, 3.6 * u, 1.0 * u, eye);
+        }
+        Page::Music => {
+            // Two notes under one beam, as on the notch's Music tab.
+            crate::draw_tab_icon(pm, View::Player, cx - 1.0 * u, cy - 0.6 * u, u, w);
         }
         Page::Appearance => {
             // A circle, half of it filled.
@@ -350,6 +362,45 @@ impl App {
                         }
                         pm.draw_pixmap(x.round() as i32, y.round() as i32, face.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
                     }
+                }
+            }
+            Kind::TabGrid => {
+                // A tile for each tab of the notch: its icon on a round badge, its name and a few words, and a light
+                // in the corner. A tab that is on is lit in its own colour (the one the notch gives it); one that is off
+                // is dim and grey. The tile under the mouse brightens.
+                for (i, (view, toggle, name, words)) in TAB_TILES.iter().enumerate() {
+                    let tile = tab_tile(item.ctrl, i);
+                    let (x, y, w, h) = (tile.0 * s, tile.1 * s, tile.2 * s, tile.3 * s);
+                    let on = panel.glows.follow(key + 60 + i as u64, if self.toggle_value(*toggle) { 1.0 } else { 0.0 }, 30.0, 0.8) as f32;
+                    let over = panel.glows.fade(key + 80 + i as u64, inside(tile, cx, cy));
+                    let c = match view {
+                        // The notch takes the Music tab's colour from the cover; here it has one of its own.
+                        View::Player => [255, 82, 124],
+                        other => self.accent(*other),
+                    };
+                    let (r, g, b) = (c[0], c[1], c[2]);
+                    crate::fill_rounded(pm, x, y, w, h, 14.0 * s, [255, 255, 255, (9.0 + 12.0 * over) as u8]);
+                    if on > 0.01 {
+                        gfx::gradient_rounded(pm, x, y, w, h, 14.0 * s, [r, g, b, (58.0 * on) as u8], [r, g, b, (16.0 * on) as u8], false);
+                    }
+                    let edge = gfx::mix([255, 255, 255, 22], [r, g, b, 150], on);
+                    gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, 14.0 * s, s, edge);
+                    // The badge: the tab's colour when on, a dark grey when off.
+                    let (bx, by) = (x + w / 2.0, y + 32.0 * s);
+                    if on > 0.01 {
+                        gfx::glow(pm, bx, by, 30.0 * s, [r, g, b, (40.0 * on) as u8], None);
+                    }
+                    let badge_top = gfx::mix([70, 70, 82, 255], [r, g, b, 255], on);
+                    let badge_bottom = gfx::mix([52, 52, 62, 255], gfx::mix([r, g, b, 255], [0, 0, 0, 255], 0.25), on);
+                    gfx::gradient_rounded(pm, bx - 18.0 * s, by - 18.0 * s, 36.0 * s, 36.0 * s, 18.0 * s, badge_top, badge_bottom, false);
+                    let ink = gfx::mix([150, 150, 162, 255], white, on);
+                    crate::draw_tab_icon(pm, *view, bx, by, s * 1.05, ink);
+                    let name_ink = crate::pick(white, [170, 170, 182, 255], on.max(over * 0.5));
+                    crate::draw_text_centered(pm, heading, name, bx, y + 70.0 * s, 12.5 * s, name_ink, w - 10.0 * s);
+                    crate::draw_text_centered(pm, font, words, bx, y + 85.0 * s, 10.0 * s, [128, 128, 142, 255], w - 10.0 * s);
+                    // The light: green when the tab is on.
+                    let light = gfx::mix([80, 80, 92, 255], [90, 220, 130, 255], on);
+                    crate::fill_circle(pm, x + w - 13.0 * s, y + 13.0 * s, 3.5 * s, light);
                 }
             }
             Kind::ScreenMap => {

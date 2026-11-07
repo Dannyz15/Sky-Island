@@ -289,7 +289,7 @@ impl App {
                 let lay = self.layout_of(p, page, frame);
                 let Some(item) = lay.items.iter().find(|i| match i.kind {
                     Kind::Slider(_) => inside((i.ctrl.0 - 8.0, i.row.1, SLIDER_W + 16.0, i.row.3), cx, cy),
-                    Kind::Seg(_) | Kind::Pick | Kind::Text(_) | Kind::Cycle(_) | Kind::Button(_) | Kind::EyeGrid | Kind::ScreenMap => inside(i.ctrl, cx, cy),
+                    Kind::Seg(_) | Kind::Pick | Kind::Text(_) | Kind::Cycle(_) | Kind::Button(_) | Kind::EyeGrid | Kind::ScreenMap | Kind::TabGrid => inside(i.ctrl, cx, cy),
                     Kind::Link(url) => !url.is_empty() && inside(i.row, cx, cy),
                     Kind::Toggle(_) => inside(i.row, cx, cy),
                 }) else {
@@ -324,6 +324,11 @@ impl App {
                     Kind::EyeGrid => {
                         if let Some(i) = eye_tile_at(item.ctrl, cx, cy) {
                             self.set_eye_style(i);
+                        }
+                    }
+                    Kind::TabGrid => {
+                        if let Some(i) = tab_tile_at(item.ctrl, cx, cy) {
+                            self.toggle(TAB_TILES[i].1);
                         }
                     }
                     Kind::ScreenMap => {
