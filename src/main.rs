@@ -150,8 +150,8 @@ struct App {
     /// A semibold face for titles; falls back to `font`.
     bold: Option<Font>,
     media: MediaState,
-    media_at: Instant,
-    media_handle: Option<MediaHandle>,
+    /// Playing a song: when its state was last read, the handle to control the player, where the bar is being dragged to, and whether Sky Island moved the song itself.
+    play: ui::Playback,
     view: View,
     /// The notch's springs: how far each view is from the player's height, the extra height for what is in the view, the closed notch's size, how open the notch is, and how far it is tucked away.
     spring: ui::Springs,
@@ -164,16 +164,12 @@ struct App {
     shelf: Shelf,
     /// x
     shelf_ui: ui::ShelfUi,
-    /// Where the progress bar is being dragged to; the song jumps there when the button is let go.
-    scrub: Option<Duration>,
     /// The scale the Size setting gives the whole island (1.0 is normal), and the width of the screen in
     /// logical pixels, which Auto goes by.
     ui_k: f64,
     screen_w: f64,
     /// The mouse: where it is, whether it is over the notch, when entering or leaving takes effect, and when the wheel last changed the tab.
     pointer: ui::Pointer,
-    /// Sky Island moved the song itself (a click on a lyric line or on the bar) and the song has not changed since.
-    seeked: bool,
     /// Notices: the system notice on show and its fade, and the timer alert that keeps the notch open with its chime.
     notices: ui::Notices,
     clips: History,
@@ -248,8 +244,7 @@ impl App {
             font: load_font(),
             bold: load_bold_font(),
             media: MediaState::default(),
-            media_at: Instant::now(),
-            media_handle: None,
+            play: ui::Playback::default(),
             view: View::Player,
             spring: ui::Springs::new(settings.hide_island),
             lyric: ui::LyricsView::default(),
@@ -264,11 +259,9 @@ impl App {
                 shelf
             },
             shelf_ui: ui::ShelfUi::default(),
-            scrub: None,
             ui_k: 1.0,
             screen_w: 1536.0,
             pointer: ui::Pointer::default(),
-            seeked: false,
             notices: ui::Notices::default(),
             clips: {
                 let mut clips = History::new();

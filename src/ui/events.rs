@@ -75,7 +75,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.surface = Some(Surface::new(&context, window.clone()).expect("softbuffer surface"));
         self.system_light = window.theme() == Some(Theme::Light);
         self.window = Some(window);
-        self.media_handle = Some(media::spawn(self.proxy.clone()));
+        self.play.handle = Some(media::spawn(self.proxy.clone()));
         sys::spawn_all(self.proxy.clone());
         self.make_non_activating();
         self.tray = Tray::build(&self.proxy);
@@ -262,7 +262,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Media(state) => {
                 // An empty timeline that a player sends for a moment after a seek must not throw the lyrics to the top.
-                let state = state.keep_timeline(&self.media, self.position(), self.seeked);
+                let state = state.keep_timeline(&self.media, self.position(), self.play.seeked);
                 // Windows is slow to be listened to the first time, so once a song plays (and the bars would follow it)
                 // that is done at once, before the closed notch shows the bars.
                 if state.playing && self.settings.closed_music && self.settings.closed_bars && self.settings.closed_sound {
@@ -272,9 +272,9 @@ impl ApplicationHandler<UserEvent> for App {
                 if !state.has_session || state.title.is_empty() {
                     self.lyric.key.clear();
                     self.lyric.state = LyricsState::None;
-                    self.seeked = false;
+                    self.play.seeked = false;
                 } else if key != self.lyric.key {
-                    self.seeked = false;
+                    self.play.seeked = false;
                     self.lyric.key = key.clone();
                     self.lyric.state = LyricsState::Loading;
                     self.lyric.manual = None;
@@ -303,7 +303,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
                 self.media = state;
-                self.media_at = Instant::now();
+                self.play.at = Instant::now();
                 // Only worth repainting if the player is visible.
                 if self.spring.progress > 0.0
                     && let Some(w) = &self.window
@@ -344,7 +344,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorLeft { .. } => {
                 let now = Instant::now();
                 self.pointer.enter_at = None; // a fly-by never opened it
-                if self.pointer.hovered && self.scrub.is_none() && !self.lyric.settle {
+                if self.pointer.hovered && self.play.scrub.is_none() && !self.lyric.settle {
                     self.pointer.leave_at = Some(now + self.hover_close());
                     event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.hover_close()));
                 }
@@ -354,9 +354,9 @@ impl ApplicationHandler<UserEvent> for App {
                 let ear = EAR * self.ui_scale();
                 let position = PhysicalPosition::new(position.x - ear, position.y);
                 self.pointer.cursor = (position.x, position.y);
-                if self.scrub.is_some() {
+                if self.play.scrub.is_some() {
                     let s = self.ui_scale();
-                    self.scrub = Some(self.scrub_at((position.x / s) as f32));
+                    self.play.scrub = Some(self.scrub_at((position.x / s) as f32));
                 }
                 if self.volume.drag {
                     let s = self.ui_scale();
@@ -391,14 +391,14 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
                 self.volume.drag = false;
-                if let Some(at) = self.scrub.take() {
-                    if let Some(handle) = &self.media_handle {
+                if let Some(at) = self.play.scrub.take() {
+                    if let Some(handle) = &self.play.handle {
                         handle.send(Command::Seek(at));
                     }
-                    self.seeked = true;
+                    self.play.seeked = true;
                     // Show the jump immediately instead of waiting for the player to report it.
                     self.media.position = at;
-                    self.media_at = Instant::now();
+                    self.play.at = Instant::now();
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }

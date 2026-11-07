@@ -169,12 +169,12 @@ impl App {
 
     /// Playback position, extrapolated since the last update from the media thread.
     pub(crate) fn position(&self) -> Duration {
-        if let Some(at) = self.scrub {
+        if let Some(at) = self.play.scrub {
             return at;
         }
         let mut p = self.media.position;
         if self.media.playing {
-            p += self.media_at.elapsed();
+            p += self.play.at.elapsed();
         }
         if !self.media.duration.is_zero() {
             p = p.min(self.media.duration);

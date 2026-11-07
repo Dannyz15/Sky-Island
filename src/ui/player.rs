@@ -208,6 +208,22 @@ impl Default for LyricsView {
     }
 }
 
+/// Playing a song: when its state was last read, the handle to control the player, where the bar is being dragged to, and whether Sky Island moved the song itself.
+pub(crate) struct Playback {
+    pub(crate) at: Instant,
+    pub(crate) handle: Option<MediaHandle>,
+    /// Where the progress bar is being dragged to; the song jumps there when the button is let go.
+    pub(crate) scrub: Option<Duration>,
+    /// Sky Island moved the song itself (a click on a lyric line or on the bar) and the song has not changed since.
+    pub(crate) seeked: bool,
+}
+
+impl Default for Playback {
+    fn default() -> Self {
+        Self { at: Instant::now(), handle: None, scrub: None, seeked: false }
+    }
+}
+
 impl App {
     /// The line the lyrics view is heading for: where the wheel took it, otherwise the line being sung
     /// (-1 before the first one starts).
@@ -502,7 +518,7 @@ impl App {
         }
 
         // Progress bar: a rounded track, a filled part shaded with the cover's colour, and a knob.
-        let grab = self.hot((bx - 4.0, by - 9.0, bw + 8.0, 21.0), s) || self.scrub.is_some();
+        let grab = self.hot((bx - 4.0, by - 9.0, bw + 8.0, 21.0), s) || self.play.scrub.is_some();
         let grow = self.glows.follow(KEY_BAR, if grab { 1.0 } else { 0.0 }, 30.0, 0.8).clamp(0.0, 1.0) as f32;
         let bh = 5.0 + 2.0 * grow;
         let ty = by + 2.0 - bh / 2.0;
@@ -564,8 +580,8 @@ impl App {
         let geo = self.geo();
         // Press on the bar (a taller target than the thin line) and drag to jump in the song.
         let (bx, by, bw) = geo.bar;
-        if !self.media.duration.is_zero() && self.media.can_seek && self.media_handle.is_some() && cx >= bx - 6.0 && cx <= bx + bw + 6.0 && (by - 9.0..=by + 12.0).contains(&cy) {
-            self.scrub = Some(self.scrub_at(cx));
+        if !self.media.duration.is_zero() && self.media.can_seek && self.play.handle.is_some() && cx >= bx - 6.0 && cx <= bx + bw + 6.0 && (by - 9.0..=by + 12.0).contains(&cy) {
+            self.play.scrub = Some(self.scrub_at(cx));
             window.request_redraw();
             return;
         }
@@ -595,7 +611,7 @@ impl App {
             window.request_redraw();
             return;
         }
-        if let Some(handle) = &self.media_handle {
+        if let Some(handle) = &self.play.handle {
             for (i, x) in geo.ctrl_x[1..].iter().enumerate() {
                 if (cx - x).hypot(cy - CTRL_Y) <= CTRL_R {
                     handle.send(match i {
@@ -624,13 +640,13 @@ impl App {
         }
         let hit = self.layout_lyrics().into_iter().find(|it| cy >= it.top && cy <= it.top + it.rows.len() as f32 * it.lh);
         if let Some(at) = hit.and_then(|it| lines.get(it.idx)).map(|l| l.at) {
-            if let Some(handle) = &self.media_handle {
+            if let Some(handle) = &self.play.handle {
                 handle.send(Command::Seek(at));
             }
-            self.seeked = true;
+            self.play.seeked = true;
             // Show the jump immediately instead of waiting for the player to report it.
             self.media.position = at;
-            self.media_at = Instant::now();
+            self.play.at = Instant::now();
             // The lyrics follow the music again from the line that was picked.
             self.lyric.manual = None;
             window.request_redraw();
