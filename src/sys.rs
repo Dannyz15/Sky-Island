@@ -23,8 +23,8 @@ use windows::Win32::System::Power::{GetSystemPowerStatus, RegisterPowerSettingNo
 use windows::Win32::System::SystemServices::{GUID_ACDC_POWER_SOURCE, GUID_BATTERY_PERCENTAGE_REMAINING, GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL, VK_NUMLOCK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DispatchMessageW, GetMessageW, KBDLLHOOKSTRUCT, MSG, PBT_POWERSETTINGCHANGE, SetWindowsHookExW, TranslateMessage,
-    WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_POWERBROADCAST, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    CallNextHookEx, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DispatchMessageW, GetMessageW, KBDLLHOOKSTRUCT, MSG, PBT_POWERSETTINGCHANGE, SetTimer, SetWindowsHookExW,
+    TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_POWERBROADCAST, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
 };
 use windows::core::{PCWSTR, Result, implement, w};
 use winit::event_loop::EventLoopProxy;
@@ -543,6 +543,9 @@ fn network(proxy: Proxy) {
 
 static PROXY: OnceLock<Proxy> = OnceLock::new();
 
+/// How often the keyboard hook is put in again, in milliseconds.
+const HOOK_RENEWED_EVERY_MS: u32 = 60_000;
+
 /// Install the low-level keyboard hook. Windows calls the hook on the thread that installed it and waits for
 /// the answer before the key goes on to any app, and drops a hook that is too slow: so it gets a thread of its
 /// own that does nothing else, and a busy notch cannot make typing wait.
@@ -554,10 +557,23 @@ pub fn install_lock_hook(proxy: Proxy) {
         return;
     }
     thread::spawn(|| unsafe {
-        let _ = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0);
+        let mut hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0).ok();
+        // Windows takes away a hook that once answered too slowly, and says nothing about it: the lock notices would
+        // stop for good. A timer on this thread puts the hook in again now and then.
+        let _ = SetTimer(None, 0, HOOK_RENEWED_EVERY_MS, None);
         // A hook needs its thread to keep taking messages.
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
+            if msg.message == WM_TIMER {
+                // The new hook is in before the old one goes, so no key falls between the two (a key seen by both
+                // is one press: see `LOCK_HELD`).
+                if let Ok(new) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0)
+                    && let Some(old) = hook.replace(new)
+                {
+                    let _ = UnhookWindowsHookEx(old);
+                }
+                continue;
+            }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
