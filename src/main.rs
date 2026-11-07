@@ -241,22 +241,8 @@ struct App {
     monitor_area: Option<presence::Area>,
     /// The window is hidden because a full-screen app is in front.
     hidden: bool,
-    greeting_until: Option<Instant>,
-    /// The closed notch shows the eyes until then, after an Eye style is picked in the settings window.
-    eye_preview_until: Option<Instant>,
-    next_blink: Instant,
-    /// When the blink in progress began (it lasts `eyes::blink_len`), if the eyes are blinking.
-    blink_since: Option<Instant>,
-    /// Where the eyes look now, how fast that is changing, and where they are turning to (across, down; -1 to 1).
-    look: (f64, f64),
-    look_v: (f64, f64),
-    look_goal: (f64, f64),
-    /// When the eyes next look somewhere without a blink, and how many times they have.
-    next_glance: Instant,
-    glances: u32,
-    blink_count: u32,
-    next_zz: Instant,
-    zz_frame: bool,
+    /// The closed notch's eyes: when they greet or preview, and the blink, gaze and glance clocks.
+    eyes: ui::Eyes,
     last_minute: u32,
     quit: bool,
     /// While set, the notch stays open to show a timer notification.
@@ -428,18 +414,7 @@ impl App {
             fullscreen: presence::Fullscreen::No,
             monitor_area: None,
             hidden: false,
-            greeting_until: None,
-            eye_preview_until: None,
-            next_blink: Instant::now(),
-            blink_since: None,
-            look: (0.0, 0.0),
-            look_v: (0.0, 0.0),
-            look_goal: (0.0, 0.0),
-            next_glance: Instant::now(),
-            glances: 0,
-            blink_count: 0,
-            next_zz: Instant::now(),
-            zz_frame: false,
+            eyes: ui::Eyes::default(),
             last_minute: u32::MAX,
             quit: false,
             alert_until: None,

@@ -25,6 +25,45 @@ pub(crate) struct ClockText {
     pub suffix_w: f32,
 }
 
+/// The closed notch's eyes: when they greet or preview, and the blink, gaze and glance clocks.
+pub(crate) struct Eyes {
+    pub(crate) greeting_until: Option<Instant>,
+    /// The closed notch shows the eyes until then, after an Eye style is picked in the settings window.
+    pub(crate) preview_until: Option<Instant>,
+    pub(crate) next_blink: Instant,
+    /// When the blink in progress began (it lasts `eyes::blink_len`), if the eyes are blinking.
+    pub(crate) blink_since: Option<Instant>,
+    /// Where the eyes look now, how fast that is changing, and where they are turning to (across, down; -1 to 1).
+    pub(crate) look: (f64, f64),
+    pub(crate) look_v: (f64, f64),
+    pub(crate) look_goal: (f64, f64),
+    /// When the eyes next look somewhere without a blink, and how many times they have.
+    pub(crate) next_glance: Instant,
+    pub(crate) glances: u32,
+    pub(crate) blink_count: u32,
+    pub(crate) next_zz: Instant,
+    pub(crate) zz_frame: bool,
+}
+
+impl Default for Eyes {
+    fn default() -> Self {
+        Self {
+            greeting_until: None,
+            preview_until: None,
+            next_blink: Instant::now(),
+            blink_since: None,
+            look: (0.0, 0.0),
+            look_v: (0.0, 0.0),
+            look_goal: (0.0, 0.0),
+            next_glance: Instant::now(),
+            glances: 0,
+            blink_count: 0,
+            next_zz: Instant::now(),
+            zz_frame: false,
+        }
+    }
+}
+
 impl ClockText {
     /// The clock for `hour` and `minute`, measured in the notch's fonts.
     pub(crate) fn new(font: &Font, hour: u32, minute: u32, clock_24h: bool) -> Self {
@@ -64,24 +103,24 @@ impl App {
 
     /// Whether the middle of the closed notch shows eyes (open, asleep, the greeting, or the preview) and not the clock.
     pub(crate) fn centre_is_eyes(&self) -> bool {
-        let greeting = self.settings.idle_eyes && self.greeting_until.is_some();
+        let greeting = self.settings.idle_eyes && self.eyes.greeting_until.is_some();
         let asleep = matches!(self.presence, Presence::Dozing) && self.settings.idle_eyes;
         self.previewing() || greeting || asleep || (!matches!(self.presence, Presence::Dozing) && self.eyes_open())
     }
 
     /// Whether the closed notch is showing the eyes as a preview of the Eye style.
     pub(crate) fn previewing(&self) -> bool {
-        self.eye_preview_until.is_some_and(|t| Instant::now() < t)
+        self.eyes.preview_until.is_some_and(|t| Instant::now() < t)
     }
 
     /// Show the eyes on the closed notch for a moment, in the style that was just picked, whatever else the closed
     /// notch shows (the clock, or nothing). The notch comes down for it if it is tucked away.
     pub(crate) fn preview_eyes(&mut self) {
         let now = Instant::now();
-        self.eye_preview_until = Some(now + PREVIEW);
-        self.blink_since = None;
-        self.next_blink = now + Duration::from_millis(1400);
-        self.next_glance = now + Duration::from_millis(900);
+        self.eyes.preview_until = Some(now + PREVIEW);
+        self.eyes.blink_since = None;
+        self.eyes.next_blink = now + Duration::from_millis(1400);
+        self.eyes.next_glance = now + Duration::from_millis(900);
         self.last_tick = now;
         if let Some(w) = &self.window {
             w.request_redraw();
@@ -91,59 +130,59 @@ impl App {
     /// What the eyes are doing right now: how open they are, where they look and how far a blink has got.
     pub(crate) fn eye_pose(&self) -> eyes::Pose {
         let style = self.settings.eye_style;
-        let blink = self.blink_since.map_or(0.0, |t| (t.elapsed().as_secs_f32() / eyes::blink_len(style).as_secs_f32()).clamp(0.0, 1.0));
-        let open = if self.blink_since.is_some() { eyes::lid(style, blink) } else { 1.0 };
-        eyes::Pose { open, look: (self.look.0 as f32, self.look.1 as f32), blink }
+        let blink = self.eyes.blink_since.map_or(0.0, |t| (t.elapsed().as_secs_f32() / eyes::blink_len(style).as_secs_f32()).clamp(0.0, 1.0));
+        let open = if self.eyes.blink_since.is_some() { eyes::lid(style, blink) } else { 1.0 };
+        eyes::Pose { open, look: (self.eyes.look.0 as f32, self.eyes.look.1 as f32), blink }
     }
 
     /// Whether the eyes are mid-blink or still turning to look somewhere, so frames are needed.
     pub(crate) fn eyes_moving(&self) -> bool {
-        self.blink_since.is_some() || self.look != self.look_goal || self.look_v != (0.0, 0.0)
+        self.eyes.blink_since.is_some() || self.eyes.look != self.eyes.look_goal || self.eyes.look_v != (0.0, 0.0)
     }
 
     /// Move the eyes on by `dt` seconds: the blink ends when its time is up, and the gaze glides to where it is going
     /// with a spring (a small overshoot, like a quick glance).
     pub(crate) fn eyes_step(&mut self, dt: f64, speed: f64, bounce: bool) {
-        if self.blink_since.is_some_and(|t| t.elapsed() >= eyes::blink_len(self.settings.eye_style)) {
-            self.blink_since = None;
+        if self.eyes.blink_since.is_some_and(|t| t.elapsed() >= eyes::blink_len(self.settings.eye_style)) {
+            self.eyes.blink_since = None;
         }
         let zeta = if bounce { 0.7 } else { 1.0 };
-        spring(&mut self.look.0, &mut self.look_v.0, self.look_goal.0, dt, 15.0 * speed, zeta);
-        spring(&mut self.look.1, &mut self.look_v.1, self.look_goal.1, dt, 15.0 * speed, zeta);
+        spring(&mut self.eyes.look.0, &mut self.eyes.look_v.0, self.eyes.look_goal.0, dt, 15.0 * speed, zeta);
+        spring(&mut self.eyes.look.1, &mut self.eyes.look_v.1, self.eyes.look_goal.1, dt, 15.0 * speed, zeta);
     }
 
     /// The next place to look, different from the one before.
     fn next_look(&self) -> (f64, f64) {
-        let n = self.blink_count as usize + self.glances as usize;
+        let n = self.eyes.blink_count as usize + self.eyes.glances as usize;
         let goal = (LOOKS_X[(n * 3 + 1) % LOOKS_X.len()], LOOKS_Y[(n * 2 + 3) % LOOKS_Y.len()]);
-        if goal == self.look_goal { (-goal.0, goal.1) } else { goal }
+        if goal == self.eyes.look_goal { (-goal.0, goal.1) } else { goal }
     }
 
     /// Blink and look about now and then. A blink starts the animation (`eyes_step` ends it); a double blink comes
     /// every fifth time. Says when to wake for the next one.
     fn blink_step(&mut self, now: Instant, wake: &mut Option<Instant>, redraw: &mut bool) {
-        if self.blink_since.is_some() {
+        if self.eyes.blink_since.is_some() {
             return;
         }
-        if now >= self.next_blink {
-            self.blink_since = Some(now);
-            self.blink_count += 1;
+        if now >= self.eyes.next_blink {
+            self.eyes.blink_since = Some(now);
+            self.eyes.blink_count += 1;
             // The eyes turn while the lids are down, so they open already looking somewhere else.
-            self.look_goal = self.next_look();
-            let n = self.blink_count as u64;
+            self.eyes.look_goal = self.next_look();
+            let n = self.eyes.blink_count as u64;
             let gap = if n.is_multiple_of(5) { 140 } else { 2600 + (n * 1373) % 4200 };
-            self.next_blink = now + eyes::blink_len(self.settings.eye_style) + Duration::from_millis(gap);
-            self.next_glance = now + Duration::from_millis(1800 + (n * 911) % 2800);
+            self.eyes.next_blink = now + eyes::blink_len(self.settings.eye_style) + Duration::from_millis(gap);
+            self.eyes.next_glance = now + Duration::from_millis(1800 + (n * 911) % 2800);
             *redraw = true;
             return;
         }
-        if now >= self.next_glance {
-            self.glances += 1;
-            self.look_goal = self.next_look();
-            self.next_glance = now + Duration::from_millis(2200 + (self.glances as u64 * 733) % 3000);
+        if now >= self.eyes.next_glance {
+            self.eyes.glances += 1;
+            self.eyes.look_goal = self.next_look();
+            self.eyes.next_glance = now + Duration::from_millis(2200 + (self.eyes.glances as u64 * 733) % 3000);
             *redraw = true;
         }
-        earliest(wake, self.next_blink.min(self.next_glance));
+        earliest(wake, self.eyes.next_blink.min(self.eyes.next_glance));
     }
 
     pub(crate) fn companion_tick(&mut self, now: Instant, wake: &mut Option<Instant>) {
@@ -152,9 +191,9 @@ impl App {
         }
         let mut redraw = false;
 
-        if let Some(until) = self.eye_preview_until {
+        if let Some(until) = self.eyes.preview_until {
             if now >= until {
-                self.eye_preview_until = None;
+                self.eyes.preview_until = None;
                 redraw = true;
             } else {
                 // The preview: blink and look about like the eyes do, and wake when it is over to put the clock (or
@@ -168,9 +207,9 @@ impl App {
             }
         }
 
-        if let Some(g) = self.greeting_until {
+        if let Some(g) = self.eyes.greeting_until {
             if now >= g {
-                self.greeting_until = None;
+                self.eyes.greeting_until = None;
                 redraw = true;
             } else {
                 earliest(wake, g);
@@ -191,12 +230,12 @@ impl App {
             }
             Presence::Active | Presence::Idle if self.eyes_open() => self.blink_step(now, wake, &mut redraw),
             Presence::Dozing if self.settings.idle_eyes => {
-                if now >= self.next_zz {
-                    self.zz_frame = !self.zz_frame;
-                    self.next_zz = now + Duration::from_millis(1100);
+                if now >= self.eyes.next_zz {
+                    self.eyes.zz_frame = !self.eyes.zz_frame;
+                    self.eyes.next_zz = now + Duration::from_millis(1100);
                     redraw = true;
                 }
-                earliest(wake, self.next_zz);
+                earliest(wake, self.eyes.next_zz);
             }
             _ => {}
         }
@@ -219,7 +258,7 @@ impl App {
             [c[0], c[1], c[2], a]
         };
 
-        if eyes_on && self.greeting_until.is_some() {
+        if eyes_on && self.eyes.greeting_until.is_some() {
             for x in [left, right] {
                 eyes::draw_resting(pm, style, x, cy, s, a, true);
             }
@@ -246,7 +285,7 @@ impl App {
                 }
                 let grey = [160, 160, 165, a];
                 draw_text(pm, font, "z", cx + 26.0 * s, cy + 2.0 * s, 9.0 * s, grey, 12.0 * s);
-                if self.zz_frame {
+                if self.eyes.zz_frame {
                     draw_text(pm, font, "Z", cx + 34.0 * s, cy - 5.0 * s, 11.0 * s, grey, 14.0 * s);
                 }
             }

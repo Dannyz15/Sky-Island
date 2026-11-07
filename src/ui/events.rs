@@ -119,10 +119,10 @@ impl ApplicationHandler<UserEvent> for App {
                 let now = Instant::now();
                 // Coming back from idle: greet first, then back to the clock.
                 if self.presence != Presence::Active && presence == Presence::Active {
-                    self.greeting_until = Some(now + GREETING);
+                    self.eyes.greeting_until = Some(now + GREETING);
                 }
                 if presence == Presence::Idle {
-                    self.next_blink = now + Duration::from_millis(1500);
+                    self.eyes.next_blink = now + Duration::from_millis(1500);
                 }
                 self.presence = presence;
                 self.fullscreen = fullscreen;
