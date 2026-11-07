@@ -22,6 +22,22 @@ pub(crate) fn ctrl_down() -> bool {
     unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) < 0 }
 }
 
+/// Updates: how the last check went, the version the notch has already told about, and the changelog.
+pub(crate) struct Updates {
+    /// How the last "Check for updates" in the settings window went.
+    pub(crate) status: update::Status,
+    /// The version the notch has already told the user about, so the notice comes once per version.
+    pub(crate) told: Option<String>,
+    /// The changelog of the settings window, loaded from GitHub when it is first opened.
+    pub(crate) changelog: update::Changelog,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self { status: update::Status::Idle, told: None, changelog: update::Changelog::Idle }
+    }
+}
+
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -170,7 +186,7 @@ impl ApplicationHandler<UserEvent> for App {
             },
             UserEvent::Prayer(table) => self.prayer_arrived(table),
             UserEvent::Changelog(releases) => {
-                self.changelog = match releases {
+                self.updates.changelog = match releases {
                     Some(list) => update::Changelog::Ready(list),
                     None => update::Changelog::Failed,
                 };
@@ -179,20 +195,20 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             UserEvent::Update(status) => {
-                self.update = status;
+                self.updates.status = status;
                 if let Some(p) = &self.panel {
                     p.redraw();
                 }
             }
             UserEvent::AutoUpdate(found) => {
-                if let Some(status) = update::take_auto(&self.update, found) {
+                if let Some(status) = update::take_auto(&self.updates.status, found) {
                     if let update::Status::Available { version, .. } = &status
-                        && self.update_told.as_ref() != Some(version)
+                        && self.updates.told.as_ref() != Some(version)
                     {
-                        self.update_told = Some(version.clone());
+                        self.updates.told = Some(version.clone());
                         self.show_notice(sys::Notice::Update { version: version.clone() });
                     }
-                    self.update = status;
+                    self.updates.status = status;
                     if let Some(p) = &self.panel {
                         p.redraw();
                     }

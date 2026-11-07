@@ -42,7 +42,7 @@ impl App {
             lines.push(ChangeLine { kind, text, y: *y });
             *y += step;
         };
-        match &self.changelog {
+        match &self.updates.changelog {
             Changelog::Idle | Changelog::Loading => push(&mut lines, &mut y, ChangeKind::Plain, "Loading the changelog...".to_string(), 20.0),
             Changelog::Failed => push(&mut lines, &mut y, ChangeKind::Plain, "Could not load the changelog. Are you online?".to_string(), 20.0),
             Changelog::Ready(releases) => {

@@ -383,15 +383,15 @@ impl App {
                             p.page_since = Instant::now();
                             p.redraw();
                         }
-                        if matches!(self.changelog, crate::update::Changelog::Idle | crate::update::Changelog::Failed) {
-                            self.changelog = crate::update::Changelog::Loading;
+                        if matches!(self.updates.changelog, crate::update::Changelog::Idle | crate::update::Changelog::Failed) {
+                            self.updates.changelog = crate::update::Changelog::Loading;
                             crate::update::spawn_changelog(self.proxy.clone());
                         }
                     }
                     Kind::Button(Act::CheckUpdate) => {
-                        match self.update.clone() {
+                        match self.updates.status.clone() {
                             crate::update::Status::Available { version, asset: Some(asset), .. } => {
-                                self.update = crate::update::Status::Downloading { version: version.clone(), percent: 0 };
+                                self.updates.status = crate::update::Status::Downloading { version: version.clone(), percent: 0 };
                                 crate::update::spawn_download(version, asset, self.proxy.clone());
                             }
                             crate::update::Status::Available { page, .. } => {
@@ -405,12 +405,12 @@ impl App {
                                     self.quit = true;
                                 } else {
                                     // The file was removed, changed or cannot be run: offer the download again.
-                                    self.update = crate::update::Status::DownloadFailed;
+                                    self.updates.status = crate::update::Status::DownloadFailed;
                                 }
                             }
                             crate::update::Status::Checking | crate::update::Status::Downloading { .. } => {}
                             _ => {
-                                self.update = crate::update::Status::Checking;
+                                self.updates.status = crate::update::Status::Checking;
                                 crate::update::spawn_check(self.proxy.clone());
                             }
                         }

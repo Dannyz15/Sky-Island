@@ -289,8 +289,8 @@ struct App {
     panel_wanted: bool,
     /// The page the settings window should show when it opens.
     panel_page: Option<panel::Page>,
-    /// How the last "Check for updates" in the settings window went.
-    update: update::Status,
+    /// Updates: how the last check went, the version the notch has already told about, and the changelog.
+    updates: ui::Updates,
     /// The forecast the Weather tab shows, when it was fetched, whether the last fetch is still on its way or failed,
     /// and the thread that fetches it (told which place to watch; `None` before the window exists).
     weather: ui::WeatherTab,
@@ -305,10 +305,6 @@ struct App {
     stats: ui::StatsTab,
     /// With Show on All screens: the number of the screen the notch last followed the mouse to (none until it has).
     follow: Option<u32>,
-    /// The version the notch has already told the user about, so the notice comes once per version.
-    update_told: Option<String>,
-    /// The changelog of the settings window, loaded from GitHub when it is first opened.
-    changelog: update::Changelog,
     /// When the timer's alarm sounds again while it is ringing.
     next_chime: Option<Instant>,
     last_tick: Instant,
@@ -420,15 +416,13 @@ impl App {
             mirrors: ui::Mirrors::default(),
             panel_wanted: false,
             panel_page: None,
-            update: update::Status::Idle,
-            update_told: None,
+            updates: ui::Updates::default(),
             follow: None,
             hotkey_ok: true,
             stats: ui::StatsTab::default(),
             volume: ui::Volume::default(),
             weather: ui::WeatherTab::default(),
             prayer: ui::PrayerTab::default(),
-            changelog: update::Changelog::Idle,
             next_chime: None,
             shown_view: View::Player,
             last_tick: Instant::now(),

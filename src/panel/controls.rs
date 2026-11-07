@@ -615,7 +615,7 @@ impl App {
                     false,
                 );
                 gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [colour[0], colour[1], colour[2], 130]);
-                let download = match &self.update {
+                let download = match &self.updates.status {
                     _ if act != Act::CheckUpdate => None,
                     crate::update::Status::Available { version, .. } => Some(format!("Download {version}")),
                     crate::update::Status::Downloading { .. } => Some("Downloading...".to_string()),

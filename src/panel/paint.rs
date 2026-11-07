@@ -13,7 +13,7 @@ impl App {
     /// What the last update check found, with the colour to show it in.
     pub(super) fn update_note(&self) -> (String, [u8; 4]) {
         let (grey, green, amber, red) = ([165, 165, 175, 255], [90, 210, 130, 255], [255, 190, 70, 255], [255, 130, 120, 255]);
-        match &self.update {
+        match &self.updates.status {
             crate::update::Status::Idle => (format!("You have version {}", env!("CARGO_PKG_VERSION")), grey),
             crate::update::Status::Checking => ("Checking...".to_string(), grey),
             crate::update::Status::Latest => ("You have the latest version".to_string(), green),
@@ -221,7 +221,7 @@ impl App {
             crate::draw_text(pm, font, page.title(), (r.0 + 44.0) * s, (r.1 + r.3 / 2.0 + 4.5) * s, 13.0 * s, ink, (r.2 - 52.0) * s);
             // A dot on About while a new version is waiting.
             if page == Page::About
-                && matches!(self.update, crate::update::Status::Available { .. } | crate::update::Status::Downloading { .. } | crate::update::Status::Ready { .. })
+                && matches!(self.updates.status, crate::update::Status::Available { .. } | crate::update::Status::Downloading { .. } | crate::update::Status::Ready { .. })
             {
                 crate::fill_circle(pm, (r.0 + r.2 - 16.0) * s, (r.1 + r.3 / 2.0) * s, 4.0 * s, [255, 190, 60, 255]);
             }
