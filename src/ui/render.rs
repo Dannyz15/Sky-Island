@@ -170,8 +170,8 @@ impl App {
         }
 
         // What the closed notch shows (the clock or eyes, the song, the timer's countdown) and a notice, while closed.
-        let collapsed_alpha = ((1.0 - self.progress.clamp(0.0, 1.0) * 2.0).clamp(0.0, 1.0) * (1.0 - self.ov_t.clamp(0.0, 1.0))) as f32;
-        let notice_alpha = self.ov_t.clamp(0.0, 1.0) as f32 * (1.0 - self.progress.clamp(0.0, 1.0) as f32 * 2.0).clamp(0.0, 1.0);
+        let collapsed_alpha = ((1.0 - self.progress.clamp(0.0, 1.0) * 2.0).clamp(0.0, 1.0) * (1.0 - self.notices.t.clamp(0.0, 1.0))) as f32;
+        let notice_alpha = self.notices.t.clamp(0.0, 1.0) as f32 * (1.0 - self.progress.clamp(0.0, 1.0) as f32 * 2.0).clamp(0.0, 1.0);
         self.draw_closed_content(&mut pixmap, s, fw, collapsed_alpha, notice_alpha);
 
         // Put the notch in the middle of the window and add the flares on both sides of its top edge.
@@ -206,7 +206,7 @@ impl App {
             }
             self.draw_closed_music(pixmap, s, collapsed_alpha, fw);
         }
-        if let (true, Some(notice)) = (notice_alpha > 0.02, &self.notice) {
+        if let (true, Some(notice)) = (notice_alpha > 0.02, &self.notices.current) {
             self.draw_notice(pixmap, notice, s, notice_alpha, fw);
         }
     }
@@ -214,7 +214,7 @@ impl App {
     /// The closed notch as a finished picture (the flares on its sides included) for a screen that is drawn at scale
     /// `s`, as the window of that screen shows it. `None` if there is no room for it.
     pub(crate) fn closed_picture(&self, s: f32) -> Option<Pixmap> {
-        let ov = self.ov_t.clamp(0.0, 1.0);
+        let ov = self.notices.t.clamp(0.0, 1.0);
         let closed = self.closed_size();
         let (lw, lh) = (lerp(closed.0, OVERLAY.0, ov), lerp(closed.1, OVERLAY.1, ov));
         let ear = (EAR as f32 * s).round();

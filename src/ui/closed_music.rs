@@ -184,7 +184,7 @@ impl App {
 
     /// Whether the music is on the closed notch and something on it moves, so it needs a frame now and then.
     pub(crate) fn bars_running(&self) -> bool {
-        self.music.k > 0.02 && self.media.playing && !self.hidden && self.tuck_t < 1.0 && self.progress <= 0.0 && self.notice_until.is_none()
+        self.music.k > 0.02 && self.media.playing && !self.hidden && self.tuck_t < 1.0 && self.progress <= 0.0 && self.notices.until.is_none()
     }
 
     /// How often it is drawn again: 30 times a second while the bars, the turning record or the edge line move, and only

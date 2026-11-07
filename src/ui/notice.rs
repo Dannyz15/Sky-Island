@@ -9,6 +9,27 @@ const NOTICE_TIME: Duration = Duration::from_millis(2200);
 /// The news of an update or a prayer time stays a little longer: it is read, not glanced at.
 const LONG_NOTICE_TIME: Duration = Duration::from_millis(4500);
 
+/// Notices: the system notice on show and its fade, and the timer alert that keeps the notch open with its chime.
+pub(crate) struct Notices {
+    /// Latest system notice, kept after it expires so it can fade out.
+    pub(crate) current: Option<sys::Notice>,
+    pub(crate) until: Option<Instant>,
+    /// 0.0 = no notice, 1.0 = compact notice size
+    pub(crate) t: f64,
+    pub(crate) v: f64,
+    /// While set, the notch stays open to show a timer notification.
+    pub(crate) alert_until: Option<Instant>,
+    pub(crate) alert_msg: String,
+    /// When the timer's alarm sounds again while it is ringing.
+    pub(crate) next_chime: Option<Instant>,
+}
+
+impl Default for Notices {
+    fn default() -> Self {
+        Self { current: None, until: None, t: 0.0, v: 0.0, alert_until: None, alert_msg: String::new(), next_chime: None }
+    }
+}
+
 impl App {
     pub(crate) fn show_notice(&mut self, notice: sys::Notice) {
         use sys::Notice;
@@ -26,8 +47,8 @@ impl App {
             return;
         }
         let now = Instant::now();
-        self.notice = Some(notice);
-        self.notice_until = Some(now + if matches!(self.notice, Some(Notice::Update { .. } | Notice::Prayer { .. })) { LONG_NOTICE_TIME } else { NOTICE_TIME });
+        self.notices.current = Some(notice);
+        self.notices.until = Some(now + if matches!(self.notices.current, Some(Notice::Update { .. } | Notice::Prayer { .. })) { LONG_NOTICE_TIME } else { NOTICE_TIME });
         self.last_tick = now;
         if let Some(w) = &self.window {
             w.request_redraw();

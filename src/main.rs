@@ -183,12 +183,8 @@ struct App {
     last_wheel_tab: Instant,
     /// Sky Island moved the song itself (a click on a lyric line or on the bar) and the song has not changed since.
     seeked: bool,
-    /// Latest system notice, kept after it expires so it can fade out.
-    notice: Option<sys::Notice>,
-    notice_until: Option<Instant>,
-    /// 0.0 = no notice, 1.0 = compact notice size
-    ov_t: f64,
-    ov_v: f64,
+    /// Notices: the system notice on show and its fade, and the timer alert that keeps the notch open with its chime.
+    notices: ui::Notices,
     clips: History,
     /// A short message for the clipboard header, with when to remove it.
     clip_flash: Option<(&'static str, Instant)>,
@@ -214,9 +210,6 @@ struct App {
     eyes: ui::Eyes,
     last_minute: u32,
     quit: bool,
-    /// While set, the notch stays open to show a timer notification.
-    alert_until: Option<Instant>,
-    alert_msg: String,
     last_ui_tick: Instant,
     /// The closed notch's width for the album cover and bars while a song plays, and the bars' clock.
     music: ui::ClosedMusic,
@@ -299,8 +292,6 @@ struct App {
     stats: ui::StatsTab,
     /// With Show on All screens: the number of the screen the notch last followed the mouse to (none until it has).
     follow: Option<u32>,
-    /// When the timer's alarm sounds again while it is ringing.
-    next_chime: Option<Instant>,
     last_tick: Instant,
 }
 
@@ -340,10 +331,7 @@ impl App {
             closed_v: 0.0,
             last_wheel_tab: Instant::now(),
             seeked: false,
-            notice: None,
-            notice_until: None,
-            ov_t: 0.0,
-            ov_v: 0.0,
+            notices: ui::Notices::default(),
             clips: {
                 let mut clips = History::new();
                 clips.load_pinned(clipboard::read_pinned());
@@ -365,8 +353,6 @@ impl App {
             eyes: ui::Eyes::default(),
             last_minute: u32::MAX,
             quit: false,
-            alert_until: None,
-            alert_msg: String::new(),
             last_ui_tick: Instant::now(),
             music: ui::ClosedMusic::default(),
             proxy,
@@ -413,7 +399,6 @@ impl App {
             volume: ui::Volume::default(),
             weather: ui::WeatherTab::default(),
             prayer: ui::PrayerTab::default(),
-            next_chime: None,
             shown_view: View::Player,
             last_tick: Instant::now(),
         }

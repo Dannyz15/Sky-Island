@@ -16,7 +16,7 @@ const TUCK_STRIP: f64 = 3.0;
 
 impl App {
     fn target(&self) -> f64 {
-        if self.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_field.is_some() || self.alert_until.is_some() { 1.0 } else { 0.0 }
+        if self.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_field.is_some() || self.notices.alert_until.is_some() { 1.0 } else { 0.0 }
     }
 
     /// With "Auto-hide notch" on, the notch slides away whenever there is nothing to show or touch.
@@ -26,8 +26,8 @@ impl App {
             || self.shelf_ui.drag_hover
             || self.edit.on
             || self.timer_field.is_some()
-            || self.alert_until.is_some()
-            || self.notice_until.is_some()
+            || self.notices.alert_until.is_some()
+            || self.notices.until.is_some()
             || self.previewing()
             || self.progress > 0.0;
         if self.settings.hide_island && !needed { 1.0 } else { 0.0 }
@@ -49,7 +49,7 @@ impl App {
             || (self.tuck_t - self.tuck_target()).abs() > f64::EPSILON
             || (self.view_t - self.view_target()).abs() > f64::EPSILON
             || (self.grow_t - self.stats_extra()).abs() > f64::EPSILON
-            || (self.ov_t - self.ov_target()).abs() > f64::EPSILON
+            || (self.notices.t - self.ov_target()).abs() > f64::EPSILON
             || self.glows.busy()
             || self.eyes_moving()
             || (self.music.k - self.music_target()).abs() > 1e-4
@@ -60,7 +60,7 @@ impl App {
     }
 
     fn ov_target(&self) -> f64 {
-        if self.notice_until.is_some() { 1.0 } else { 0.0 }
+        if self.notices.until.is_some() { 1.0 } else { 0.0 }
     }
 
     fn view_target(&self) -> f64 {
@@ -241,7 +241,7 @@ impl App {
 
         let ot = self.ov_target();
         let (omega, zeta) = if ot > 0.5 { tune(26.0, 0.8) } else { tune(28.0, 1.0) };
-        spring(&mut self.ov_t, &mut self.ov_v, ot, dt, omega, zeta);
+        spring(&mut self.notices.t, &mut self.notices.v, ot, dt, omega, zeta);
 
         let vt = self.view_target();
         let (omega, zeta) = if vt > 0.5 { tune(24.0, 0.85) } else { tune(28.0, 1.0) };
@@ -275,7 +275,7 @@ impl App {
         let wide = self.view_t.clamp(0.0, 1.0);
         let full_h = lerp(EXPANDED.1, LYRICS_H, wide) + self.grow_t.max(0.0);
         // The closed notch grows to the compact notice size while a notice is showing.
-        let ov = self.ov_t.clamp(0.0, 1.0);
+        let ov = self.notices.t.clamp(0.0, 1.0);
         let closed = self.closed_size();
         let base = (lerp(closed.0, OVERLAY.0, ov), lerp(closed.1, OVERLAY.1, ov));
         // Opening the lyrics widens the notch evenly on both sides, so it stays centred on the screen.

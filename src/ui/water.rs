@@ -65,8 +65,8 @@ impl App {
                 fill_rect(pm, (x - 0.75) * s, (y - 4.0) * s, 1.5 * s, 8.0 * s, white);
             }
         }
-        if self.alert_until.is_some() {
-            for (i, row) in wrap(font, &self.alert_msg, 12.0, 190.0).iter().take(2).enumerate() {
+        if self.notices.alert_until.is_some() {
+            for (i, row) in wrap(font, &self.notices.alert_msg, 12.0, 190.0).iter().take(2).enumerate() {
                 draw_text_centered(pm, font, row, cx, (96.0 + i as f32 * 15.0) * s, 12.0 * s, accent, 200.0 * s);
             }
         } else {
@@ -123,7 +123,7 @@ impl App {
         } else {
             return;
         }
-        self.alert_until = None;
+        self.notices.alert_until = None;
         window.request_redraw();
     }
 }

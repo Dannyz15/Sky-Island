@@ -76,7 +76,7 @@ impl App {
         let light = gfx::mix(accent, white, 0.35);
         let now = Instant::now();
         let idle = self.timer.is_idle();
-        let finished = self.alert_until.is_some() && self.alert_msg == TIMES_UP;
+        let finished = self.notices.alert_until.is_some() && self.notices.alert_msg == TIMES_UP;
 
         // Quick choices for the length, or a reminder of the keys while a number is being typed.
         if self.timer_field.is_some() && !finished {
@@ -331,16 +331,16 @@ impl App {
         } else {
             return;
         }
-        self.alert_until = None;
+        self.notices.alert_until = None;
         window.request_redraw();
     }
 
     /// While the timer's alarm rings, only its Stop button stops it. True when the click was dealt with here: the alarm was stopped, or the click fell on a control that stays dead for now (the tab bar still works).
     pub(crate) fn click_alarm_guard(&mut self, cx: f32, cy: f32, ry: f32, bar_y: f32, window: &Window) -> bool {
-        if self.alert_until.is_some() && self.alert_msg == TIMES_UP && self.view == View::Timer {
+        if self.notices.alert_until.is_some() && self.notices.alert_msg == TIMES_UP && self.view == View::Timer {
             if cx >= STOP_BUTTON.0 && cx <= STOP_BUTTON.0 + STOP_BUTTON.2 && cy >= STOP_BUTTON.1 && cy <= STOP_BUTTON.1 + STOP_BUTTON.3 {
-                self.alert_until = None;
-                self.next_chime = None;
+                self.notices.alert_until = None;
+                self.notices.next_chime = None;
                 sound::stop_file();
                 window.request_redraw();
                 return true;

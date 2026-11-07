@@ -98,7 +98,7 @@ impl App {
         let field = TODO_FIELD;
         let (fx, fy, fw, fh) = field;
         let hot = self.hot_t(field, s);
-        if self.alert_until.is_some() {
+        if self.notices.alert_until.is_some() {
             gfx::gradient_rounded(
                 pm,
                 fx * s,
@@ -111,7 +111,7 @@ impl App {
                 false,
             );
             gfx::stroke_rounded(pm, fx * s + 0.5 * s, fy * s + 0.5 * s, fw * s - s, fh * s - s, 12.0 * s, s, [rgb[0], rgb[1], rgb[2], (alpha * 120.0) as u8]);
-            draw_text(pm, heading, &self.alert_msg, (fx + 12.0) * s, (fy + 16.0) * s, 12.0 * s, white, (fw - 24.0) * s);
+            draw_text(pm, heading, &self.notices.alert_msg, (fx + 12.0) * s, (fy + 16.0) * s, 12.0 * s, white, (fw - 24.0) * s);
         } else {
             draw_card(pm, field, 12.0, s, alpha, hot, rgb);
             gfx::gradient_circle(pm, (fx + 15.0) * s, (fy + fh / 2.0) * s, 8.0 * s, gfx::mix(amber, white, 0.3), amber);

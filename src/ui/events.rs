@@ -645,9 +645,9 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         if self.timer.tick(now) {
-            self.alert_msg = TIMES_UP.into();
-            self.alert_until = Some(now + self.alarm_for());
-            self.next_chime = Some(now + self.alarm_every());
+            self.notices.alert_msg = TIMES_UP.into();
+            self.notices.alert_until = Some(now + self.alarm_for());
+            self.notices.next_chime = Some(now + self.alarm_every());
             self.view = View::Timer;
             self.last_tick = now;
             self.play_alarm();
@@ -657,8 +657,8 @@ impl ApplicationHandler<UserEvent> for App {
         }
         if let Some(text) = self.todo.take_due(todo::unix_now()) {
             let short: String = text.chars().take(40).collect();
-            self.alert_msg = format!("Reminder: {short}");
-            self.alert_until = Some(now + ALERT);
+            self.notices.alert_msg = format!("Reminder: {short}");
+            self.notices.alert_until = Some(now + ALERT);
             self.view = View::Todo;
             self.last_tick = now;
             self.play_sound(sound::Chime::Reminder);
@@ -675,29 +675,29 @@ impl ApplicationHandler<UserEvent> for App {
         self.check_prayer();
         self.water.roll(today());
         if self.settings.water && self.water.due(now) {
-            self.alert_msg = "Time to drink some water!".into();
-            self.alert_until = Some(now + ALERT);
+            self.notices.alert_msg = "Time to drink some water!".into();
+            self.notices.alert_until = Some(now + ALERT);
             self.view = View::Water;
             self.last_tick = now;
             self.play_sound(sound::Chime::Reminder);
         }
-        if self.next_chime.is_some_and(|t| now >= t) {
-            if self.alert_until.is_some() && self.alert_msg == TIMES_UP {
+        if self.notices.next_chime.is_some_and(|t| now >= t) {
+            if self.notices.alert_until.is_some() && self.notices.alert_msg == TIMES_UP {
                 self.play_alarm();
-                self.next_chime = Some(now + self.alarm_every());
+                self.notices.next_chime = Some(now + self.alarm_every());
             } else {
-                self.next_chime = None;
+                self.notices.next_chime = None;
             }
         }
-        if self.alert_until.is_some_and(|t| now >= t) {
-            if self.alert_msg == TIMES_UP {
+        if self.notices.alert_until.is_some_and(|t| now >= t) {
+            if self.notices.alert_msg == TIMES_UP {
                 sound::stop_file();
             }
-            self.alert_until = None;
+            self.notices.alert_until = None;
             self.last_tick = now;
         }
-        if self.notice_until.is_some_and(|t| now >= t) {
-            self.notice_until = None;
+        if self.notices.until.is_some_and(|t| now >= t) {
+            self.notices.until = None;
             self.last_tick = now;
         }
         if self.clip_flash.as_ref().is_some_and(|(_, t)| now >= *t) {
@@ -799,10 +799,10 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(due) = self.todo.next_due() {
             at(now + Duration::from_secs(due.saturating_sub(todo::unix_now())));
         }
-        if let Some(t) = self.alert_until {
+        if let Some(t) = self.notices.alert_until {
             at(t);
         }
-        if let Some(t) = self.next_chime {
+        if let Some(t) = self.notices.next_chime {
             at(t);
         }
         if let Some(t) = panel_wake {
@@ -811,7 +811,7 @@ impl ApplicationHandler<UserEvent> for App {
         for t in [self.enter_at, self.leave_at].into_iter().flatten() {
             at(t);
         }
-        if let Some(t) = self.notice_until {
+        if let Some(t) = self.notices.until {
             at(t);
         }
         if let Some((_, t)) = self.clip_flash {
