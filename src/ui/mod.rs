@@ -8,6 +8,7 @@ mod closed_music;
 mod companion;
 mod events;
 pub(crate) mod eyes;
+mod glyphs;
 mod icons;
 mod input;
 mod mirrors;
