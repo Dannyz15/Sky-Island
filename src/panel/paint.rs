@@ -9,7 +9,52 @@ pub(super) fn backdrop_is_for(cached: &Option<(u32, u32, [u8; 3], bool, Pixmap)>
     cached.as_ref().is_some_and(|(w, h, t, l, _)| ((*w, *h), *t, *l) == (size, tint, light))
 }
 
+/// The page colour stored with the background, which does not depend on the page.
+const NO_TINT: [u8; 3] = [0, 0, 0];
+
+/// Which part of a frame is drawn: all of it, only what stays the same while a page is still (the cards, the
+/// titles, the frame of the sidebar), or only what moves (hover, labels, controls, the highlight).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Part {
+    All,
+    Fixed,
+    Moving,
+}
+
+/// The fixed part of a still page, drawn once on top of the background and copied in at the start of each frame
+/// (drawing every card with its gradient again for each frame took more than half of the time of a frame, and
+/// on a 144 Hz screen a frame has under 7 ms).
+pub(super) struct PageBack {
+    key: PageKey,
+    pm: Pixmap,
+}
+
+/// What the fixed part depends on: the size, scale, page colour and look, the page, and where its cards and rows are.
+type PageKey = ((u32, u32), u32, [u8; 3], bool, Page, u64);
+
 impl App {
+    /// The key of the fixed part of the page shown, or `None` while the page cannot be drawn in two parts: the
+    /// changelog, a page that is scrolled or has a card at the top (the About page and the calendar's preview).
+    fn page_key(&self, panel: &Panel, frame: Frame, size: (u32, u32), tint: [u8; 3], light: bool, s: f32) -> Option<PageKey> {
+        if panel.show_changelog || panel.scroll != 0.0 || panel.scroll_shown != 0.0 {
+            return None;
+        }
+        let lay = self.layout_of(panel, panel.page, frame);
+        if lay.hero.is_some() {
+            return None;
+        }
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        let bits = |r: Rect| [r.0.to_bits(), r.1.to_bits(), r.2.to_bits(), r.3.to_bits()];
+        for g in &lay.groups {
+            (g.title, bits(g.rect)).hash(&mut hash);
+        }
+        for i in &lay.items {
+            (i.after_row, bits(i.row)).hash(&mut hash);
+        }
+        Some((size, s.to_bits(), tint, light, panel.page, hash.finish()))
+    }
+
     /// What the last update check found, with the colour to show it in.
     pub(super) fn update_note(&self) -> (String, [u8; 4]) {
         let (grey, green, amber, red) = ([165, 165, 175, 255], [90, 210, 130, 255], [255, 190, 70, 255], [255, 130, 120, 255]);
@@ -78,12 +123,11 @@ impl App {
         // The background is drawn once for a size, page colour and look and copied in each frame; the picture
         // it is copied onto is the same one every time, so nothing big is allocated per frame.
         let light = theme::is_light();
-        if !backdrop_is_for(&panel.backdrop, (w.get(), h.get()), tint, light) {
+        // (It is the same for every page, so its colour is `NO_TINT`; the page's own glow is drawn with the page.)
+        if !backdrop_is_for(&panel.backdrop, (w.get(), h.get()), NO_TINT, light) {
             let Some(mut back) = Pixmap::new(w.get(), h.get()) else { return };
-            // A dark gradient with a soft glow of the page's colour in the top right corner.
             gfx::gradient_rounded(&mut back, 0.0, 0.0, fw, fh, 0.0, [13, 13, 18, 255], [24, 24, 32, 255], false);
-            gfx::glow(&mut back, fw * 0.92, fh * 0.04, fw * 0.55, [tint[0], tint[1], tint[2], 20], None);
-            panel.backdrop = Some((w.get(), h.get(), tint, light, back));
+            panel.backdrop = Some((w.get(), h.get(), NO_TINT, light, back));
         }
         let mut pm = match panel.canvas.take() {
             Some(canvas) if (canvas.width(), canvas.height()) == (w.get(), h.get()) => canvas,
@@ -109,22 +153,58 @@ impl App {
             if opening {
                 // Opening: the sidebar and the page are drawn on one layer, which rises into place and fades in.
                 let (mut layer, mut content) = (blank(), blank());
-                self.paint_sidebar(&mut layer, panel, font, heading, s, fh);
-                self.paint_content(&mut content, panel, font, heading, tint, s, frame, lh);
+                self.paint_sidebar(&mut layer, panel, font, heading, s, fh, Part::All);
+                self.paint_content(&mut content, panel, font, heading, tint, s, frame, lh, Part::All);
                 let paint = tiny_skia::PixmapPaint { opacity: page_ease, ..Default::default() };
                 layer.draw_pixmap(0, 0, content.as_ref(), &paint, Transform::from_translate((1.0 - page_ease) * 14.0 * s, 0.0), None);
                 let paint = tiny_skia::PixmapPaint { opacity: open_ease, ..Default::default() };
                 pm.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate(0.0, (1.0 - open_ease) * 16.0 * s), None);
             } else if page_ease < 1.0 {
                 // A page fading in: only the page is on a layer; the sidebar does not move.
-                self.paint_sidebar(&mut pm, panel, font, heading, s, fh);
-                let mut content = blank();
-                self.paint_content(&mut content, panel, font, heading, tint, s, frame, lh);
-                let paint = tiny_skia::PixmapPaint { opacity: page_ease, ..Default::default() };
-                pm.draw_pixmap(0, 0, content.as_ref(), &paint, Transform::from_translate((1.0 - page_ease) * 14.0 * s, 0.0), None);
+                self.paint_sidebar(&mut pm, panel, font, heading, s, fh, Part::All);
+                // The fixed part of the page is drawn once on a layer of its own and copied for each frame of the fade.
+                let key = self.page_key(panel, frame, (w.get(), h.get()), tint, light, s);
+                let mut content = match key {
+                    Some(key) => {
+                        if panel.layer_back.as_ref().is_none_or(|b| b.key != key) {
+                            let mut fixed = blank();
+                            self.paint_content(&mut fixed, panel, font, heading, tint, s, frame, lh, Part::Fixed);
+                            panel.layer_back = Some(PageBack { key, pm: fixed });
+                        }
+                        let mut layer = match panel.layer.take() {
+                            Some(layer) if (layer.width(), layer.height()) == (w.get(), h.get()) => layer,
+                            _ => blank(),
+                        };
+                        if let Some(back) = &panel.layer_back {
+                            layer.data_mut().copy_from_slice(back.pm.data());
+                        }
+                        layer
+                    }
+                    None => blank(),
+                };
+                let part = if key.is_some() { Part::Moving } else { Part::All };
+                self.paint_content(&mut content, panel, font, heading, tint, s, frame, lh, part);
+                // The page slides in 14 logical pixels (a whole number of pixels at a time, as the library's copy did too).
+                gfx::blend_layer(&mut pm, &content, ((1.0 - page_ease) * 14.0 * s).round() as i32, page_ease, (SIDEBAR_W * s) as usize);
+                if key.is_some() {
+                    panel.layer = Some(content);
+                }
+            } else if let Some(key) = self.page_key(panel, frame, (w.get(), h.get()), tint, light, s) {
+                // A still page: its fixed part is copied in and only what moves is drawn.
+                if panel.page_back.as_ref().is_none_or(|b| b.key != key) {
+                    let mut fixed = pm.clone();
+                    self.paint_sidebar(&mut fixed, panel, font, heading, s, fh, Part::Fixed);
+                    self.paint_content(&mut fixed, panel, font, heading, tint, s, frame, lh, Part::Fixed);
+                    panel.page_back = Some(PageBack { key, pm: fixed });
+                }
+                if let Some(back) = &panel.page_back {
+                    pm.data_mut().copy_from_slice(back.pm.data());
+                }
+                self.paint_sidebar(&mut pm, panel, font, heading, s, fh, Part::Moving);
+                self.paint_content(&mut pm, panel, font, heading, tint, s, frame, lh, Part::Moving);
             } else {
-                self.paint_sidebar(&mut pm, panel, font, heading, s, fh);
-                self.paint_content(&mut pm, panel, font, heading, tint, s, frame, lh);
+                self.paint_sidebar(&mut pm, panel, font, heading, s, fh, Part::All);
+                self.paint_content(&mut pm, panel, font, heading, tint, s, frame, lh, Part::All);
             }
         }
 
@@ -151,21 +231,43 @@ impl App {
 
     /// The part of the window beside the sidebar: the changelog, or a page with its title and its rows,
     /// which scroll under the title. `target` is a layer or the picture itself.
-    pub(super) fn paint_content(&self, target: &mut Pixmap, panel: &mut Panel, font: &fontdue::Font, heading: &fontdue::Font, tint: [u8; 3], s: f32, frame: Frame, lh: f32) {
+    pub(super) fn paint_content(
+        &self,
+        target: &mut Pixmap,
+        panel: &mut Panel,
+        font: &fontdue::Font,
+        heading: &fontdue::Font,
+        tint: [u8; 3],
+        s: f32,
+        frame: Frame,
+        lh: f32,
+        part: Part,
+    ) {
         let (w, h) = (target.width(), target.height());
         let (fw, fh) = (w as f32, h as f32);
         let page = panel.page;
+        if part != Part::Moving {
+            // A soft glow of the page's colour in the top right corner.
+            gfx::glow(target, fw * 0.92, fh * 0.04, fw * 0.55, [tint[0], tint[1], tint[2], 20], None);
+        }
         if panel.show_changelog {
             self.paint_changelog(target, panel, font, heading, tint, s, frame, lh);
             return;
         }
-        // The page's own icon, big, beside its title, with a soft glow of its colour behind it.
-        gfx::glow(target, (frame.x + 22.0) * s, 50.0 * s, 46.0 * s, [tint[0], tint[1], tint[2], 34], None);
-        draw_page_icon(target, page, frame.x, 28.0, 44.0, s);
-        let text_x = frame.x + 60.0;
-        crate::draw_text(target, heading, page.title(), text_x * s, 52.0 * s, 24.0 * s, [255, 255, 255, 255], (frame.w - 60.0) * s);
-        crate::draw_text(target, font, page.subtitle(), text_x * s, 72.0 * s, 11.5 * s, [150, 150, 164, 255], (frame.w - 60.0) * s);
+        if part != Part::Moving {
+            // The page's own icon, big, beside its title, with a soft glow of its colour behind it.
+            gfx::glow(target, (frame.x + 22.0) * s, 50.0 * s, 46.0 * s, [tint[0], tint[1], tint[2], 34], None);
+            draw_page_icon(target, page, frame.x, 28.0, 44.0, s);
+            let text_x = frame.x + 60.0;
+            crate::draw_text(target, heading, page.title(), text_x * s, 52.0 * s, 24.0 * s, [255, 255, 255, 255], (frame.w - 60.0) * s);
+            crate::draw_text(target, font, page.subtitle(), text_x * s, 72.0 * s, 11.5 * s, [150, 150, 164, 255], (frame.w - 60.0) * s);
+        }
         let lay = self.layout_of(panel, page, frame);
+        if part == Part::Fixed {
+            // Only used for a page that is not scrolled.
+            self.paint_page(target, panel, font, heading, &lay, tint, s, part);
+            return;
+        }
         panel.scroll_max = scroll_limit(&lay, lh);
         panel.scroll = panel.scroll.clamp(0.0, panel.scroll_max);
         // Dragging the scroll bar moves the page with the mouse, without the gliding of the wheel and the keys.
@@ -174,11 +276,11 @@ impl App {
         let lay = lay.shifted(-panel.scroll_shown);
         if panel.scroll_shown < 0.5 {
             // Not scrolled: nothing reaches under the title, so the rows are drawn straight on.
-            self.paint_page(target, panel, font, heading, &lay, tint, s);
+            self.paint_page(target, panel, font, heading, &lay, tint, s, part);
         } else {
             // Scrolled: the rows go on a layer of their own that is cut off at the line under the title.
             let mut rows = Pixmap::new(w, h).unwrap_or_else(|| Pixmap::new(1, 1).unwrap());
-            self.paint_page(&mut rows, panel, font, heading, &lay, tint, s);
+            self.paint_page(&mut rows, panel, font, heading, &lay, tint, s, part);
             let below_title = tiny_skia::Rect::from_xywh(0.0, SCROLL_TOP * s, fw, (fh - SCROLL_TOP * s).max(1.0)).map(PathBuilder::from_rect);
             let mask = below_title.and_then(|path| gfx::mask_of(w, h, &path));
             target.draw_pixmap(0, 0, rows.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), mask.as_ref());
@@ -192,19 +294,26 @@ impl App {
     }
 
     /// The sidebar: the app's name, the pages with a highlight that glides between them, and Quit.
-    pub(super) fn paint_sidebar(&self, pm: &mut Pixmap, panel: &Panel, font: &fontdue::Font, heading: &fontdue::Font, s: f32, fh: f32) {
+    pub(super) fn paint_sidebar(&self, pm: &mut Pixmap, panel: &Panel, font: &fontdue::Font, heading: &fontdue::Font, s: f32, fh: f32, part: Part) {
         let white = [255, 255, 255, 255];
         let (cx, cy) = panel.cursor;
-        // The sidebar is a slightly darker panel with a line on its right edge.
-        crate::fill_rect(pm, 0.0, 0.0, SIDEBAR_W * s, fh, [0, 0, 0, 70]);
-        crate::fill_rect(pm, (SIDEBAR_W - 1.0) * s, 0.0, s, fh, [255, 255, 255, 14]);
+        if part != Part::Moving {
+            // The sidebar is a slightly darker panel with a line on its right edge.
+            crate::fill_rect(pm, 0.0, 0.0, SIDEBAR_W * s, fh, [0, 0, 0, 70]);
+            crate::fill_rect(pm, (SIDEBAR_W - 1.0) * s, 0.0, s, fh, [255, 255, 255, 14]);
 
-        // The name at the top.
-        let logo = appicon::pixmap(64);
-        let scale = 26.0 * s / logo.width() as f32;
-        let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-        pm.draw_pixmap(0, 0, logo.as_ref(), &paint, Transform::from_scale(scale, scale).post_translate(18.0 * s, 16.0 * s), None);
-        crate::draw_text(pm, heading, "Sky Island", 52.0 * s, 35.0 * s, 15.0 * s, white, 150.0 * s);
+            // The name at the top, and the version at the bottom. (Quitting is in the tray menu.)
+            let logo = appicon::cached(64);
+            let scale = 26.0 * s / logo.width() as f32;
+            let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+            pm.draw_pixmap(0, 0, logo.as_ref(), &paint, Transform::from_scale(scale, scale).post_translate(18.0 * s, 16.0 * s), None);
+            crate::draw_text(pm, heading, "Sky Island", 52.0 * s, 35.0 * s, 15.0 * s, white, 150.0 * s);
+            let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
+            crate::draw_text_centered(pm, font, &version, SIDEBAR_W / 2.0 * s, fh - VERSION_FROM_BOTTOM * s, 10.5 * s, [130, 130, 144, 255], (SIDEBAR_W - 24.0) * s);
+        }
+        if part == Part::Fixed {
+            return;
+        }
 
         // The highlight glides to the chosen page, tinted with that page's colour.
         let pos = panel.glows.follow(KEY_SIDE, panel.page.index() as f64, 30.0, 0.8) as f32;
@@ -238,14 +347,10 @@ impl App {
                 crate::fill_circle(pm, (r.0 + r.2 - 16.0) * s, (r.1 + r.3 / 2.0) * s, 4.0 * s, [255, 190, 60, 255]);
             }
         }
-
-        // The version, at the bottom. (Quitting is in the tray menu.)
-        let version = format!("Version {}", env!("CARGO_PKG_VERSION"));
-        crate::draw_text_centered(pm, font, &version, SIDEBAR_W / 2.0 * s, fh - VERSION_FROM_BOTTOM * s, 10.5 * s, [130, 130, 144, 255], (SIDEBAR_W - 24.0) * s);
     }
 
     /// The groups of a page as cards with their rows.
-    pub(super) fn paint_page(&self, pm: &mut Pixmap, panel: &Panel, font: &fontdue::Font, heading: &fontdue::Font, lay: &Layout, tint: [u8; 3], s: f32) {
+    pub(super) fn paint_page(&self, pm: &mut Pixmap, panel: &Panel, font: &fontdue::Font, heading: &fontdue::Font, lay: &Layout, tint: [u8; 3], s: f32, part: Part) {
         let white = [255, 255, 255, 255];
         let grey = [160, 160, 172, 255];
 
@@ -257,7 +362,7 @@ impl App {
                 self.paint_hero(pm, font, heading, hero, tint, s);
             }
         }
-        for g in &lay.groups {
+        for g in lay.groups.iter().filter(|_| part != Part::Moving) {
             let ink = gfx::mix(grey, [tint[0], tint[1], tint[2], 255], 0.45);
             crate::draw_text(pm, heading, g.title, (g.rect.0 + 4.0) * s, (g.rect.1 - 8.0) * s, 12.0 * s, ink, 300.0 * s);
             crate::draw_card(pm, g.rect, 14.0, s, 1.0, 0.0, tint);
@@ -265,6 +370,13 @@ impl App {
         for (idx, item) in lay.items.iter().enumerate() {
             let key = 0x2000_0000 + idx as u64 * 16;
             let (cx, cy) = panel.cursor;
+            if part == Part::Fixed {
+                // The line between two rows of a card.
+                if item.after_row {
+                    crate::fill_rect(pm, (item.row.0 + 18.0) * s, item.row.1 * s, (item.row.2 - 36.0) * s, s * 0.7, [255, 255, 255, 13]);
+                }
+                continue;
+            }
             let row_hot = !matches!(item.kind, Kind::Link("")) && inside(item.row, cx, cy);
             let hot = panel.glows.fade(key, row_hot);
             if hot > 0.01 {
@@ -278,7 +390,7 @@ impl App {
                     [255, 255, 255, (11.0 * hot) as u8],
                 );
             }
-            if item.after_row {
+            if item.after_row && part == Part::All {
                 crate::fill_rect(pm, (item.row.0 + 18.0) * s, item.row.1 * s, (item.row.2 - 36.0) * s, s * 0.7, [255, 255, 255, 13]);
             }
             // The label and the line under it. The About page's update row shows what the check found.

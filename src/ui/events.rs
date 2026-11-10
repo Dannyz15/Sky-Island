@@ -633,8 +633,15 @@ impl ApplicationHandler<UserEvent> for App {
                 p.redraw();
             }
             if p.busy {
-                p.redraw();
-                panel_wake = Some(now + frame);
+                // One frame for each frame of the screen, not one straight after the other: the window had been
+                // drawing as fast as it could while a control settled, keeping the thread busy for no gain.
+                let due = p.last_frame() + frame;
+                if now >= due {
+                    p.redraw();
+                    panel_wake = Some(now + frame);
+                } else {
+                    panel_wake = Some(due);
+                }
             } else if let Some(t) = p.reset_armed {
                 panel_wake = Some(t);
             }

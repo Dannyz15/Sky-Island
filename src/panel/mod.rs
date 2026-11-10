@@ -137,6 +137,11 @@ pub(crate) struct Panel {
     /// The window's background for one size, page colour and look (light or dark): it only changes when those do,
     /// so it is drawn once.
     backdrop: Option<(u32, u32, [u8; 3], bool, Pixmap)>,
+    /// The fixed part of the page shown, when it is still (see `paint::PageBack`).
+    page_back: Option<paint::PageBack>,
+    /// The fixed part of the page that is fading in, on a layer, and the layer each frame of the fade is drawn on.
+    layer_back: Option<paint::PageBack>,
+    layer: Option<Pixmap>,
 }
 
 impl Panel {
@@ -157,6 +162,11 @@ impl Panel {
 
     pub(crate) fn redraw(&self) {
         self.window.request_redraw();
+    }
+
+    /// When the last frame was drawn.
+    pub(crate) fn last_frame(&self) -> Instant {
+        self.last_draw
     }
 
     /// The scroll bar of what is shown, with how far it is scrolled and how far it can go.

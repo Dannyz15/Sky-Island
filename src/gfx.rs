@@ -161,6 +161,42 @@ pub fn blit_over(dst: &mut Pixmap, src: &Pixmap, dx: i32, dy: i32) {
     }
 }
 
+/// `layer` laid over `dst` (both the same size, premultiplied pixels) at `opacity`, 0 to 1, moved `dx` pixels to
+/// the right, and only from column `from_x` on. The same picture as `draw_pixmap` with a pure move, much faster,
+/// because clear pixels are skipped and nothing is sampled: the settings window fades a page in with this, one
+/// frame in 7 ms on a 144 Hz screen.
+pub fn blend_layer(dst: &mut Pixmap, layer: &Pixmap, dx: i32, opacity: f32, from_x: usize) {
+    let (w, h) = (dst.width() as usize, dst.height() as usize);
+    if (layer.width() as usize, layer.height() as usize) != (w, h) {
+        return;
+    }
+    let op = (opacity.clamp(0.0, 1.0) * 256.0).round() as u32;
+    // The columns of `dst` that have something of the layer under them.
+    let start = from_x.max(dx.max(0) as usize);
+    let end = (w as i64 + dx.min(0) as i64).clamp(0, w as i64) as usize;
+    if op == 0 || start >= end {
+        return;
+    }
+    let (src_data, dst_data) = (layer.data(), dst.data_mut());
+    for y in 0..h {
+        let row = y * w * 4;
+        let (from, to) = (row + start * 4, row + end * 4);
+        let src_from = (row as i64 + (start as i64 - dx as i64) * 4) as usize;
+        let src = &src_data[src_from..src_from + (to - from)];
+        let ((dst_px, _), (src_px, _)) = (dst_data[from..to].as_chunks_mut::<4>(), src.as_chunks::<4>());
+        for (d, s) in dst_px.iter_mut().zip(src_px) {
+            let sa = s[3] as u32;
+            if sa == 0 {
+                continue;
+            }
+            let keep = 256 - ((sa * op + 128) >> 8);
+            for c in 0..4 {
+                d[c] = ((s[c] as u32 * op + d[c] as u32 * keep + 128) >> 8).min(255) as u8;
+            }
+        }
+    }
+}
+
 /// A mask in the shape of `path`, to keep glows inside the notch.
 pub fn mask_of(w: u32, h: u32, path: &Path) -> Option<Mask> {
     let mut mask = Mask::new(w, h)?;
@@ -278,5 +314,36 @@ mod tests {
         glow(&mut pm, 20.0, 20.0, 30.0, [255, 255, 255, 255], Some(&mask));
         assert!(pm.pixel(20, 20).unwrap().alpha() > 0);
         assert_eq!(pm.pixel(5, 5).unwrap().alpha(), 0);
+    }
+
+    #[test]
+    fn a_layer_blended_by_hand_matches_the_library_blend() {
+        // A layer with clear parts, soft edges and solid parts, over a background that is not flat.
+        let (w, h) = (90, 40);
+        let mut layer = Pixmap::new(w, h).unwrap();
+        gradient_rounded(&mut layer, 20.0, 5.0, 60.0, 30.0, 8.0, [255, 120, 40, 200], [40, 90, 255, 90], false);
+        fill_circle_for_test(&mut layer);
+        let mut back = Pixmap::new(w, h).unwrap();
+        gradient_rounded(&mut back, 0.0, 0.0, w as f32, h as f32, 0.0, [13, 13, 18, 255], [90, 90, 110, 255], false);
+        for (dx, opacity) in [(0, 1.0), (7, 0.5), (17, 0.23), (3, 0.97), (0, 0.0)] {
+            let (mut a, mut b) = (back.clone(), back.clone());
+            let paint = tiny_skia::PixmapPaint { opacity, ..Default::default() };
+            a.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::from_translate(dx as f32, 0.0), None);
+            blend_layer(&mut b, &layer, dx, opacity, 0);
+            let worst = a.data().iter().zip(b.data()).map(|(x, y)| (*x as i32 - *y as i32).abs()).max().unwrap();
+            assert!(worst <= 2, "dx {dx} opacity {opacity}: differs by {worst}");
+        }
+        // Nothing left of `from_x` is touched.
+        let mut c = back.clone();
+        blend_layer(&mut c, &layer, 0, 1.0, 50);
+        assert_eq!(&c.data()[..50 * 4], &back.data()[..50 * 4]);
+    }
+
+    fn fill_circle_for_test(pm: &mut Pixmap) {
+        let mut paint = tiny_skia::Paint::default();
+        paint.set_color_rgba8(255, 255, 255, 255);
+        paint.anti_alias = true;
+        let path = PathBuilder::from_circle(30.0, 20.0, 9.0).unwrap();
+        pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
     }
 }

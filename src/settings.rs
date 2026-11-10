@@ -589,7 +589,8 @@ impl Settings {
             return;
         }
         if let Some(p) = Self::path() {
-            store::write(&p, &self.to_json().to_string());
+            // Written by another thread: a click on a switch must not wait for the disk. The app flushes on quit.
+            store::write_later(&p, &self.to_json().to_string());
         }
     }
 }

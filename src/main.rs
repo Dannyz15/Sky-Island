@@ -393,6 +393,9 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App::new(event_loop.create_proxy());
     event_loop.run_app(&mut app).expect("run app");
+    // Settings are saved by another thread; wait for the last of them before the process ends.
+    drop(app);
+    store::flush();
 }
 
 #[cfg(test)]

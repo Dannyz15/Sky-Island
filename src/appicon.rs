@@ -176,6 +176,21 @@ fn fill_sky(pm: &mut Pixmap) {
     round_glow(pm, w * 0.5, h * 0.45, w * 0.60, 0xFFFFFF, 255);
 }
 
+/// The icon of a size, made once and kept: the settings window draws it every frame it moves, and making it
+/// (gradients, the cloud, a mask) took about half a millisecond each time.
+#[allow(dead_code)] // the icon-generating example includes this file and does not use it
+pub fn cached(size: u32) -> &'static Pixmap {
+    static MADE: std::sync::Mutex<Vec<(u32, &'static Pixmap)>> = std::sync::Mutex::new(Vec::new());
+    let mut made = MADE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, pm)) = made.iter().find(|(s, _)| *s == size) {
+        return pm;
+    }
+    // A few sizes at most are ever asked for, so what is kept stays small.
+    let pm: &'static Pixmap = Box::leak(Box::new(pixmap(size)));
+    made.push((size, pm));
+    pm
+}
+
 /// The icon, `size` x `size`, with premultiplied pixels as tiny-skia stores them.
 pub fn pixmap(size: u32) -> Pixmap {
     let s = size as f32;

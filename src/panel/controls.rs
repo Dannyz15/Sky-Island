@@ -256,7 +256,7 @@ impl App {
         {
             gfx::glow(pm, (x + w / 2.0) * s, (y + 44.0) * s, 190.0 * s, [tint[0], tint[1], tint[2], 36], Some(&mask));
         }
-        let logo = appicon::pixmap(128);
+        let logo = appicon::cached(128);
         // The logo at the top, the name, the description and the version centred under it.
         let side = 64.0;
         let scale = side * s / logo.width() as f32;

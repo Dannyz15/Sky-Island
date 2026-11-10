@@ -143,6 +143,67 @@ pub fn write(path: &Path, text: &str) {
     }
 }
 
+/// What the saving thread is told: a text to write, or a wish to know when everything told so far is on disk.
+enum Later {
+    Save(PathBuf, String),
+    Flush(std::sync::mpsc::Sender<()>),
+}
+
+static LATER: std::sync::OnceLock<Option<std::sync::mpsc::Sender<Later>>> = std::sync::OnceLock::new();
+
+/// The thread that writes what `write_later` is given. Texts that arrive while it writes are gathered and only the
+/// newest text for each file is written, so a quick run of clicks costs a few writes and not one for each click.
+fn later_sender() -> Option<&'static std::sync::mpsc::Sender<Later>> {
+    LATER
+        .get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::channel::<Later>();
+            std::thread::Builder::new()
+                .name("store-later".into())
+                .spawn(move || {
+                    while let Ok(first) = rx.recv() {
+                        let mut saves: Vec<(PathBuf, String)> = Vec::new();
+                        let mut acks = Vec::new();
+                        for msg in std::iter::once(first).chain(std::iter::from_fn(|| rx.try_recv().ok())) {
+                            match msg {
+                                Later::Save(path, text) => match saves.iter_mut().find(|(p, _)| *p == path) {
+                                    Some(entry) => entry.1 = text,
+                                    None => saves.push((path, text)),
+                                },
+                                Later::Flush(ack) => acks.push(ack),
+                            }
+                        }
+                        for (path, text) in saves {
+                            write(&path, &text);
+                        }
+                        for ack in acks {
+                            let _ = ack.send(());
+                        }
+                    }
+                })
+                .ok()
+                .map(|_| tx)
+        })
+        .as_ref()
+}
+
+/// Like `write`, but the file is written by another thread, so the caller (the settings window, on the thread that
+/// draws) does not wait for the disk (a write that is flushed to disk takes 5 to 15 ms). `flush` waits for it.
+pub fn write_later(path: &Path, text: &str) {
+    match later_sender() {
+        Some(tx) if tx.send(Later::Save(path.to_path_buf(), text.to_string())).is_ok() => {}
+        _ => write(path, text),
+    }
+}
+
+/// Wait (a few seconds at most) until every text given to `write_later` is on disk: done when the app quits.
+pub fn flush() {
+    let Some(Some(tx)) = LATER.get() else { return };
+    let (ack, done) = std::sync::mpsc::channel();
+    if tx.send(Later::Flush(ack)).is_ok() {
+        let _ = done.recv_timeout(std::time::Duration::from_secs(3));
+    }
+}
+
 fn write_now(path: &Path, text: &str) -> std::io::Result<()> {
     let mut temp = path.as_os_str().to_owned();
     temp.push(".tmp");
@@ -199,6 +260,18 @@ mod tests {
         assert_eq!(fs::read_to_string(&file).unwrap(), "[1,2]");
         assert!(!dir.join("a.json.tmp").exists());
         assert_eq!(read_json(&file).unwrap().as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_later_write_is_on_disk_after_the_flush_and_only_the_newest_text_counts() {
+        let dir = scratch("later");
+        let file = dir.join("settings.json");
+        for n in 0..50 {
+            write_later(&file, &format!("[{n}]"));
+        }
+        flush();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "[49]");
+        assert!(!dir.join("settings.json.tmp").exists());
     }
 
     #[test]

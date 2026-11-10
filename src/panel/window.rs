@@ -110,6 +110,9 @@ impl App {
             busy: false,
             canvas: None,
             backdrop: None,
+            page_back: None,
+            layer_back: None,
+            layer: None,
         });
     }
 
