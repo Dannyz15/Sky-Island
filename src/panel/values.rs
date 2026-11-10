@@ -152,9 +152,20 @@ impl App {
                 self.autostart = settings::autostart_enabled();
             }
             Toggle::HideFullscreen => self.settings.hide_fullscreen = !self.settings.hide_fullscreen,
-            Toggle::ShowClock => self.settings.show_clock = !self.settings.show_clock,
+            // The clock and the awake eyes share the middle of the closed notch, so turning one on turns the other off.
+            Toggle::ShowClock => {
+                self.settings.show_clock = !self.settings.show_clock;
+                if self.settings.show_clock {
+                    self.settings.eyes = false;
+                }
+            }
             Toggle::Clock24 => self.settings.clock_24h = !self.settings.clock_24h,
-            Toggle::Eyes => self.settings.eyes = !self.settings.eyes,
+            Toggle::Eyes => {
+                self.settings.eyes = !self.settings.eyes;
+                if self.settings.eyes {
+                    self.settings.show_clock = false;
+                }
+            }
             Toggle::IdleEyes => self.settings.idle_eyes = !self.settings.idle_eyes,
             Toggle::Minimal => self.settings.minimal = !self.settings.minimal,
             Toggle::ClosedMusic => self.settings.closed_music = !self.settings.closed_music,
