@@ -8,8 +8,9 @@
 //! Everything applies at once and is saved as it changes.
 //!
 //! The code is in this folder: `layout` (what is on each page), `values` (the settings behind the controls),
-//! `window` (opening it, keys and mouse), `city` and `keys` (the two boxes that take typing and key presses),
-//! `paint`, `controls` and `changelog` (drawing), `scroll` (scroll bars and keys) and `spot` (where it opens).
+//! `window` (opening it and sending its events on), `events` (keys, mouse and wheel), `city` and `keys` (the two boxes
+//! that take typing and key presses), `paint`, `controls`, `icons`, `cards` and `changelog` (drawing), `scroll` (scroll
+//! bars and keys) and `spot` (where it opens).
 //! This file holds the window itself, `Panel`.
 
 use std::rc::Rc;
