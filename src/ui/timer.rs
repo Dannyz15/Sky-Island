@@ -75,17 +75,27 @@ impl App {
     }
 
     pub(crate) fn draw_timer(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        if self.font.is_none() {
+            return;
+        }
+        self.timer_presets(pm, s, alpha);
+        self.timer_ring(pm, s, alpha);
+        self.timer_digits(pm, s, alpha);
+        if self.notices.alert_until.is_some() && self.notices.alert_msg == TIMES_UP {
+            self.timer_stop_button(pm, s, alpha);
+            return;
+        }
+        self.timer_controls(pm, s, alpha);
+    }
+
+    /// Quick choices for the length, or a reminder of the keys while a number is being typed.
+    fn timer_presets(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
         let Some(font) = &self.font else { return };
-        let heading = self.heading_font().unwrap_or(font);
         let a = (alpha * 255.0) as u8;
-        let (white, grey) = ([255, 255, 255, a], [165, 165, 175, a]);
+        let grey = [165, 165, 175, a];
         let rgb = self.accent(View::Timer);
-        let accent = [rgb[0], rgb[1], rgb[2], a];
-        let light = gfx::mix(accent, white, 0.35);
-        let now = Instant::now();
         let idle = self.timer.is_idle();
         let finished = self.notices.alert_until.is_some() && self.notices.alert_msg == TIMES_UP;
-
         // Quick choices for the length, or a reminder of the keys while a number is being typed.
         if self.timer_entry.field.is_some() && !finished {
             draw_text_centered(pm, font, "Type digits \u{00B7} Enter to set \u{00B7} Tab for next", TIMER_COLS[1] * s, 47.0 * s, 10.0 * s, grey, 200.0 * s);
@@ -96,7 +106,20 @@ impl App {
                 draw_chip(pm, font, r, &preset_label(*secs), on, if idle { self.hot_t(r, s) } else { 0.0 }, rgb, s, alpha);
             }
         }
+    }
 
+    /// Left: a ring that empties as the time runs down, with the time inside.
+    fn timer_ring(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let heading = self.heading_font().unwrap_or(font);
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let grey = [165, 165, 175, a];
+        let rgb = self.accent(View::Timer);
+        let accent = [rgb[0], rgb[1], rgb[2], a];
+        let light = gfx::mix(accent, white, 0.35);
+        let now = Instant::now();
+        let idle = self.timer.is_idle();
         // Left: a ring that empties as the time runs down, with the time inside.
         let (rx, ry, rr) = RING;
         gfx::glow(pm, rx * s, ry * s, (rr + 28.0) * s, [rgb[0], rgb[1], rgb[2], (alpha * if self.timer.running() { 44.0 } else { 26.0 }) as u8], None);
@@ -113,7 +136,19 @@ impl App {
             "Ready"
         };
         draw_text_centered(pm, font, caption, rx * s, (ry + 28.0) * s, 10.0 * s, if idle { grey } else { light }, (rr * 2.0 - 8.0) * s);
+    }
 
+    /// Right: the length as hours, minutes and seconds, each with a plus above and a minus below.
+    fn timer_digits(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let heading = self.heading_font().unwrap_or(font);
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let grey = [165, 165, 175, a];
+        let rgb = self.accent(View::Timer);
+        let accent = [rgb[0], rgb[1], rgb[2], a];
+        let idle = self.timer.is_idle();
+        let finished = self.notices.alert_until.is_some() && self.notices.alert_msg == TIMES_UP;
         // Right: the length as hours, minutes and seconds, each with a plus above and a minus below.
         if finished {
             draw_text_centered(pm, heading, TIMES_UP, TIMER_COLS[1] * s, 92.0 * s, 22.0 * s, accent, 190.0 * s);
@@ -173,21 +208,32 @@ impl App {
                 draw_text(pm, font, unit.letter(), (x + 11.0) * s, (TIMER_VALUE_Y - 1.0) * s, 11.0 * s, grey, 12.0 * s);
             }
         }
+    }
 
-        // While the alarm rings: one big red Stop button, like a phone's timer (only this button stops it).
-        if finished {
-            let r = STOP_BUTTON;
-            let hot = self.hot_t(r, s);
-            let red = [255, 82, 72];
-            gfx::glow(pm, (r.0 + r.2 / 2.0) * s, (r.1 + r.3 / 2.0) * s, 70.0 * s, [red[0], red[1], red[2], (alpha * pick(70.0, 44.0, hot)) as u8], None);
-            let top = gfx::mix([red[0], red[1], red[2], a], white, pick(0.28, 0.12, hot));
-            gfx::gradient_rounded(pm, r.0 * s, r.1 * s, r.2 * s, r.3 * s, r.3 * s / 2.0, top, [red[0], red[1], red[2], a], false);
-            let (cx, cy) = (r.0 + 34.0, r.1 + r.3 / 2.0);
-            fill_rounded(pm, (cx - 5.0) * s, (cy - 5.0) * s, 10.0 * s, 10.0 * s, 2.0 * s, white);
-            draw_text_centered(pm, heading, "Stop", (r.0 + r.2 / 2.0 + 10.0) * s, (cy + 5.0) * s, 15.0 * s, white, 70.0 * s);
-            return;
-        }
+    /// While the alarm rings: one big red Stop button, like a phone's timer (only this button stops it).
+    fn timer_stop_button(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let heading = self.heading_font().unwrap_or(font);
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let r = STOP_BUTTON;
+        let hot = self.hot_t(r, s);
+        let red = [255, 82, 72];
+        gfx::glow(pm, (r.0 + r.2 / 2.0) * s, (r.1 + r.3 / 2.0) * s, 70.0 * s, [red[0], red[1], red[2], (alpha * pick(70.0, 44.0, hot)) as u8], None);
+        let top = gfx::mix([red[0], red[1], red[2], a], white, pick(0.28, 0.12, hot));
+        gfx::gradient_rounded(pm, r.0 * s, r.1 * s, r.2 * s, r.3 * s, r.3 * s / 2.0, top, [red[0], red[1], red[2], a], false);
+        let (cx, cy) = (r.0 + 34.0, r.1 + r.3 / 2.0);
+        fill_rounded(pm, (cx - 5.0) * s, (cy - 5.0) * s, 10.0 * s, 10.0 * s, 2.0 * s, white);
+        draw_text_centered(pm, heading, "Stop", (r.0 + r.2 / 2.0 + 10.0) * s, (cy + 5.0) * s, 15.0 * s, white, 70.0 * s);
+    }
 
+    /// Reset, and the big start / pause button.
+    fn timer_controls(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let grey = [165, 165, 175, a];
+        let rgb = self.accent(View::Timer);
         // Reset, and the big start / pause button.
         let reset = (TIMER_RESET_X - 26.0, TIMER_CTRL_Y - 11.0, 52.0, 22.0);
         let reset_hot = self.hot_t(reset, s);

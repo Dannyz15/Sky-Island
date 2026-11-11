@@ -82,20 +82,31 @@ impl App {
     }
 
     pub(crate) fn draw_todo(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
-        let Some(font) = &self.font else { return };
-        let heading = self.heading_font().unwrap_or(font);
-        let a = (alpha * 255.0) as u8;
-        let (white, grey) = ([255, 255, 255, a], [165, 165, 175, a]);
-        let rgb = TODO_AMBER;
-        let amber = [rgb[0], rgb[1], rgb[2], a];
-        let width = EXPANDED.0 as f32 * s;
-        let (now, today, zone) = (todo::unix_now(), today_day(), localtime::Zone::System);
-
+        if self.font.is_none() {
+            return;
+        }
         if self.edit.on {
             self.draw_editor(pm, s, alpha);
             return;
         }
+        self.todo_field(pm, s, alpha);
+        if self.todo.tasks.is_empty() {
+            self.todo_empty(pm, s, alpha);
+            return;
+        }
+        self.todo_rows(pm, s, alpha);
+        self.todo_scroll_bar(pm, s, alpha);
+    }
 
+    /// The "Add a task" field, which also shows a banner when a reminder fires.
+    fn todo_field(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let heading = self.heading_font().unwrap_or(font);
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let grey = [165, 165, 175, a];
+        let rgb = TODO_AMBER;
+        let amber = [rgb[0], rgb[1], rgb[2], a];
         // "Add a task" field, which also shows a banner when a reminder fires.
         let field = TODO_FIELD;
         let (fx, fy, fw, fh) = field;
@@ -121,15 +132,34 @@ impl App {
             fill_rect(pm, (fx + 15.0 - 0.75) * s, (fy + fh / 2.0 - 4.0) * s, 1.5 * s, 8.0 * s, [0, 0, 0, a]);
             draw_text(pm, font, "Add a task", (fx + 30.0) * s, (fy + 16.0) * s, 12.0 * s, pick(white, grey, hot), (fw - 44.0) * s);
         }
+    }
 
-        if self.todo.tasks.is_empty() {
-            gfx::glow(pm, width / 2.0, 98.0 * s, 70.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 36.0) as u8], None);
-            draw_tab_icon(pm, View::Todo, width / 2.0, 90.0 * s, s * 2.4, [rgb[0], rgb[1], rgb[2], a]);
-            draw_text_centered(pm, heading, "Nothing to do", width / 2.0, 126.0 * s, 15.0 * s, white, width - 80.0 * s);
-            draw_text_centered(pm, font, "Click the box above to add a task", width / 2.0, 146.0 * s, 11.0 * s, grey, width - 80.0 * s);
-            return;
-        }
+    /// What is shown when there are no tasks.
+    fn todo_empty(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let heading = self.heading_font().unwrap_or(font);
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let grey = [165, 165, 175, a];
+        let rgb = TODO_AMBER;
+        let width = EXPANDED.0 as f32 * s;
+        gfx::glow(pm, width / 2.0, 98.0 * s, 70.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 36.0) as u8], None);
+        draw_tab_icon(pm, View::Todo, width / 2.0, 90.0 * s, s * 2.4, [rgb[0], rgb[1], rgb[2], a]);
+        draw_text_centered(pm, heading, "Nothing to do", width / 2.0, 126.0 * s, 15.0 * s, white, width - 80.0 * s);
+        draw_text_centered(pm, font, "Click the box above to add a task", width / 2.0, 146.0 * s, 11.0 * s, grey, width - 80.0 * s);
+    }
 
+    /// The rows of tasks.
+    fn todo_rows(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let grey = [165, 165, 175, a];
+        let rgb = TODO_AMBER;
+        let amber = [rgb[0], rgb[1], rgb[2], a];
+        let now = todo::unix_now();
+        let today = today_day();
+        let zone = localtime::Zone::System;
         for row in 0..todo::VISIBLE {
             self.animated_row(pm, s, row, todo::VISIBLE, |pm| {
                 let Some(i) = self.todo.index_at(row) else { return };
@@ -206,7 +236,13 @@ impl App {
                 draw_text_centered(pm, font, "\u{00D7}", 384.0 * s, (y + 17.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
             });
         }
+    }
 
+    /// The scroll indicator when there are more tasks than rows.
+    fn todo_scroll_bar(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let a = (alpha * 255.0) as u8;
+        let rgb = TODO_AMBER;
+        let amber = [rgb[0], rgb[1], rgb[2], a];
         // Scroll indicator when there are more tasks than rows.
         let total = self.todo.tasks.len();
         if total > todo::VISIBLE {

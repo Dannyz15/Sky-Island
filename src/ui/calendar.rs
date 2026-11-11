@@ -99,21 +99,29 @@ impl App {
     }
 
     pub(crate) fn draw_calendar(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
-        let Some(font) = &self.font else { return };
-        let heading = self.heading_font().unwrap_or(font);
-        let a = (alpha * 255.0) as u8;
-        let (white, grey) = ([255, 255, 255, a], [165, 165, 175, a]);
-        let amber = [TODO_AMBER[0], TODO_AMBER[1], TODO_AMBER[2], a];
-        let rgb = self.accent(View::Calendar);
-        let violet = [rgb[0], rgb[1], rgb[2], a];
-        let (today, now, zone) = (today_day(), todo::unix_now(), localtime::Zone::System);
-        let selected = self.cal.selected;
-
+        if self.font.is_none() {
+            return;
+        }
         if self.edit.on {
             self.draw_editor(pm, s, alpha);
             return;
         }
+        self.calendar_header(pm, s, alpha);
+        self.calendar_days(pm, s, alpha);
+        self.calendar_day_card(pm, s, alpha);
+        self.calendar_add_button(pm, s, alpha);
+    }
 
+    /// The previous and next arrows and the title.
+    fn calendar_header(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let heading = self.heading_font().unwrap_or(font);
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let grey = [165, 165, 175, a];
+        let selected = self.cal.selected;
+        let monday = self.settings.week_monday;
+        let week = self.settings.calendar_week;
         // Month heading with previous / next arrows.
         for (rect, dir) in [(CAL_PREV, -1.0), (CAL_NEXT, 1.0)] {
             let (cx, cy) = ((rect.0 + rect.2 / 2.0) * s, (rect.1 + rect.3 / 2.0) * s);
@@ -124,9 +132,24 @@ impl App {
             let tip = [(cx - 2.0 * dir * s, cy - 4.0 * s), (cx + 2.0 * dir * s, cy), (cx - 2.0 * dir * s, cy + 4.0 * s)];
             stroke_poly(pm, &tip, 1.7 * s, pick(white, grey, glow), false);
         }
-        let (monday, week) = (self.settings.week_monday, self.settings.calendar_week);
         let title = if week { calendar::week_title(calendar::week_start(selected, monday)) } else { self.cal.title() };
         draw_text_centered(pm, heading, &title, (CAL_TITLE.0 + CAL_TITLE.2 / 2.0) * s, (CAL_TITLE.1 + 13.0) * s, 12.5 * s, white, CAL_TITLE.2 * s);
+    }
+
+    /// The days of the month or week, which slide in when it changes.
+    fn calendar_days(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let heading = self.heading_font().unwrap_or(font);
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let grey = [165, 165, 175, a];
+        let amber = [TODO_AMBER[0], TODO_AMBER[1], TODO_AMBER[2], a];
+        let rgb = self.accent(View::Calendar);
+        let violet = [rgb[0], rgb[1], rgb[2], a];
+        let today = today_day();
+        let selected = self.cal.selected;
+        let monday = self.settings.week_monday;
+        let week = self.settings.calendar_week;
         let grid = |pm: &mut Pixmap| {
             if week {
                 self.draw_calendar_week(pm, s, alpha, monday, today);
@@ -190,7 +213,22 @@ impl App {
             }
         };
         self.slide_in(pm, s, grid);
+    }
 
+    /// The card of the selected day: its heading and its tasks.
+    fn calendar_day_card(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let heading = self.heading_font().unwrap_or(font);
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let grey = [165, 165, 175, a];
+        let amber = [TODO_AMBER[0], TODO_AMBER[1], TODO_AMBER[2], a];
+        let rgb = self.accent(View::Calendar);
+        let violet = [rgb[0], rgb[1], rgb[2], a];
+        let today = today_day();
+        let now = todo::unix_now();
+        let zone = localtime::Zone::System;
+        let selected = self.cal.selected;
         // The selected day sits in a card: its heading and its tasks.
         draw_card(pm, (CAL_PANEL_X - 8.0, 34.0, CAL_PANEL_W + 16.0, 126.0), 12.0, s, alpha, 0.0, rgb);
         draw_text(pm, heading, &calendar::long_date(selected), CAL_PANEL_X * s, 48.0 * s, 13.0 * s, white, 120.0 * s);
@@ -242,7 +280,14 @@ impl App {
                 draw_text_centered(pm, font, "\u{00D7}", (CAL_PANEL_X + CAL_PANEL_W - 6.0) * s, (y + 15.0) * s, 13.0 * s, pick([255, 120, 110, a], grey, over_remove), 14.0 * s);
             });
         }
+    }
 
+    /// The button that adds a task for the selected day.
+    fn calendar_add_button(&self, pm: &mut Pixmap, s: f32, alpha: f32) {
+        let Some(font) = &self.font else { return };
+        let a = (alpha * 255.0) as u8;
+        let white = [255, 255, 255, a];
+        let rgb = self.accent(View::Calendar);
         // Add a task for this day.
         let add = CAL_ADD;
         let hot = self.hot_t(add, s);

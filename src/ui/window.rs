@@ -287,9 +287,18 @@ impl App {
 
         // The Animation setting makes the springs slower or quicker, and can take the bounce out.
         let (speed, bounce) = (self.settings.motion.speed(), self.settings.motion.bounce());
-        let tune = |omega: f64, zeta: f64| (omega * speed, if bounce { zeta } else { 1.0 });
         self.eyes_step(dt, speed, bounce);
 
+        self.step_open(dt, speed, bounce);
+        self.step_lists(dt, speed, bounce);
+        self.step_overlay(dt, speed, bounce);
+        self.step_closed(dt, speed, bounce);
+        self.place_window();
+    }
+
+    /// The notch opening and closing, the tuck, the slide between views and the tab bar's circle.
+    fn step_open(&mut self, dt: f64, speed: f64, bounce: bool) {
+        let tune = |omega: f64, zeta: f64| (omega * speed, if bounce { zeta } else { 1.0 });
         // Everything is pulled towards its goal by a spring. Opening swings out a little past the goal and
         // settles; closing and hiding glide in without bouncing.
         let target = self.target();
@@ -311,7 +320,10 @@ impl App {
             self.tab_bar.pos = x as f32;
             self.tab_bar.vel = v as f32;
         }
+    }
 
+    /// Lists easing in, the calendar, the track change, and the colour of the cover.
+    fn step_lists(&mut self, dt: f64, speed: f64, bounce: bool) {
         // A list that changed (scrolled, or an entry came or went) lets its rows ease in.
         let sig = self.list_signature();
         if sig != self.slides.list_sig {
@@ -340,7 +352,11 @@ impl App {
                 *shown = goal as f32;
             }
         }
+    }
 
+    /// Notices, the wide view, the room the open view needs, and the lyrics.
+    fn step_overlay(&mut self, dt: f64, speed: f64, bounce: bool) {
+        let tune = |omega: f64, zeta: f64| (omega * speed, if bounce { zeta } else { 1.0 });
         let ot = self.ov_target();
         let (omega, zeta) = if ot > 0.5 { tune(26.0, 0.8) } else { tune(28.0, 1.0) };
         spring(&mut self.notices.t, &mut self.notices.v, ot, dt, omega, zeta);
@@ -359,7 +375,11 @@ impl App {
             let goal = self.lyric_target();
             spring(&mut self.lyric.pos, &mut self.lyric.v, goal, dt, 14.0 * speed, 1.0);
         }
+    }
 
+    /// The closed notch: its size, and the widening for the album cover and bars.
+    fn step_closed(&mut self, dt: f64, speed: f64, bounce: bool) {
+        let tune = |omega: f64, zeta: f64| (omega * speed, if bounce { zeta } else { 1.0 });
         let closed_goal = self.closed_target();
         spring(&mut self.spring.closed_k, &mut self.spring.closed_v, closed_goal, dt, 24.0 * speed, 1.0);
         // The closed notch widens for the album cover and the bars while a song plays, and goes back when it stops.
@@ -369,6 +389,10 @@ impl App {
         let extra_goal = self.music_extra_goal();
         spring(&mut self.music.w, &mut self.music.wv, extra_goal, dt, omega, zeta);
         self.ui_k = self.target_k();
+    }
+
+    /// Resize and place the window to match, and draw.
+    fn place_window(&mut self) {
         let k = self.ui_k;
 
         let Some(window) = self.window.clone() else { return };

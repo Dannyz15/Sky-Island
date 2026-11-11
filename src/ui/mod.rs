@@ -21,12 +21,15 @@ mod shelf;
 mod stats;
 mod tabs;
 mod text;
+mod ticks;
 mod timer;
 mod todo;
 mod tray;
+mod user_events;
 mod water;
 mod weather;
 mod window;
+mod window_events;
 
 pub(crate) use clipboard::*;
 pub(crate) use clock::*;

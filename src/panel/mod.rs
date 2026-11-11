@@ -30,9 +30,12 @@ use crate::motion::Glows;
 use crate::settings::{self, ClipKeep, EyeStyle, Motion, NotchSize, Range, Screen, Settings, ThemeMode};
 use crate::{App, View, appicon, gfx, store, theme};
 
+mod cards;
 mod changelog;
 mod city;
 mod controls;
+mod events;
+mod icons;
 mod keys;
 mod layout;
 mod paint;
@@ -48,7 +51,7 @@ pub(crate) use layout::Page;
 
 use changelog::*;
 use city::*;
-use controls::*;
+use icons::*;
 use layout::*;
 use screens::*;
 use scroll::*;
