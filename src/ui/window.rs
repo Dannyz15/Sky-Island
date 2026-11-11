@@ -88,11 +88,13 @@ pub(crate) struct Pacing {
     pub(crate) rate_read: Option<Instant>,
     /// When a frame of the animation was last due; the next ones follow at steady steps of `frame`.
     pub(crate) beat: Instant,
+    /// When the next step of the animation is due. A step is taken only then, not each time the loop wakes up.
+    pub(crate) due: Instant,
 }
 
 impl Default for Pacing {
     fn default() -> Self {
-        Self { last_draw: Instant::now(), frame: Duration::from_micros(16_667), rate_read: None, beat: Instant::now() }
+        Self { last_draw: Instant::now(), frame: Duration::from_micros(16_667), rate_read: None, beat: Instant::now(), due: Instant::now() }
     }
 }
 

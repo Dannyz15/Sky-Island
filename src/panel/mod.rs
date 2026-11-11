@@ -121,6 +121,8 @@ pub(crate) struct Panel {
     /// The page being shown, and since when (for its fade).
     page: Page,
     page_since: Instant,
+    /// When another page was last chosen.
+    last_switch: Instant,
     /// "Reset to defaults" was clicked once and waits for a second click until this time.
     pub(crate) reset_armed: Option<Instant>,
     /// How many saved songs the Clear button just removed, and until when to say so.
@@ -137,6 +139,10 @@ pub(crate) struct Panel {
     /// The window's background for one size, page colour and look (light or dark): it only changes when those do,
     /// so it is drawn once.
     backdrop: Option<(u32, u32, [u8; 3], bool, Pixmap)>,
+    /// The same with the glow of the page's colour, for the page shown.
+    tinted: Option<(u32, u32, [u8; 3], bool, Pixmap)>,
+    /// How strong the corner glow is at each pixel, for a window size (the same for every page colour).
+    glow_mask: Option<((u32, u32), tiny_skia::Mask)>,
     /// The fixed part of the page shown, when it is still (see `paint::PageBack`).
     page_back: Option<paint::PageBack>,
     /// The fixed part of the page that is fading in, on a layer, and the layer each frame of the fade is drawn on.
@@ -243,7 +249,11 @@ impl Panel {
         }
         if self.page != page {
             self.page = page;
-            self.page_since = Instant::now();
+            // Choosing a page again before the fade of the last choice would have ended (the pages are being clicked
+            // through) shows it at once: a fade for each click kept every frame the heavy kind.
+            let quick = self.last_switch.elapsed() < PAGE_FADE;
+            self.last_switch = Instant::now();
+            self.page_since = if quick { Instant::now().checked_sub(PAGE_FADE).unwrap_or_else(Instant::now) } else { Instant::now() };
             self.drag = None;
             self.city.typing = None;
             self.capture = false;

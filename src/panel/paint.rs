@@ -129,6 +129,23 @@ impl App {
             gfx::gradient_rounded(&mut back, 0.0, 0.0, fw, fh, 0.0, [13, 13, 18, 255], [24, 24, 32, 255], false);
             panel.backdrop = Some((w.get(), h.get(), NO_TINT, light, back));
         }
+        // The background with the glow of the page's colour in the top right corner: made from the plain one when
+        // the page colour changes (the glow is drawn through a mask kept for the size, which is much cheaper).
+        if !backdrop_is_for(&panel.tinted, (w.get(), h.get()), tint, light) {
+            if panel.glow_mask.as_ref().is_none_or(|(size, _)| *size != (w.get(), h.get())) {
+                panel.glow_mask = gfx::glow_mask(w.get(), h.get(), fw * 0.92, fh * 0.04, fw * 0.55, 20).map(|mask| ((w.get(), h.get()), mask));
+            }
+            let size = (w.get(), h.get());
+            let kept = panel.tinted.take().map(|(_, _, _, _, old)| old).filter(|old| (old.width(), old.height()) == size);
+            let Some(mut tinted) = kept.or_else(|| Pixmap::new(size.0, size.1)) else { return };
+            if let Some((_, _, _, _, plain)) = &panel.backdrop {
+                tinted.data_mut().copy_from_slice(plain.data());
+            }
+            if let Some((_, mask)) = &panel.glow_mask {
+                gfx::fill_through(&mut tinted, tint, mask);
+            }
+            panel.tinted = Some((w.get(), h.get(), tint, light, tinted));
+        }
         let mut pm = match panel.canvas.take() {
             Some(canvas) if (canvas.width(), canvas.height()) == (w.get(), h.get()) => canvas,
             _ => match Pixmap::new(w.get(), h.get()) {
@@ -136,7 +153,7 @@ impl App {
                 None => return,
             },
         };
-        if let Some((_, _, _, _, back)) = &panel.backdrop {
+        if let Some((_, _, _, _, back)) = &panel.tinted {
             pm.data_mut().copy_from_slice(back.data());
         }
 
@@ -167,7 +184,14 @@ impl App {
                 let mut content = match key {
                     Some(key) => {
                         if panel.layer_back.as_ref().is_none_or(|b| b.key != key) {
-                            let mut fixed = blank();
+                            let mut fixed = match panel.layer_back.take() {
+                                Some(old) if (old.pm.width(), old.pm.height()) == (w.get(), h.get()) => {
+                                    let mut reused = old.pm;
+                                    reused.fill(tiny_skia::Color::TRANSPARENT);
+                                    reused
+                                }
+                                _ => blank(),
+                            };
                             self.paint_content(&mut fixed, panel, font, heading, tint, s, frame, lh, Part::Fixed);
                             panel.layer_back = Some(PageBack { key, pm: fixed });
                         }
@@ -192,7 +216,14 @@ impl App {
             } else if let Some(key) = self.page_key(panel, frame, (w.get(), h.get()), tint, light, s) {
                 // A still page: its fixed part is copied in and only what moves is drawn.
                 if panel.page_back.as_ref().is_none_or(|b| b.key != key) {
-                    let mut fixed = pm.clone();
+                    let mut fixed = match panel.page_back.take() {
+                        Some(old) if (old.pm.width(), old.pm.height()) == (w.get(), h.get()) => {
+                            let mut reused = old.pm;
+                            reused.data_mut().copy_from_slice(pm.data());
+                            reused
+                        }
+                        _ => pm.clone(),
+                    };
                     self.paint_sidebar(&mut fixed, panel, font, heading, s, fh, Part::Fixed);
                     self.paint_content(&mut fixed, panel, font, heading, tint, s, frame, lh, Part::Fixed);
                     panel.page_back = Some(PageBack { key, pm: fixed });
@@ -246,10 +277,6 @@ impl App {
         let (w, h) = (target.width(), target.height());
         let (fw, fh) = (w as f32, h as f32);
         let page = panel.page;
-        if part != Part::Moving {
-            // A soft glow of the page's colour in the top right corner.
-            gfx::glow(target, fw * 0.92, fh * 0.04, fw * 0.55, [tint[0], tint[1], tint[2], 20], None);
-        }
         if panel.show_changelog {
             self.paint_changelog(target, panel, font, heading, tint, s, frame, lh);
             return;

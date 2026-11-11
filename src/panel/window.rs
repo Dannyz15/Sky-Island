@@ -102,6 +102,7 @@ impl App {
             spot: None,
             page: Page::General,
             page_since: Instant::now().checked_sub(PAGE_FADE).unwrap_or_else(Instant::now),
+            last_switch: Instant::now().checked_sub(PAGE_FADE).unwrap_or_else(Instant::now),
             reset_armed: None,
             cleared: None,
             last_draw: Instant::now(),
@@ -111,6 +112,8 @@ impl App {
             canvas: None,
             backdrop: None,
             page_back: None,
+            glow_mask: None,
+            tinted: None,
             layer_back: None,
             layer: None,
         });

@@ -757,9 +757,15 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         // Only tick while something is changing; otherwise sleep until the next event (0% idle CPU).
+        // A step draws a frame, and drawing wakes the loop again at once: stepping at every wake-up made the notch
+        // redraw thousands of times a second while a switch of view settled, and the settings window, on the same
+        // thread, waited for it. So a step is taken only when it is due, one for each frame of the screen.
         if self.animating() {
-            self.step();
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame(now)));
+            if now >= self.pacing.due {
+                self.step();
+                self.pacing.due = self.next_frame(now);
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.pacing.due));
             return;
         }
 
