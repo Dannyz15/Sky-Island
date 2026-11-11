@@ -93,6 +93,8 @@ Closed, the notch shows the clock, or a pair of blinking eyes in one of ten styl
 <summary>Windows shows a warning when I run the setup.</summary>
 
 The setup is not code-signed, so Windows may show "Windows protected your PC". Click **More info**, then **Run anyway**. If Smart App Control blocks it completely (error 4551), turn Smart App Control off in Windows Security.
+
+A program that is not signed and is new to Windows can also be flagged by mistake by Microsoft Defender or another antivirus (a false positive). If that happens, open Windows Security > Protection history, allow the file, and you can tell Microsoft it is safe at the [file submission page](https://www.microsoft.com/en-us/wdsi/filesubmission) (choose that you are the developer or that the detection is incorrect). The whole source code is public, so you can also build the program yourself (see Building from source).
 </details>
 
 <details>
@@ -161,6 +163,7 @@ To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whet
 - Windows only.
 - Brightness notices work only on laptop screens whose driver reports the brightness.
 - Lyrics depend on what LRCLIB has.
+- Song titles and lyrics in Korean, Japanese, Chinese, Thai, Hindi and other scripts are drawn with the fonts Windows already has, so a script needs its Windows font. Emoji are drawn in one colour.
 - The bars on the closed notch follow all the sound the PC plays, not only the song, so a video or a notification moves them too. Some players that take the sound device for themselves (exclusive mode) cannot be listened to, and then the bars move to a made-up beat.
 - Weather and prayer times need an internet connection to refresh; the last ones are kept for offline use.
 
