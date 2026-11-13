@@ -144,6 +144,7 @@ impl App {
 
     pub(crate) fn draw(&mut self) {
         theme::set_light(self.light());
+        theme::set_glass(self.settings.look.glassy_controls());
         let frame_start = Instant::now();
         self.glows.set_motion(self.settings.motion.speed(), self.settings.motion.bounce());
         self.glows.begin(frame_start.duration_since(self.pacing.last_draw).as_secs_f64().min(1.0 / 30.0));
@@ -160,57 +161,87 @@ impl App {
         let s = self.ui_scale() as f32;
         let ear = (EAR as f32 * s).round();
         let Some(w) = NonZeroU32::new(full_w.get().saturating_sub(2 * ear as u32)) else { return };
-        let Some(mut pixmap) = Pixmap::new(w.get(), h.get()) else { return };
+        let look = self.settings.look;
+        // The floating pill hangs a little below the top edge; what is on it is drawn below that gap.
+        let gap = (crate::glass::gap(look) as f32 * s).round() as u32;
+        // While a drop hangs below the closed glass notch the window has room for it under the notch.
+        let room = (self.room_below() as f32 * s).round() as u32;
+        let Some(ch) = NonZeroU32::new(h.get().saturating_sub(gap + room)) else { return };
+        let Some(mut pixmap) = Pixmap::new(w.get(), ch.get()) else { return };
         pixmap.fill(Color::TRANSPARENT);
 
         // The notch's body, glow and border only change with its size, the look and the tab's colour. Once it
         // is at rest (fully open or closed) it is drawn once and copied in the following frames.
         let fw = w.get() as f32;
         let open = self.spring.progress.clamp(0.0, 1.0) as f32;
-        let key = (open == 0.0 || open >= 1.0).then(|| BodyKey {
-            size: (w.get(), h.get()),
-            scale: s.to_bits(),
-            light: self.light(),
-            open: open >= 1.0,
-            accent: if open >= 1.0 { self.accent(self.view) } else { [0; 3] },
-        });
-        match (&key, &self.body) {
-            (Some(key), Some((kept, picture))) if key == kept => pixmap.data_mut().copy_from_slice(picture.data()),
-            _ => {
-                self.paint_body(&mut pixmap, s, ear, open);
-                if let Some(key) = key {
-                    self.body = Some((key, pixmap.clone()));
-                }
-            }
-        }
+        // The liquid parts of the outline: the drop while it opens, bubbles, the swelling towards the mouse.
+        let liquid = self.liquid(s, fw, true);
+        let body = self.glass_body(&window, (full_w.get(), h.get()), s, ear, gap as f32, room as f32, open, liquid);
+        // The body ends above the drop running down below it.
+        let body_h = (ch.get() as f32 - liquid.drip).max(1.0);
 
-        // Fade content in over the second half of the expand animation.
-        let alpha = ((self.spring.progress.clamp(0.0, 1.0) - 0.5) * 2.0).clamp(0.0, 1.0) as f32;
+        // Fade the content in as the notch opens, easing in and out so it does not pop in or stop short, and bring it in
+        // from a blur. The same for every look.
+        let p = self.spring.progress.clamp(0.0, 1.0) as f32;
+        let alpha = smoothstep(((p - 0.3) / 0.6).clamp(0.0, 1.0));
         if alpha > 0.0 {
             if self.spring.progress < 0.995 {
-                // While opening or closing the content also grows from slightly smaller, so it seems to
-                // unfold with the notch.
-                if let Some(mut layer) = Pixmap::new(w.get(), h.get()) {
-                    self.draw_content(&mut layer, s, alpha, (w.get(), h.get()));
-                    let k = (0.93 + 0.07 * self.spring.progress.clamp(0.0, 1.0)) as f32;
-                    let at = Transform::from_scale(k, k).post_translate(fw * (1.0 - k) / 2.0, 0.0);
+                // While opening or closing it is laid out at the open size and that picture is shrunk into the notch as
+                // it is, so it grows with the notch, and blurred while it is faint.
+                let (ow, oh) = self.open_size();
+                let (lw, lh) = ((ow as f32 * s).round().max(fw) as u32, (oh as f32 * s).round().max(ch.get() as f32) as u32);
+                if let Some(mut layer) = Pixmap::new(lw, lh) {
+                    self.layout_h.set(Some(lh as f32 / s));
+                    self.draw_content(&mut layer, s, alpha, (lw, lh));
+                    self.layout_h.set(None);
+                    // A strong blur is done on a smaller copy, which is then drawn that much larger.
+                    let r = (1.0 - alpha) * CONTENT_BLUR * s;
+                    let f = if r < 0.5 {
+                        1
+                    } else if r < 6.0 {
+                        2
+                    } else {
+                        4
+                    };
+                    if f > 1
+                        && let Some(small) = gfx::shrink(&layer, f)
+                    {
+                        layer = small;
+                    }
+                    gfx::blur(&mut layer, (r / f as f32).round() as usize);
+                    let (k, f) = ((fw / lw as f32).min(body_h / lh as f32) * (0.94 + 0.06 * p), f as f32);
+                    let at = Transform::from_scale(k * f, k * f).post_translate((fw - lw as f32 * k) / 2.0, 0.0);
                     let paint = PixmapPaint { quality: FilterQuality::Bilinear, ..Default::default() };
                     pixmap.draw_pixmap(0, 0, layer.as_ref(), &paint, at, None);
                 }
             } else {
-                self.draw_content(&mut pixmap, s, alpha, (w.get(), h.get()));
+                self.draw_content(&mut pixmap, s, alpha, (w.get(), ch.get()));
             }
         }
 
         // What the closed notch shows (the clock or eyes, the song, the timer's countdown) and a notice, while closed.
-        let collapsed_alpha = ((1.0 - self.spring.progress.clamp(0.0, 1.0) * 2.0).clamp(0.0, 1.0) * (1.0 - self.notices.t.clamp(0.0, 1.0))) as f32;
-        let notice_alpha = self.notices.t.clamp(0.0, 1.0) as f32 * (1.0 - self.spring.progress.clamp(0.0, 1.0) as f32 * 2.0).clamp(0.0, 1.0);
+        // Eased like the open content, so the clock or the eyes melt away as it opens instead of fading at one rate.
+        let closed_fade = smoothstep((1.0 - p * 2.0).clamp(0.0, 1.0));
+        let ov = smoothstep(self.notices.t.clamp(0.0, 1.0) as f32);
+        let collapsed_alpha = closed_fade * (1.0 - ov);
+        let notice_alpha = ov * closed_fade;
         self.draw_closed_content(&mut pixmap, s, fw, collapsed_alpha, notice_alpha);
 
-        // Put the notch in the middle of the window and add the flares on both sides of its top edge.
-        let Some(mut out) = Pixmap::new(full_w.get(), h.get()) else { return };
-        gfx::blit_over(&mut out, &pixmap, ear as i32, 0);
-        draw_ears(&mut out, ear);
+        // Put what is on the notch in the middle of the window, over its body. While the outline is liquid (a drop
+        // running down, bubbles) what is on it is kept inside the outline.
+        let Some(mut out) = body.or_else(|| Pixmap::new(full_w.get(), h.get())) else { return };
+        if liquid.drip > 0.0 || liquid.bubbles.is_some() {
+            gfx::clip_to(&mut pixmap, &out, ear as i32, gap as i32);
+        }
+        if open > 0.0 {
+            // The open notch casts a soft shadow on what is below it (the floating pill all round, below the gap above
+            // it; the others from the top edge of the screen).
+            let r = (body_h / 2.0).min(30.0 * s);
+            let strength = (open * if self.light() { 70.0 } else { 150.0 }) as u8;
+            let top = if look.floating() { gap as f32 } else { -40.0 * s };
+            gfx::soft_shadow_behind(&mut out, ear, top, fw, gap as f32 + body_h - top, r, 10.0 * s, strength);
+        }
+        gfx::blit_over(&mut out, &pixmap, ear as i32, gap as i32);
 
         let Some(surface) = self.surface.as_mut() else { return };
         surface.resize(full_w, h).ok();
@@ -254,84 +285,111 @@ impl App {
         let full_w = ((lw as f32 + 2.0 * EAR as f32) * s).round().max(1.0) as u32;
         let h = (lh as f32 * s).round().max(1.0) as u32;
         let w = full_w.checked_sub(2 * ear as u32).filter(|w| *w > 0)?;
+        let look = self.settings.look;
+        let gap = (crate::glass::gap(look) as f32 * s).round() as u32;
         let mut pixmap = Pixmap::new(w, h)?;
         pixmap.fill(Color::TRANSPARENT);
-        self.paint_body(&mut pixmap, s, ear, 0.0);
         self.draw_closed_content(&mut pixmap, s, w as f32, (1.0 - ov) as f32, ov as f32);
-        let mut out = Pixmap::new(full_w, h)?;
-        gfx::blit_over(&mut out, &pixmap, ear as i32, 0);
-        draw_ears(&mut out, ear);
+        let mut out = Pixmap::new(full_w, h + gap)?;
+        // Nothing is copied from behind the copies; their glass shows a plain dark (or light) background. The swelling
+        // towards the mouse is only on the notch the mouse is over.
+        let liquid = self.liquid(s, w as f32, false);
+        let g = crate::glass::Glass {
+            look,
+            light: self.light(),
+            backdrop: None,
+            origin: (0.0, 0.0),
+            s,
+            ear,
+            gap: gap as f32,
+            stretch: 0.0,
+            sun: SUN_REST,
+            wash: None,
+            room: 0.0,
+            drop: 0.0,
+            liquid,
+            clear: self.settings.glass_clear as u8,
+        };
+        crate::glass::paint(&mut out, &g);
+        if liquid.bubbles.is_some() {
+            gfx::clip_to(&mut pixmap, &out, ear as i32, gap as i32);
+        }
+        gfx::blit_over(&mut out, &pixmap, ear as i32, gap as i32);
         Some(out)
     }
 
-    /// The notch itself on a blank picture: square top edge, rounded bottom corners, a dark gradient, a faint
-    /// wash of the tab's colour and a hairline border.
-    fn paint_body(&self, pixmap: &mut Pixmap, s: f32, ear: f32, open: f32) {
-        let (w, h) = (pixmap.width(), pixmap.height());
-        let (fw, fh) = (w as f32, h as f32);
-        let r = (fh / 2.0).min(28.0 * s);
-        let mut pb = PathBuilder::new();
-        pb.move_to(0.0, 0.0);
-        pb.line_to(fw, 0.0);
-        pb.line_to(fw, fh - r);
-        pb.quad_to(fw, fh, fw - r, fh);
-        pb.line_to(r, fh);
-        pb.quad_to(0.0, fh, 0.0, fh - r);
-        pb.close();
-        if let Some(path) = pb.finish() {
-            let body = theme::body();
-            let stops = vec![
-                tiny_skia::GradientStop::new(0.0, Color::from_rgba8(body[0][0], body[0][1], body[0][2], 255)),
-                tiny_skia::GradientStop::new(0.5, Color::from_rgba8(body[1][0], body[1][1], body[1][2], 255)),
-                tiny_skia::GradientStop::new(1.0, Color::from_rgba8(body[2][0], body[2][1], body[2][2], 255)),
-            ];
-            let shader =
-                tiny_skia::LinearGradient::new(tiny_skia::Point::from_xy(0.0, 0.0), tiny_skia::Point::from_xy(0.0, fh), stops, tiny_skia::SpreadMode::Pad, Transform::identity());
-            let mut paint = Paint::default();
-            match shader {
-                Some(shader) => paint.shader = shader,
-                None => paint.set_color_rgba8(body[0][0], body[0][1], body[0][2], 255),
-            }
-            paint.anti_alias = true;
-            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
-
-            // A faint wash of the tab's colour rising from the bottom edge.
-            if open > 0.0 {
-                let mask = gfx::mask_of(w, h, &path);
-                let [ar, ag, ab] = self.accent(self.view);
-                gfx::glow(pixmap, fw / 2.0, fh * 1.05, fw * 0.62, [ar, ag, ab, (open * 40.0) as u8], mask.as_ref());
-            }
+    /// The glass body of the notch for a window of `size` pixels (flares included), kept while nothing about it changes.
+    fn glass_body(&mut self, window: &Window, size: (u32, u32), s: f32, ear: f32, gap: f32, room: f32, open: f32, liquid: crate::glass::Liquid) -> Option<Pixmap> {
+        let look = self.settings.look;
+        let backdrop = if crate::glass::wants_backdrop(look) { self.backdrop.as_ref().and_then(|b| b.latest()) } else { None };
+        let origin = window.outer_position().map_or((0, 0), |p| (p.x, p.y));
+        let (sun, bucket) = self.sun();
+        let accent = self.accent(self.view);
+        // Kept at rest only: open or closed, no drop hanging, nothing running down or swelling.
+        let still = (open == 0.0 || open >= 1.0) && self.drop_room() == 0.0 && liquid.drip == 0.0 && liquid.bulge.is_none();
+        let key = still.then(|| BodyKey {
+            size,
+            scale: s.to_bits(),
+            light: self.light(),
+            open: open >= 1.0,
+            accent: if open >= 1.0 { accent } else { [0; 3] },
+            look,
+            backdrop: backdrop.as_ref().map_or(0, |b| b.version),
+            sun: bucket,
+            origin,
+            liquid,
+            room: room.to_bits(),
+        });
+        if let (Some(key), Some((kept, picture))) = (&key, &self.body)
+            && key == kept
+        {
+            return Some(picture.clone());
         }
-        // Border along the sides and bottom; the top edge is flush with the screen.
-        let hw = 0.5 * s;
-        let mut pb = PathBuilder::new();
-        pb.move_to(hw, 0.0);
-        pb.line_to(hw, fh - r);
-        pb.quad_to(hw, fh - hw, r, fh - hw);
-        pb.line_to(fw - r, fh - hw);
-        pb.quad_to(fw - hw, fh - hw, fw - hw, fh - r);
-        pb.line_to(fw - hw, 0.0);
-        if let Some(path) = pb.finish() {
-            let mut paint = Paint::default();
-            let edge = theme::border();
-            paint.set_color_rgba8(edge[0], edge[1], edge[2], edge[3]);
-            // The line fades in below the flares, so it does not show beside them.
-            let (clear, solid) = (Color::from_rgba8(edge[0], edge[1], edge[2], 0), Color::from_rgba8(edge[0], edge[1], edge[2], edge[3]));
-            if let Some(shader) = tiny_skia::LinearGradient::new(
-                tiny_skia::Point::from_xy(0.0, ear),
-                tiny_skia::Point::from_xy(0.0, ear * 3.0),
-                vec![tiny_skia::GradientStop::new(0.0, clear), tiny_skia::GradientStop::new(1.0, solid)],
-                tiny_skia::SpreadMode::Pad,
-                Transform::identity(),
-            ) {
-                paint.shader = shader;
-            }
-            paint.anti_alias = true;
-            let stroke = Stroke { width: 1.0 * s, ..Default::default() };
-            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        let mut pm = Pixmap::new(size.0, size.1)?;
+        // While the notch moves fast its corners grow rounder, like a liquid.
+        let stretch = (self.spring.progress_v.abs() / 10.0).min(1.0) as f32;
+        let g = crate::glass::Glass {
+            look,
+            light: self.light(),
+            backdrop: backdrop.as_deref(),
+            origin: (origin.0 as f32, origin.1 as f32),
+            s,
+            ear,
+            gap,
+            stretch,
+            sun,
+            // The tab's colour rises in the glass, not in a notch with no glass.
+            wash: (open > 0.0 && look.glassy_controls()).then_some((accent, open)),
+            room,
+            drop: (self.drop_hang() as f32 * s).min((room - 1.0).max(0.0)),
+            liquid,
+            clear: self.settings.glass_clear as u8,
+        };
+        crate::glass::paint(&mut pm, &g);
+        if let Some(key) = key {
+            self.body = Some((key, pm.clone()));
         }
+        Some(pm)
     }
 
+    /// Where the light on the glass comes from, and that direction rounded to one of 64 (which the kept body is
+    /// keyed by): towards the mouse while it is over the open notch, else from the lower left. It glides round.
+    fn sun(&self) -> ((f32, f32), i32) {
+        let s = self.ui_scale();
+        let goal = if self.pointer.hovered && self.spring.progress > 0.5 {
+            let w = self.window.as_ref().map_or(1.0, |w| w.inner_size().width as f64) - 2.0 * EAR * s;
+            let h = self.window_h() as f64 * s;
+            (self.pointer.cursor.0 - w / 2.0, self.pointer.cursor.1 - h / 2.0)
+        } else {
+            (SUN_REST.0 as f64, SUN_REST.1 as f64)
+        };
+        let l = (goal.0 * goal.0 + goal.1 * goal.1).sqrt().max(1e-6);
+        let x = self.glows.follow(KEY_SUN, goal.0 / l, 14.0, 1.0);
+        let y = self.glows.follow(KEY_SUN + 1, goal.1 / l, 14.0, 1.0);
+        let bucket = ((y.atan2(x) / std::f64::consts::TAU * 64.0).round() as i32).rem_euclid(64);
+        let angle = bucket as f64 / 64.0 * std::f64::consts::TAU;
+        ((angle.cos() as f32, angle.sin() as f32), bucket)
+    }
     /// The tab bar and the open view. While the view is changing, the old one slides out and the new one
     /// slides in, towards the side of the tab it is on.
     fn draw_content(&self, pm: &mut Pixmap, s: f32, alpha: f32, size: (u32, u32)) {
@@ -396,6 +454,13 @@ impl App {
 }
 
 /// What the notch's body depends on: when none of it changed, the picture of it can be reused.
+/// How far the content is blurred when it starts to come in, in logical pixels.
+const CONTENT_BLUR: f32 = 10.0;
+
+fn smoothstep(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
 #[derive(PartialEq)]
 pub(crate) struct BodyKey {
     size: (u32, u32),
@@ -403,7 +468,20 @@ pub(crate) struct BodyKey {
     light: bool,
     open: bool,
     accent: [u8; 3],
+    look: NotchLook,
+    /// For the glass: which copy of what is behind it, where the light comes from, and where the window is.
+    backdrop: u64,
+    sun: i32,
+    origin: (i32, i32),
+    liquid: crate::glass::Liquid,
+    room: u32,
 }
+
+/// Where the light on the glass comes from while the mouse is not over the notch: the lower left.
+const SUN_REST: (f32, f32) = (-0.75, 0.66);
+
+/// The glows that make the light on the glass glide round (two in a row).
+const KEY_SUN: u64 = 0x6C69_6768_7400_0001;
 
 #[cfg(test)]
 mod paste_tests {

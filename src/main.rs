@@ -9,6 +9,7 @@ mod dragdrop;
 mod edge;
 mod editor;
 mod gfx;
+mod glass;
 mod hotkey;
 mod icon;
 mod localtime;
@@ -61,7 +62,7 @@ use media::{Command, MediaHandle, MediaState};
 use motion::{Glows, spring};
 use panel::Panel;
 use presence::Presence;
-use settings::{EyeStyle, Settings, ThemeMode};
+use settings::{EyeStyle, NotchLook, Settings, ThemeMode};
 use shelf::{COLS, ROWS, Shelf};
 use timer::{Timer, Unit};
 use todo::Todo;
@@ -126,6 +127,8 @@ pub enum UserEvent {
     Place(Result<weather::Place, weather::SearchError>),
     /// The place "Detect my location" found, and how well.
     Located(location::Found),
+    /// A new copy of what is behind the notch, for the glass looks.
+    Backdrop,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -207,6 +210,11 @@ struct App {
     pacing: ui::Pacing,
     /// The open notch's background (body, glow and border), kept while nothing about it changes.
     body: Option<(ui::BodyKey, Pixmap)>,
+    /// While the notch draws what is in it at its full open size (to shrink it into the growing notch), the
+    /// height in logical pixels to lay it out for, instead of the window's.
+    layout_h: std::cell::Cell<Option<f32>>,
+    /// The thread that copies what is behind the notch, for the glass looks (`glass.rs`); started with the window.
+    backdrop: Option<glass::Watcher>,
     /// Windows is using its light theme (apps), as last reported by the system.
     system_light: bool,
     /// The settings window, while it is open.
@@ -283,6 +291,8 @@ impl App {
             glows: Glows::default(),
             pacing: ui::Pacing::default(),
             body: None,
+            layout_h: std::cell::Cell::new(None),
+            backdrop: None,
             system_light: false,
             panel: None,
             mirrors: ui::Mirrors::default(),

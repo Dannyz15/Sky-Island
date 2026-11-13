@@ -7,7 +7,13 @@ use crate::*;
 pub(crate) fn draw_chip(pm: &mut Pixmap, font: &Font, r: (f32, f32, f32, f32), label: &str, on: bool, hot: f32, accent: [u8; 3], s: f32, alpha: f32) {
     let (x, y, w, h) = (r.0 * s, r.1 * s, r.2 * s, r.3 * s);
     let a = (alpha * 255.0) as u8;
-    if on {
+    if theme::is_glass() {
+        if on {
+            gfx::glass_piece(pm, x, y, w, h, h / 2.0, alpha, Some(accent), s);
+        } else if hot > 0.01 {
+            gfx::glass_piece(pm, x, y, w, h, h / 2.0, alpha * hot, None, s);
+        }
+    } else if on {
         gfx::gradient_rounded(pm, x, y, w, h, h / 2.0, [accent[0], accent[1], accent[2], (alpha * 70.0) as u8], [accent[0], accent[1], accent[2], (alpha * 34.0) as u8], false);
         gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], (alpha * 90.0) as u8]);
     } else if hot > 0.01 {
@@ -20,7 +26,12 @@ pub(crate) fn draw_chip(pm: &mut Pixmap, font: &Font, r: (f32, f32, f32, f32), l
 /// A small round button, brighter under the mouse and dimmed when it cannot be used.
 pub(crate) fn draw_round_button(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, hot: f32, enabled: bool, alpha: f32) {
     let base = if !enabled { 12.0 } else { pick(44.0, 26.0, hot) };
-    fill_circle(pm, cx, cy, r, [255, 255, 255, (alpha * base) as u8]);
+    if theme::is_glass() {
+        // A bead of glass; `r` is in pixels, and its rim is about a pixel wide at any scale.
+        gfx::glass_piece(pm, cx - r, cy - r, r * 2.0, r * 2.0, r, alpha * base / 26.0, None, (r / 12.0).max(1.0));
+    } else {
+        fill_circle(pm, cx, cy, r, [255, 255, 255, (alpha * base) as u8]);
+    }
 }
 
 /// The big round start / add button: a gradient in the tab's colour with a soft glow.
@@ -30,6 +41,12 @@ pub(crate) fn draw_big_button(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, hot: f3
     gfx::glow(pm, cx, cy, r * 2.0, [rgb[0], rgb[1], rgb[2], (alpha * pick(90.0, 56.0, hot)) as u8], None);
     let r = pick(r + 1.2 * (r / 18.0), r, hot);
     gfx::gradient_circle(pm, cx, cy, r, gfx::mix(accent, [255, 255, 255, a], 0.3), accent);
+    if theme::is_glass() {
+        // A drop of coloured glass: a shine across its top and a bright rim.
+        let k = r / 18.0;
+        gfx::gradient_rounded(pm, cx - r * 0.62, cy - r * 0.9, r * 1.24, r * 0.8, r * 0.4, [255, 255, 255, (alpha * 120.0) as u8], [255, 255, 255, 0], false);
+        gfx::glass_rim(pm, cx - r, cy - r, r * 2.0, r * 2.0, r, 1.2 * k, alpha * 1.4);
+    }
 }
 
 /// Water inside a circle, filled to `frac` with two soft waves on top.
@@ -108,6 +125,13 @@ pub(crate) fn draw_switch(pm: &mut Pixmap, x: f32, y: f32, s: f32, on: f32, a: u
 /// A rounded card: a soft gradient with a hairline border, outlined in the accent colour when `hot`.
 pub(crate) fn draw_card(pm: &mut Pixmap, r: (f32, f32, f32, f32), radius: f32, s: f32, alpha: f32, hot: f32, accent: [u8; 3]) {
     let (x, y, w, h) = (r.0 * s, r.1 * s, r.2 * s, r.3 * s);
+    if theme::is_glass() {
+        gfx::glass_piece(pm, x, y, w, h, radius * s, alpha * pick(1.15, 0.85, hot), None, s);
+        if hot > 0.01 {
+            gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, radius * s, s, [accent[0], accent[1], accent[2], (alpha * 110.0 * hot) as u8]);
+        }
+        return;
+    }
     let (top, bottom) = (pick(30.0, 20.0, hot), pick(16.0, 9.0, hot));
     gfx::gradient_rounded(pm, x, y, w, h, radius * s, [255, 255, 255, (alpha * top) as u8], [255, 255, 255, (alpha * bottom) as u8], false);
     let edge = pick([accent[0], accent[1], accent[2], (alpha * 110.0) as u8], [255, 255, 255, (alpha * 16.0) as u8], hot);

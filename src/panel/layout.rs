@@ -29,6 +29,10 @@ pub(crate) enum Toggle {
     ClosedMusic,
     ClosedBars,
     ClosedSpin,
+    LiquidDrip,
+    LiquidBubbles,
+    LiquidBulge,
+    LiquidJelly,
     ClosedEdge,
     ClosedSound,
     LyricsOnline,
@@ -60,6 +64,9 @@ pub(crate) enum Toggle {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Seg {
     Theme,
+    Look,
+    Glass,
+    LiquidOn,
     Motion,
     Size,
     Open,
@@ -77,6 +84,8 @@ pub(super) enum Slide {
     Volume,
     AlarmEvery,
     AlarmFor,
+    GlassClear,
+    GlassFrost,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -137,6 +146,8 @@ pub(crate) enum Page {
     /// How the notch opens, hides and which screen it is on (called Behaviour in the sidebar, under Notch).
     Notch,
     ClosedNotch,
+    /// The liquid animation's parts.
+    Liquid,
     Tabs,
     Music,
     /// Weather and Prayer: the city they use and their own settings.
@@ -150,12 +161,13 @@ pub(crate) enum Page {
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 12] = [
+    pub(super) const ALL: [Page; 13] = [
         Page::General,
         Page::Appearance,
         Page::Notices,
         Page::Notch,
         Page::ClosedNotch,
+        Page::Liquid,
         Page::Tabs,
         Page::Music,
         Page::Location,
@@ -176,6 +188,7 @@ impl Page {
             Page::Notices => "Notices",
             Page::Notch => "Behaviour",
             Page::ClosedNotch => "Closed notch",
+            Page::Liquid => "Liquid",
             Page::Tabs => "Tabs",
             Page::Music => "Music",
             Page::Location => "Weather & Prayer",
@@ -193,6 +206,7 @@ impl Page {
             Page::Notices => "Choose which changes pop up on the notch.",
             Page::Notch => "How the notch opens and hides, and which screen it is on.",
             Page::ClosedNotch => "What the closed notch shows: the clock, the music and the eyes.",
+            Page::Liquid => "How the notch moves like a liquid: drops, bubbles and wobbles.",
             Page::Tabs => "Click a tab to switch it on or off. The notch always keeps at least one.",
             Page::Music => "The lyrics of what plays, and where they come from.",
             Page::Location => "Your city, the weather and the prayer times.",
@@ -220,6 +234,7 @@ impl Page {
             Page::Notices => [56, 176, 240],
             Page::Notch => [96, 110, 255],
             Page::ClosedNotch => [230, 96, 200],
+            Page::Liquid => [40, 190, 220],
             Page::Tabs => [255, 176, 64],
             Page::Music => [255, 82, 124],
             Page::Location => [64, 196, 124],
@@ -283,7 +298,17 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
             ),
         ],
         Page::Appearance => vec![
-            ("Look", vec![("Theme", "Dark, light, or the same as Windows", S(Seg::Theme), ""), ("Animation", "How lively the movement is", S(Seg::Motion), "")]),
+            (
+                "Look",
+                vec![
+                    ("Notch look", "Joined to the top of the screen, or a pill floating below it", S(Seg::Look), ""),
+                    ("Glass", "No glass, liquid glass that shows what is behind it (clear or smoky), or black glass", S(Seg::Glass), ""),
+                    ("Transparency", "How much the clear and smoky glass lets through", Slider(Slide::GlassClear), ""),
+                    ("Frost", "How blurred what shows through the glass is", Slider(Slide::GlassFrost), ""),
+                    ("Theme", "Dark, light, or the same as Windows", S(Seg::Theme), ""),
+                    ("Animation", "How lively the movement is", S(Seg::Motion), ""),
+                ],
+            ),
             (
                 "Size",
                 vec![
@@ -330,6 +355,16 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
             ),
             ("Screen", vec![("Show on", "Click a screen. All follows your mouse; Every keeps a closed notch on each screen", ScreenMap, "")]),
         ],
+        Page::Liquid => vec![(
+            "Effects",
+            vec![
+                ("Liquid on", "Every look, or only while the notch is glass", S(Seg::LiquidOn), ""),
+                ("Drip open", "Opening starts as a drop running down, which spreads into the open notch", T(Toggle::LiquidDrip), ""),
+                ("Split bubbles", "The music and notices pull out of the closed notch as round bubbles", T(Toggle::LiquidBubbles), ""),
+                ("Mouse bulge", "The closed notch swells towards the mouse and wobbles back", T(Toggle::LiquidBulge), ""),
+                ("Jelly open and close", "It widens first, then drops down, and wobbles before it settles", T(Toggle::LiquidJelly), ""),
+            ],
+        )],
         Page::ClosedNotch => vec![
             ("Clock", vec![("Show clock", "The time on the closed notch", T(Toggle::ShowClock), ""), ("24-hour clock", "13:00 instead of 1:00 PM", T(Toggle::Clock24), "")]),
             (

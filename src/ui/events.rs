@@ -40,13 +40,15 @@ pub(crate) struct Pointer {
     /// When the cursor entering/leaving takes effect (see `hover_open`, `hover_close`).
     pub(crate) enter_at: Option<Instant>,
     pub(crate) leave_at: Option<Instant>,
+    /// Whether the mouse is over the window right now (also while the notch waits for a click to open).
+    pub(crate) inside: bool,
     /// When the mouse wheel last changed the tab, so one flick moves one tab.
     pub(crate) last_wheel_tab: Instant,
 }
 
 impl Default for Pointer {
     fn default() -> Self {
-        Self { cursor: (0.0, 0.0), hovered: false, enter_at: None, leave_at: None, last_wheel_tab: Instant::now() }
+        Self { cursor: (0.0, 0.0), hovered: false, enter_at: None, leave_at: None, inside: false, last_wheel_tab: Instant::now() }
     }
 }
 
@@ -72,6 +74,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.window = Some(window);
         self.play.handle = Some(media::spawn(self.proxy.clone()));
         sys::spawn_all(self.proxy.clone());
+        self.backdrop = Some(crate::glass::Watcher::spawn(self.proxy.clone()));
         self.make_non_activating();
         self.tray = Tray::build(&self.proxy);
         sys::install_lock_hook(self.proxy.clone());
@@ -145,6 +148,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::Lyrics { key, fetched, online } => self.on_lyrics(key, fetched, online),
             UserEvent::Media(state) => self.on_media(state),
+            UserEvent::Backdrop => self.on_backdrop(),
         }
     }
 

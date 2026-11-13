@@ -195,12 +195,12 @@ fn every_setting_is_on_exactly_one_page() {
             }
         }
     }
-    assert_eq!(toggles.len(), 36, "all thirty-six switches: {toggles:?}");
+    assert_eq!(toggles.len(), 40, "all forty switches: {toggles:?}");
     for (i, a) in toggles.iter().enumerate() {
         assert!(!toggles[i + 1..].contains(a), "{a:?} is on two pages");
     }
-    assert_eq!(segs.len(), 9);
-    assert_eq!(slides.len(), 5);
+    assert_eq!(segs.len(), 12);
+    assert_eq!(slides.len(), 7);
     assert_eq!(picks, 1);
 }
 
@@ -254,6 +254,10 @@ fn slider_text_is_readable() {
 #[test]
 fn the_choice_lists_match_the_settings() {
     assert_eq!(THEME_NAMES.len(), ThemeMode::ALL.len());
+    assert_eq!(LOOK_NAMES.len(), NotchShape::ALL.len());
+    assert_eq!(GLASS_NAMES.len(), NotchGlass::ALL.len());
+    assert_eq!(seg_weights(Seg::Glass).len(), GLASS_NAMES.len());
+    assert_eq!(seg_weights(Seg::Look).len(), LOOK_NAMES.len());
     assert_eq!(MOTION_NAMES.len(), Motion::ALL.len());
     assert_eq!(seg_weights(Seg::Theme).len(), THEME_NAMES.len());
     assert_eq!(seg_weights(Seg::Motion).len(), MOTION_NAMES.len());

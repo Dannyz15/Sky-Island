@@ -63,6 +63,41 @@ pub fn stroke_rounded(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, w
     pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 }
 
+/// The rim of a piece of glass: bright along its top edge, fading down its sides, with a fainter light along the
+/// bottom where light comes back through it. `k` scales how strongly it shows.
+pub fn glass_rim(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, width: f32, k: f32) {
+    let Some(path) = rounded_path(x + width / 2.0, y + width / 2.0, w - width, h - width, (r - width / 2.0).max(0.0)) else { return };
+    let a = |v: f32| (v * k).clamp(0.0, 255.0) as u8;
+    let stops = vec![
+        GradientStop::new(0.0, color([255, 255, 255, a(150.0)])),
+        GradientStop::new(0.35, color([255, 255, 255, a(34.0)])),
+        GradientStop::new(0.75, color([255, 255, 255, a(12.0)])),
+        GradientStop::new(1.0, color([255, 255, 255, a(60.0)])),
+    ];
+    let Some(shader) = LinearGradient::new(Point::from_xy(x, y), Point::from_xy(x, y + h), stops, SpreadMode::Pad, Transform::identity()) else { return };
+    let paint = Paint { shader, anti_alias: true, ..Default::default() };
+    pm.stroke_path(&path, &paint, &Stroke { width, ..Default::default() }, Transform::identity(), None);
+}
+
+/// A small piece of liquid glass for a control (with the glass looks of the notch): a faint body, lighter at the
+/// top, a soft shine across its upper part and a bright rim. `k` scales how strongly it shows (hover, fade), `tint`
+/// colours it (a chosen option, a lit button); `s` is the scale.
+pub fn glass_piece(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, k: f32, tint: Option<[u8; 3]>, s: f32) {
+    if k <= 0.0 || w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let a = |v: f32| (v * k).clamp(0.0, 255.0) as u8;
+    match tint {
+        Some([tr, tg, tb]) => gradient_rounded(pm, x, y, w, h, r, mix([tr, tg, tb, a(96.0)], [255, 255, 255, a(96.0)], 0.18), [tr, tg, tb, a(44.0)], false),
+        None => gradient_rounded(pm, x, y, w, h, r, [255, 255, 255, a(24.0)], [255, 255, 255, a(7.0)], false),
+    }
+    // The shine: a soft light across the upper part, inset from the round ends.
+    let inset = (r * 0.45).min(w / 4.0);
+    let sh = h * 0.46;
+    gradient_rounded(pm, x + inset, y + 1.0 * s, w - 2.0 * inset, sh, (r * 0.8).min(sh / 2.0), [255, 255, 255, a(30.0)], [255, 255, 255, 0], false);
+    glass_rim(pm, x, y, w, h, r, 1.0 * s, k);
+}
+
 /// Stroke a clockwise arc from 12 o'clock covering `frac` of a circle, shaded from `top` at the top
 /// of the circle to `bottom` at its foot.
 pub fn stroke_arc_gradient(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, width: f32, frac: f32, top: [u8; 4], bottom: [u8; 4]) {
@@ -126,6 +161,15 @@ pub fn fill_through(pm: &mut Pixmap, c: [u8; 3], mask: &Mask) {
 
 /// A soft shadow below a rounded rectangle, built from a few growing translucent layers.
 pub fn soft_shadow(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spread: f32, strength: u8) {
+    shadow_layers(pm, x, y, w, h, r, spread, strength, tiny_skia::BlendMode::SourceOver);
+}
+
+/// The same shadow, drawn behind what is already on `pm` (so it shows only where that is clear or see-through).
+pub fn soft_shadow_behind(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spread: f32, strength: u8) {
+    shadow_layers(pm, x, y, w, h, r, spread, strength, tiny_skia::BlendMode::DestinationOver);
+}
+
+fn shadow_layers(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spread: f32, strength: u8, blend: tiny_skia::BlendMode) {
     const LAYERS: u32 = 6;
     for i in 0..LAYERS {
         let t = (i + 1) as f32 / LAYERS as f32;
@@ -139,8 +183,82 @@ pub fn soft_shadow(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spre
             let mut paint = Paint::default();
             paint.set_color_rgba8(0, 0, 0, alpha);
             paint.anti_alias = true;
+            paint.blend_mode = blend;
             pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
         }
+    }
+}
+
+/// Keep only what of `pm` lies inside the shape drawn on `shape` (by its alpha), `pm` lying at (`dx`, `dy`) on it.
+pub fn clip_to(pm: &mut Pixmap, shape: &Pixmap, dx: i32, dy: i32) {
+    let (w, sw, sh) = (pm.width() as i32, shape.width() as i32, shape.height() as i32);
+    let mask = shape.pixels();
+    for (i, px) in pm.pixels_mut().iter_mut().enumerate() {
+        if px.alpha() == 0 {
+            continue;
+        }
+        let (x, y) = (i as i32 % w + dx, i as i32 / w + dy);
+        let m = if x >= 0 && y >= 0 && x < sw && y < sh { mask[(y * sw + x) as usize].alpha() as u32 } else { 0 };
+        if m < 255 {
+            let k = |v: u8| ((v as u32 * m + 127) / 255) as u8;
+            *px = tiny_skia::PremultipliedColorU8::from_rgba(k(px.red()), k(px.green()), k(px.blue()), k(px.alpha())).unwrap_or(tiny_skia::PremultipliedColorU8::TRANSPARENT);
+        }
+    }
+}
+
+/// Blur a picture in place by about `r` pixels (two box passes each way, close to a gaussian). Works on the
+/// premultiplied pixels directly, so clear areas stay clear. Used for the open notch's content coming in from a blur.
+pub fn blur(pm: &mut Pixmap, r: usize) {
+    let (w, h) = (pm.width() as usize, pm.height() as usize);
+    if r == 0 || w == 0 || h == 0 {
+        return;
+    }
+    // Two passes of a box half as wide come close to one soft blur of `r`.
+    let rad = r.div_ceil(2);
+    let data = pm.data_mut();
+    let mut line: Vec<[u32; 4]> = Vec::with_capacity(w.max(h));
+    for _ in 0..2 {
+        for y in 0..h {
+            box_pass(data, &mut line, y * w * 4, 4, w, rad);
+        }
+        for x in 0..w {
+            box_pass(data, &mut line, x * 4, w * 4, h, rad);
+        }
+    }
+}
+
+/// A copy of a picture `f` times smaller each way (`f` = 1 copies it). Blurring a smaller copy and drawing it back
+/// `f` times larger looks the same as blurring the picture, and is many times quicker.
+pub fn shrink(pm: &Pixmap, f: u32) -> Option<Pixmap> {
+    let f = f.max(1);
+    let mut small = Pixmap::new(pm.width().div_ceil(f), pm.height().div_ceil(f))?;
+    let k = 1.0 / f as f32;
+    let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+    small.draw_pixmap(0, 0, pm.as_ref(), &paint, Transform::from_scale(k, k), None);
+    Some(small)
+}
+
+/// One box blur of radius `r` along a line of `n` pixels starting at byte `start`, `step` bytes apart; the ends are
+/// repeated past the edge.
+fn box_pass(data: &mut [u8], line: &mut Vec<[u32; 4]>, start: usize, step: usize, n: usize, r: usize) {
+    line.clear();
+    line.extend((0..n).map(|i| {
+        let o = start + i * step;
+        [data[o] as u32, data[o + 1] as u32, data[o + 2] as u32, data[o + 3] as u32]
+    }));
+    let width = (2 * r + 1) as u32;
+    let last = n as isize - 1;
+    let at = |i: isize| line[i.clamp(0, last) as usize];
+    let mut sum = [0u32; 4];
+    for i in -(r as isize)..=(r as isize) {
+        let p = at(i);
+        (0..4).for_each(|c| sum[c] += p[c]);
+    }
+    for i in 0..n as isize {
+        let o = start + i as usize * step;
+        (0..4).for_each(|c| data[o + c] = (sum[c] / width) as u8);
+        let (add, sub) = (at(i + r as isize + 1), at(i - r as isize));
+        (0..4).for_each(|c| sum[c] = sum[c] + add[c] - sub[c]);
     }
 }
 
@@ -286,6 +404,56 @@ mod tests {
             let worst = quick.data().iter().zip(slow.data()).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
             assert!(worst <= 2, "offset ({dx}, {dy}): the pictures differ by {worst}");
         }
+    }
+
+    #[test]
+    fn blur_keeps_clear_clear_and_solid_solid_and_softens_an_edge() {
+        let mut clear = Pixmap::new(30, 20).unwrap();
+        blur(&mut clear, 6);
+        assert!(clear.data().iter().all(|&b| b == 0));
+        let mut solid = Pixmap::new(30, 20).unwrap();
+        solid.fill(Color::from_rgba8(200, 100, 50, 255));
+        let before = solid.data().to_vec();
+        blur(&mut solid, 6);
+        assert_eq!(solid.data(), &before[..]);
+        // Left half white, right half clear: after the blur the edge is a ramp, and every pixel stays premultiplied.
+        let mut edge = Pixmap::new(40, 4).unwrap();
+        for y in 0..4 {
+            for x in 0..20 {
+                edge.pixels_mut()[y * 40 + x] = tiny_skia::PremultipliedColorU8::from_rgba(255, 255, 255, 255).unwrap();
+            }
+        }
+        blur(&mut edge, 6);
+        let a: Vec<u8> = (0..40).map(|x| edge.pixels()[x].alpha()).collect();
+        assert_eq!(a[0], 255);
+        assert_eq!(a[39], 0);
+        assert!(a[19] > 100 && a[19] < 255 && a[20] > 0 && a[20] < 160, "{a:?}");
+        assert!(a.windows(2).all(|w| w[0] >= w[1]), "{a:?}");
+        assert!(edge.pixels().iter().all(|p| p.red() <= p.alpha()));
+    }
+
+    #[test]
+    #[ignore = "a timing, not a check: cargo test --release -- --ignored time_the_blur --nocapture"]
+    fn time_the_blur() {
+        // The open notch's content at 150 %: 420 x 176 logical pixels.
+        let mut pm = patterned(630, 264, 5);
+        let start = std::time::Instant::now();
+        for _ in 0..20 {
+            blur(&mut pm, 15);
+        }
+        println!("blur: {:.2} ms", start.elapsed().as_secs_f64() * 1000.0 / 20.0);
+        let start = std::time::Instant::now();
+        for _ in 0..20 {
+            let mut small = shrink(&pm, 4).unwrap();
+            blur(&mut small, 4);
+        }
+        println!("shrunk 4x and blurred: {:.2} ms", start.elapsed().as_secs_f64() * 1000.0 / 20.0);
+        let start = std::time::Instant::now();
+        for _ in 0..20 {
+            let mut small = shrink(&pm, 2).unwrap();
+            blur(&mut small, 4);
+        }
+        println!("shrunk 2x and blurred: {:.2} ms", start.elapsed().as_secs_f64() * 1000.0 / 20.0);
     }
 
     #[test]

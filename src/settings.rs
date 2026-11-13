@@ -38,6 +38,121 @@ impl ThemeMode {
     }
 }
 
+/// The notch's shape (Settings > Appearance > Notch look).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NotchShape {
+    /// Joined to the top edge of the screen, with flares where it meets it.
+    Classic,
+    /// A pill a little below the top edge of the screen.
+    Floating,
+}
+
+impl NotchShape {
+    pub const ALL: [NotchShape; 2] = [NotchShape::Classic, NotchShape::Floating];
+
+    fn name(self) -> &'static str {
+        match self {
+            NotchShape::Classic => "classic",
+            NotchShape::Floating => "floating",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.name() == name)
+    }
+}
+
+/// What the notch is made of (Settings > Appearance > Glass).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NotchGlass {
+    /// No glass: plain black (nearly white in the light theme).
+    Off,
+    /// Clear liquid glass: what is behind it shows through, blurred.
+    Clear,
+    /// The same glass, darker.
+    Smoky,
+    /// Black glass: nothing shows through, the glass's light on its edge.
+    Black,
+}
+
+impl NotchGlass {
+    pub const ALL: [NotchGlass; 4] = [NotchGlass::Off, NotchGlass::Clear, NotchGlass::Smoky, NotchGlass::Black];
+
+    fn name(self) -> &'static str {
+        match self {
+            NotchGlass::Off => "off",
+            NotchGlass::Clear => "clear",
+            NotchGlass::Smoky => "smoky",
+            NotchGlass::Black => "black",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.name() == name)
+    }
+}
+
+/// How the notch is drawn: its shape and what it is made of together (see `glass.rs`). Worked out from the two
+/// settings, not saved itself.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NotchLook {
+    /// Plain black like a laptop's camera notch: the corners round out as it opens, the content comes in from a blur,
+    /// and it casts a soft shadow while open.
+    Classic,
+    /// Clear liquid glass: what is behind it shows through, blurred.
+    Clear,
+    /// The same glass, darker.
+    Smoky,
+    /// Black like the classic notch, with the glass's light on its edge; nothing shows through.
+    Black,
+    /// A pill of clear glass a little below the top edge of the screen.
+    Floating,
+    /// The floating pill in smoky glass.
+    FloatingSmoky,
+    /// The floating pill in black glass.
+    FloatingBlack,
+    /// The floating pill with no glass: plain black (nearly white in the light theme).
+    FloatingSolid,
+}
+
+impl NotchLook {
+    /// The look for a shape and a glass.
+    pub fn of(shape: NotchShape, glass: NotchGlass) -> Self {
+        match (shape, glass) {
+            (NotchShape::Classic, NotchGlass::Off) => NotchLook::Classic,
+            (NotchShape::Classic, NotchGlass::Clear) => NotchLook::Clear,
+            (NotchShape::Classic, NotchGlass::Smoky) => NotchLook::Smoky,
+            (NotchShape::Classic, NotchGlass::Black) => NotchLook::Black,
+            (NotchShape::Floating, NotchGlass::Off) => NotchLook::FloatingSolid,
+            (NotchShape::Floating, NotchGlass::Clear) => NotchLook::Floating,
+            (NotchShape::Floating, NotchGlass::Smoky) => NotchLook::FloatingSmoky,
+            (NotchShape::Floating, NotchGlass::Black) => NotchLook::FloatingBlack,
+        }
+    }
+
+    /// The shape and glass a look saved by an earlier test build (one "look" for both) stands for.
+    fn from_old_name(name: &str) -> Option<(NotchShape, NotchGlass)> {
+        Some(match name {
+            "classic" => (NotchShape::Classic, NotchGlass::Off),
+            "clear" => (NotchShape::Classic, NotchGlass::Clear),
+            "smoky" => (NotchShape::Classic, NotchGlass::Smoky),
+            "black" => (NotchShape::Classic, NotchGlass::Black),
+            "floating" => (NotchShape::Floating, NotchGlass::Clear),
+            _ => return None,
+        })
+    }
+
+    /// Whether it is the floating pill.
+    pub fn floating(self) -> bool {
+        matches!(self, NotchLook::Floating | NotchLook::FloatingSmoky | NotchLook::FloatingBlack | NotchLook::FloatingSolid)
+    }
+
+    /// Whether the controls inside get the glass's look (not for the notches with no glass).
+    pub fn glassy_controls(self) -> bool {
+        !matches!(self, NotchLook::Classic | NotchLook::FloatingSolid)
+    }
+}
+
 /// How lively the animations are.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Motion {
@@ -281,6 +396,10 @@ pub const VOLUME: Range = Range { min: 10, max: 100, step: 10 };
 pub const ALARM_EVERY: Range = Range { min: 1, max: 10, step: 1 };
 /// How long the timer's alarm rings if nobody stops it, in seconds.
 pub const ALARM_FOR: Range = Range { min: 10, max: 120, step: 10 };
+/// How see-through the glass is, in percent (50 is the glass as designed).
+pub const GLASS_CLEAR: Range = Range { min: 0, max: 100, step: 5 };
+/// How frosted (blurred) what shows through the glass is, in percent (50 as designed).
+pub const GLASS_FROST: Range = Range { min: 0, max: 100, step: 5 };
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Settings {
@@ -303,6 +422,14 @@ pub struct Settings {
     pub closed_edge: bool,
     /// The bars follow the real loudness of the sound the PC plays (`loopback.rs`), not a made-up beat.
     pub closed_sound: bool,
+    /// The liquid animation (all off at first), each part on its own: a drop running down as it opens, the music and notices in bubbles
+    /// of their own, the edge swelling towards the mouse, and opening like jelly. With `liquid_glass_only` only while
+    /// the notch is glass.
+    pub liquid_drip: bool,
+    pub liquid_bubbles: bool,
+    pub liquid_bulge: bool,
+    pub liquid_jelly: bool,
+    pub liquid_glass_only: bool,
     /// Look up the lyrics of what plays on LRCLIB (its title, artist and length are sent there). Off, only lyrics
     /// already saved on this PC show.
     pub lyrics_online: bool,
@@ -358,6 +485,14 @@ pub struct Settings {
     /// The city the weather and the prayer times are for.
     pub place: Option<Place>,
     pub theme: ThemeMode,
+    /// The notch's shape (classic or floating) and what it is made of (no glass, or one of the glass looks).
+    pub shape: NotchShape,
+    pub glass: NotchGlass,
+    /// How see-through the glass is and how frosted what shows through it is, in percent (see `GLASS_CLEAR`).
+    pub glass_clear: u32,
+    pub glass_frost: u32,
+    /// The two together, as the notch is drawn; kept up to date by `set_look`, not saved.
+    pub look: NotchLook,
     pub motion: Motion,
     pub open_delay: u32,
     pub close_delay: u32,
@@ -384,6 +519,11 @@ impl Default for Settings {
             closed_spin: true,
             closed_edge: true,
             closed_sound: true,
+            liquid_drip: false,
+            liquid_bubbles: false,
+            liquid_bulge: false,
+            liquid_jelly: false,
+            liquid_glass_only: false,
             lyrics_online: true,
             open_on_click: false,
             week_monday: true,
@@ -421,6 +561,11 @@ impl Default for Settings {
             asr_hanafi: false,
             place: None,
             theme: ThemeMode::Dark,
+            shape: NotchShape::Classic,
+            glass: NotchGlass::Off,
+            glass_clear: 50,
+            glass_frost: 50,
+            look: NotchLook::Classic,
             motion: Motion::Normal,
             open_delay: 90,
             close_delay: 250,
@@ -460,6 +605,11 @@ on_off_settings!(
     closed_spin,
     closed_edge,
     closed_sound,
+    liquid_drip,
+    liquid_bubbles,
+    liquid_bulge,
+    liquid_jelly,
+    liquid_glass_only,
     lyrics_online,
     open_on_click,
     week_monday,
@@ -492,6 +642,11 @@ on_off_settings!(
 );
 
 impl Settings {
+    /// Work out `look` again after `shape` or `glass` changed.
+    pub fn set_look(&mut self) {
+        self.look = NotchLook::of(self.shape, self.glass);
+    }
+
     pub fn load() -> Self {
         match Self::path().and_then(|p| store::read_json(&p)) {
             Some(v) => {
@@ -536,10 +691,22 @@ impl Settings {
         if let Some(m) = v.get("motion").and_then(Value::as_str).and_then(Motion::from_name) {
             out.motion = m;
         }
+        if let Some((shape, glass)) = v.get("look").and_then(Value::as_str).and_then(NotchLook::from_old_name) {
+            (out.shape, out.glass) = (shape, glass);
+        }
+        if let Some(s) = v.get("shape").and_then(Value::as_str).and_then(NotchShape::from_name) {
+            out.shape = s;
+        }
+        if let Some(g) = v.get("glass").and_then(Value::as_str).and_then(NotchGlass::from_name) {
+            out.glass = g;
+        }
+        out.set_look();
         let num = |k: &str, range: Range, default: u32| v.get(k).and_then(Value::as_u64).map_or(default, |n| range.clamp(n.min(u32::MAX as u64) as u32));
         out.open_delay = num("open_delay", OPEN_DELAY, out.open_delay);
         out.close_delay = num("close_delay", CLOSE_DELAY, out.close_delay);
         out.volume = num("volume", VOLUME, out.volume);
+        out.glass_clear = num("glass_clear", GLASS_CLEAR, out.glass_clear);
+        out.glass_frost = num("glass_frost", GLASS_FROST, out.glass_frost);
         out.alarm_every = num("alarm_every", ALARM_EVERY, out.alarm_every);
         out.alarm_for = num("alarm_for", ALARM_FOR, out.alarm_for);
         // A quote cannot be in a real file name (see `sound::play_file`), so such a value is dropped.
@@ -570,9 +737,13 @@ impl Settings {
         body.insert("screen".into(), json!(self.screen.name()));
         body.insert("theme".into(), json!(self.theme.name()));
         body.insert("motion".into(), json!(self.motion.name()));
+        body.insert("shape".into(), json!(self.shape.name()));
+        body.insert("glass".into(), json!(self.glass.name()));
         body.insert("open_delay".into(), json!(self.open_delay));
         body.insert("close_delay".into(), json!(self.close_delay));
         body.insert("volume".into(), json!(self.volume));
+        body.insert("glass_clear".into(), json!(self.glass_clear));
+        body.insert("glass_frost".into(), json!(self.glass_frost));
         body.insert("alarm_every".into(), json!(self.alarm_every));
         body.insert("alarm_for".into(), json!(self.alarm_for));
         body.insert("alarm_sound".into(), json!(self.alarm_sound.as_ref().map(|p| p.to_string_lossy().into_owned())));
@@ -669,6 +840,11 @@ mod tests {
             closed_spin: false,
             closed_edge: false,
             closed_sound: false,
+            liquid_drip: true,
+            liquid_bubbles: true,
+            liquid_bulge: true,
+            liquid_jelly: true,
+            liquid_glass_only: true,
             lyrics_online: false,
             open_on_click: true,
             week_monday: false,
@@ -704,6 +880,11 @@ mod tests {
             asr_hanafi: true,
             place: Some(Place { name: "Kuala Lumpur, Malaysia".into(), lat: 3.15, lon: 101.69, tz: "Asia/Kuala_Lumpur".into(), cc: "MY".into() }),
             theme: ThemeMode::System,
+            shape: NotchShape::Floating,
+            glass: NotchGlass::Smoky,
+            glass_clear: 80,
+            glass_frost: 15,
+            look: NotchLook::FloatingSmoky,
             motion: Motion::Snappy,
             open_delay: 150,
             close_delay: 400,
@@ -761,6 +942,25 @@ mod tests {
         assert_eq!(Settings::from_json(&json!({})).eye_style, EyeStyle::Glow);
         // A style that was chosen and saved before stays.
         assert_eq!(Settings::from_json(&json!({ "eye_style": "classic" })).eye_style, EyeStyle::Classic);
+    }
+
+    #[test]
+    fn the_notch_is_the_classic_black_one_unless_another_look_was_saved() {
+        assert_eq!(Settings::default().look, NotchLook::Classic, "a new install starts with no glass");
+        let saved = Settings::from_json(&json!({ "shape": "floating", "glass": "off" }));
+        assert_eq!((saved.shape, saved.glass, saved.look), (NotchShape::Floating, NotchGlass::Off, NotchLook::FloatingSolid));
+        assert_eq!(Settings::from_json(&json!({ "shape": "round", "glass": "glassy" })).look, NotchLook::Classic, "unknown names keep the default");
+        // One "look" for both, from an earlier test build.
+        assert_eq!(Settings::from_json(&json!({ "look": "classic" })).look, NotchLook::Classic);
+        assert_eq!(Settings::from_json(&json!({ "look": "floating" })).look, NotchLook::Floating);
+        for shape in NotchShape::ALL {
+            assert_eq!(NotchShape::from_name(shape.name()), Some(shape));
+            for glass in NotchGlass::ALL {
+                assert_eq!(NotchGlass::from_name(glass.name()), Some(glass));
+                assert_eq!(NotchLook::of(shape, glass).floating(), shape == NotchShape::Floating);
+                assert_eq!(NotchLook::of(shape, glass).glassy_controls(), glass != NotchGlass::Off);
+            }
+        }
     }
 
     #[test]

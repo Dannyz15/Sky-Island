@@ -155,6 +155,8 @@ impl App {
 
     pub(super) fn paint_panel(&self, panel: &mut Panel) {
         theme::set_light(self.light());
+        // The settings window keeps its own controls; the glass is for the notch.
+        theme::set_glass(false);
         let now = Instant::now();
         let speed = self.settings.motion.speed() as f32;
         panel.glows.set_motion(speed as f64, self.settings.motion.bounce());

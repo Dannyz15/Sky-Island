@@ -292,18 +292,23 @@ impl App {
         let add = CAL_ADD;
         let hot = self.hot_t(add, s);
         let (x, y, w, h) = add;
-        gfx::gradient_rounded(
-            pm,
-            x * s,
-            y * s,
-            w * s,
-            h * s,
-            h * s / 2.0,
-            [rgb[0], rgb[1], rgb[2], (alpha * pick(90.0, 56.0, hot)) as u8],
-            [rgb[0], rgb[1], rgb[2], (alpha * pick(56.0, 28.0, hot)) as u8],
-            false,
-        );
-        gfx::stroke_rounded(pm, x * s + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, h * s / 2.0, s, [rgb[0], rgb[1], rgb[2], (alpha * 100.0) as u8]);
+        if theme::is_glass() {
+            // A pill of glass in the tab's colour.
+            gfx::glass_piece(pm, x * s, y * s, w * s, h * s, h * s / 2.0, alpha * pick(1.1, 0.8, hot), Some(rgb), s);
+        } else {
+            gfx::gradient_rounded(
+                pm,
+                x * s,
+                y * s,
+                w * s,
+                h * s,
+                h * s / 2.0,
+                [rgb[0], rgb[1], rgb[2], (alpha * pick(90.0, 56.0, hot)) as u8],
+                [rgb[0], rgb[1], rgb[2], (alpha * pick(56.0, 28.0, hot)) as u8],
+                false,
+            );
+            gfx::stroke_rounded(pm, x * s + 0.5 * s, y * s + 0.5 * s, w * s - s, h * s - s, h * s / 2.0, s, [rgb[0], rgb[1], rgb[2], (alpha * 100.0) as u8]);
+        }
         draw_text_centered(pm, font, "+  Add task", (x + w / 2.0) * s, (y + 13.0) * s, 11.0 * s, white, (w - 16.0) * s);
     }
 

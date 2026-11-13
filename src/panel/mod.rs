@@ -1,5 +1,5 @@
 //! The Sky Island settings window: an ordinary Windows window with a sidebar of pages in sections (General,
-//! Appearance, Notices; Notch: Behaviour, Closed notch; Tabs: Tabs, Music, Weather & Prayer, Timer & Sounds, Calendar,
+//! Appearance, Notices; Notch: Behaviour, Closed notch, Liquid; Tabs: Tabs, Music, Weather & Prayer, Timer & Sounds, Calendar,
 //! Shelf & Clipboard; About) and the settings of the chosen page on the right, grouped in cards.
 //! It holds every setting, including the ones that do not fit in the notch.
 //!
@@ -28,7 +28,7 @@ use winit::window::{Fullscreen, Icon, Window, WindowButtons};
 use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsZoomed};
 
 use crate::motion::Glows;
-use crate::settings::{self, ClipKeep, EyeStyle, Motion, NotchSize, Range, Screen, Settings, ThemeMode};
+use crate::settings::{self, ClipKeep, EyeStyle, Motion, NotchGlass, NotchShape, NotchSize, Range, Screen, Settings, ThemeMode};
 use crate::{App, View, appicon, gfx, store, theme};
 
 mod cards;
@@ -63,7 +63,7 @@ const WIDTH: f64 = 840.0;
 const HEIGHT: f64 = 700.0;
 const SIDEBAR_W: f32 = 212.0;
 const SIDE_TOP: f32 = 62.0;
-const SIDE_ITEM_H: f32 = 38.0;
+const SIDE_ITEM_H: f32 = 36.0;
 /// The room a section heading takes in the sidebar, and the gap above About.
 const SIDE_HEAD_H: f32 = 28.0;
 const SIDE_ABOUT_GAP: f32 = 14.0;

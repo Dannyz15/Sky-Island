@@ -181,8 +181,13 @@ impl App {
         // The pill.
         let (px, py, pw) = ((x0 + dx - 6.0) * s, (bar_y - TAB_BOTTOM) * s, (total + 12.0) * s);
         let ph = TAB_PILL_H * s;
-        fill_rounded(pm, px, py, pw, ph, ph / 2.0, [255, 255, 255, (alpha * 13.0) as u8]);
-        gfx::stroke_rounded(pm, px + 0.5 * s, py + 0.5 * s, pw - s, ph - s, ph / 2.0, s, [255, 255, 255, (alpha * 12.0) as u8]);
+        let glass = theme::is_glass();
+        if glass {
+            gfx::glass_piece(pm, px, py, pw, ph, ph / 2.0, alpha * 0.8, None, s);
+        } else {
+            fill_rounded(pm, px, py, pw, ph, ph / 2.0, [255, 255, 255, (alpha * 13.0) as u8]);
+            gfx::stroke_rounded(pm, px + 0.5 * s, py + 0.5 * s, pw - s, ph - s, ph / 2.0, s, [255, 255, 255, (alpha * 12.0) as u8]);
+        }
         if self.tab_target().is_some() {
             // The circle stretches a little in the direction it is moving, like a drop of liquid.
             let stretch = (self.tab_bar.vel.abs() * 2.4).min(18.0);
@@ -190,9 +195,16 @@ impl App {
             let squash = stretch * 0.22;
             let (bw, bh) = (TAB_BUTTON + stretch, TAB_BUTTON - squash);
             let by = y + squash / 2.0;
-            // A faint halo trails it, then the circle itself.
-            fill_rounded(pm, (cx - bw / 2.0 - 2.0) * s, (by - 2.0) * s, (bw + 4.0) * s, (bh + 4.0) * s, (bh + 4.0) * s / 2.0, [255, 255, 255, (alpha * 8.0) as u8]);
-            fill_rounded(pm, (cx - bw / 2.0) * s, by * s, bw * s, bh * s, bh * s / 2.0, [255, 255, 255, (alpha * 36.0) as u8]);
+            if glass {
+                // A lens of glass: a little bigger than the circle, it magnifies the icon under it (below).
+                let (lw, lh) = (bw + 6.0, bh + 4.0);
+                let (lx, ly) = (cx - lw / 2.0, by - 2.0);
+                gfx::glass_piece(pm, lx * s, ly * s, lw * s, lh * s, lh * s / 2.0, alpha * 1.7, None, s);
+            } else {
+                // A faint halo trails it, then the circle itself.
+                fill_rounded(pm, (cx - bw / 2.0 - 2.0) * s, (by - 2.0) * s, (bw + 4.0) * s, (bh + 4.0) * s, (bh + 4.0) * s / 2.0, [255, 255, 255, (alpha * 8.0) as u8]);
+                fill_rounded(pm, (cx - bw / 2.0) * s, by * s, bw * s, bh * s, bh * s / 2.0, [255, 255, 255, (alpha * 36.0) as u8]);
+            }
         }
         for (i, (_, view)) in tabs.iter().enumerate() {
             let rect = tab_rect(i, tabs.len(), bar_y);
@@ -202,12 +214,18 @@ impl App {
             let glow = self.hot_t((rect.0, rect.1 + TAB_SHIFT, rect.2, rect.3), s) * (1.0 - near * 2.0).clamp(0.0, 1.0);
             let cx = rect.0 + rect.2 / 2.0;
             if glow > 0.01 {
-                fill_rounded(pm, (cx - TAB_BUTTON / 2.0) * s, rect.1 * s, TAB_BUTTON * s, rect.3 * s, rect.3 * s / 2.0, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
+                if glass {
+                    gfx::glass_piece(pm, (cx - TAB_BUTTON / 2.0) * s, rect.1 * s, TAB_BUTTON * s, rect.3 * s, rect.3 * s / 2.0, alpha * glow, None, s);
+                } else {
+                    fill_rounded(pm, (cx - TAB_BUTTON / 2.0) * s, rect.1 * s, TAB_BUTTON * s, rect.3 * s, rect.3 * s / 2.0, [255, 255, 255, (alpha * 16.0 * glow) as u8]);
+                }
             }
             // Grey icons, white on the open tab.
             let color = gfx::mix([150, 150, 158, a], [255, 255, 255, a], near);
             let hover = self.hot_t((rect.0, rect.1 + TAB_SHIFT, rect.2, rect.3), s);
-            let grow = 1.0 + 0.14 * near.clamp(0.0, 1.0) + 0.06 * hover;
+            // Under the glass lens the open tab's icon is magnified more.
+            let lens = if glass { 0.28 } else { 0.14 };
+            let grow = 1.0 + lens * near.clamp(0.0, 1.0) + 0.06 * hover;
             draw_tab_icon(pm, *view, cx * s, (rect.1 + rect.3 / 2.0) * s, s * 0.92 * grow, color);
         }
     }

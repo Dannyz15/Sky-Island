@@ -8,6 +8,14 @@ pub(crate) const COLLAPSED: (f64, f64) = (148.0, 28.0);
 /// Width of the curved flare on each side of the notch's top edge, where it meets the top of the screen.
 /// The window is this much wider than the notch on both sides; the notch is drawn in the middle.
 pub(crate) const EAR: f64 = 12.0;
+/// How much wider and taller the closed notch grows while the mouse rests on it, in logical pixels.
+pub(crate) const PEEK: (f64, f64) = (14.0, 3.0);
+/// The room below the open notch for its shadow, in logical pixels.
+pub(crate) const SHADOW: f64 = 14.0;
+/// How far the closed notch's bottom edge swells towards the mouse, in logical pixels.
+pub(crate) const BULGE_REACH: f64 = 5.0;
+/// How far the music's bubbles stand apart from the body of the closed notch, in logical pixels.
+const BUBBLE_SEP: f64 = 3.5;
 
 pub(crate) const EXPANDED: (f64, f64) = (420.0, 176.0);
 
@@ -49,7 +57,7 @@ pub(crate) struct Springs {
     /// How much of its normal size the closed notch has (smaller for the minimal notch), with its speed.
     pub(crate) closed_k: f64,
     pub(crate) closed_v: f64,
-    /// 0.0 = collapsed, 1.0 = expanded. A spring, so it can swing a little past 1.0 when it opens.
+    /// 0.0 = collapsed, 1.0 = expanded. A spring that glides in without swinging past (Jelly wobbles with springs of its own).
     pub(crate) progress: f64,
     pub(crate) progress_v: f64,
     /// 0.0 = in place, 1.0 = slid up out of view (the "Auto-hide notch" setting).
@@ -57,6 +65,20 @@ pub(crate) struct Springs {
     pub(crate) tuck_v: f64,
     /// The `tuck_target` the animation is heading for, to restart its clock when that changes.
     pub(crate) tuck_goal: f64,
+    /// 0.0 = at rest, 1.0 = the closed notch grown a little under the mouse while it waits to open.
+    pub(crate) peek_t: f64,
+    pub(crate) peek_v: f64,
+    /// The closed notch's edge swelling towards the mouse: how much (0 to 1, it wobbles past 0 as it goes back) and where
+    /// (logical pixels from the notch's left side), each with its speed.
+    pub(crate) bulge_t: f64,
+    pub(crate) bulge_v: f64,
+    pub(crate) bulge_x: f64,
+    pub(crate) bulge_xv: f64,
+    /// Opening like jelly: how far open the width and the height are, each its own bouncy spring (the width is quicker).
+    pub(crate) jelly_w: f64,
+    pub(crate) jelly_wv: f64,
+    pub(crate) jelly_h: f64,
+    pub(crate) jelly_hv: f64,
 }
 
 impl Springs {
@@ -74,6 +96,16 @@ impl Springs {
             tuck_t: if hidden { 1.0 } else { 0.0 },
             tuck_v: 0.0,
             tuck_goal: if hidden { 1.0 } else { 0.0 },
+            peek_t: 0.0,
+            peek_v: 0.0,
+            bulge_t: 0.0,
+            bulge_v: 0.0,
+            bulge_x: 0.0,
+            bulge_xv: 0.0,
+            jelly_w: 0.0,
+            jelly_wv: 0.0,
+            jelly_h: 0.0,
+            jelly_hv: 0.0,
         }
     }
 }
@@ -149,6 +181,11 @@ impl App {
             || self.art.shown.iter().zip(self.art.tint).any(|(a, b)| (a - b as f32).abs() > 0.5)
             || self.tab_target().is_some_and(|t| (t - self.tab_bar.pos).abs() > f32::EPSILON)
             || (self.spring.tuck_t - self.tuck_target()).abs() > f64::EPSILON
+            || (self.spring.peek_t - self.peek_target()).abs() > 1e-4
+            || (self.liquid_part(self.settings.liquid_jelly) && ((self.spring.jelly_w - self.target()).abs() > 1e-3 || (self.spring.jelly_h - self.target()).abs() > 1e-3))
+            || (self.spring.bulge_t - self.bulge_target()).abs() > 1e-3
+            || self.spring.bulge_v.abs() > 1e-2
+            || (self.spring.bulge_t > 0.01 && (self.spring.bulge_x - self.bulge_x_target()).abs() > 0.2)
             || (self.spring.view_t - self.view_target()).abs() > f64::EPSILON
             || (self.spring.grow_t - self.stats_extra()).abs() > f64::EPSILON
             || (self.notices.t - self.ov_target()).abs() > f64::EPSILON
@@ -159,6 +196,44 @@ impl App {
             || (self.spring.closed_k - self.closed_target()).abs() > 1e-4
             || (self.target_k() - self.ui_k).abs() > 1e-3
             || (self.view == View::Lyrics && matches!(self.lyric.state, LyricsState::Found(_)) && (self.lyric.pos - self.lyric_target()).abs() > f64::EPSILON)
+    }
+
+    /// Whether a part of the liquid animation that is switched `on` shows: on every look, or only while the notch is glass.
+    pub(crate) fn liquid_part(&self, on: bool) -> bool {
+        on && (!self.settings.liquid_glass_only || self.settings.glass != crate::settings::NotchGlass::Off)
+    }
+
+    /// How far open the notch's width and height are (0 closed, 1 open; they may swing past): with jelly each its own
+    /// spring; with the drip the width a little later than the height; else both as the notch opens.
+    fn open_wh(&self) -> (f64, f64) {
+        let t = self.spring.progress.max(0.0);
+        if self.liquid_part(self.settings.liquid_jelly) {
+            (self.spring.jelly_w.max(-0.1), self.spring.jelly_h.max(-0.1))
+        } else if self.liquid_part(self.settings.liquid_drip) && t < 1.0 {
+            (t.powf(1.5), t)
+        } else {
+            (t, t)
+        }
+    }
+
+    /// The closed notch's bottom edge swells towards the mouse while it is over it.
+    fn bulge_target(&self) -> f64 {
+        if self.liquid_part(self.settings.liquid_bulge) && self.pointer.inside && self.spring.progress < 0.02 && self.notices.t < 0.01 && self.spring.tuck_t < 0.1 {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Where the swelling heads for: under the mouse, in logical pixels from the notch's left side, kept off its ends.
+    fn bulge_x_target(&self) -> f64 {
+        let w = self.closed_size().0;
+        (self.pointer.cursor.0 / self.ui_scale()).clamp(14.0, (w - 14.0).max(14.0))
+    }
+
+    /// The closed notch grows a little while the mouse rests on it, before it opens (or until it is clicked).
+    fn peek_target(&self) -> f64 {
+        if self.pointer.inside && !self.pointer.hovered && self.spring.tuck_t < 0.1 { 1.0 } else { 0.0 }
     }
 
     fn ov_target(&self) -> f64 {
@@ -299,11 +374,26 @@ impl App {
     /// The notch opening and closing, the tuck, the slide between views and the tab bar's circle.
     fn step_open(&mut self, dt: f64, speed: f64, bounce: bool) {
         let tune = |omega: f64, zeta: f64| (omega * speed, if bounce { zeta } else { 1.0 });
-        // Everything is pulled towards its goal by a spring. Opening swings out a little past the goal and
-        // settles; closing and hiding glide in without bouncing.
+        // Everything is pulled towards its goal by a spring. Opening, closing and hiding glide in without swinging past
+        // the goal, so the notch does not shake as it settles (the Jelly setting below wobbles on purpose).
         let target = self.target();
-        let (omega, zeta) = if target > 0.5 { tune(24.0, 0.74) } else { tune(28.0, 1.0) };
-        spring(&mut self.spring.progress, &mut self.spring.progress_v, target, dt, omega, zeta);
+        // Every look moves like the notch apps on a Mac: a soft, unhurried spring.
+        let omega = if target > 0.5 { 15.0 } else { 17.0 };
+        spring(&mut self.spring.progress, &mut self.spring.progress_v, target, dt, omega * speed, 1.0);
+        // The grow under the mouse before it opens, and going back as it opens, without a wobble either.
+        let peek_goal = self.peek_target();
+        spring(&mut self.spring.peek_t, &mut self.spring.peek_v, peek_goal, dt, 26.0 * speed, 1.0);
+        // Jelly: the width springs out first and the height after it, both wobbling before they settle. Without it they
+        // simply follow the notch's opening.
+        if self.liquid_part(self.settings.liquid_jelly) {
+            let (omega, zeta) = tune(21.0, 0.42);
+            spring(&mut self.spring.jelly_w, &mut self.spring.jelly_wv, target, dt, omega, zeta);
+            let (omega, zeta) = tune(14.0, 0.5);
+            spring(&mut self.spring.jelly_h, &mut self.spring.jelly_hv, target, dt, omega, zeta);
+        } else {
+            (self.spring.jelly_w, self.spring.jelly_h) = (self.spring.progress, self.spring.progress);
+            (self.spring.jelly_wv, self.spring.jelly_hv) = (0.0, 0.0);
+        }
 
         let tuck_goal = self.tuck_target();
         spring(&mut self.spring.tuck_t, &mut self.spring.tuck_v, tuck_goal, dt, 22.0 * speed, 1.0);
@@ -388,6 +478,16 @@ impl App {
         spring(&mut self.music.k, &mut self.music.v, music_goal, dt, omega, zeta);
         let extra_goal = self.music_extra_goal();
         spring(&mut self.music.w, &mut self.music.wv, extra_goal, dt, omega, zeta);
+        // The swelling towards the mouse follows it, and wobbles back like a liquid when the mouse leaves.
+        let goal = self.bulge_target();
+        let (omega, zeta) = tune(19.0, 0.3);
+        spring(&mut self.spring.bulge_t, &mut self.spring.bulge_v, goal, dt, omega, zeta);
+        let x_goal = self.bulge_x_target();
+        if self.spring.bulge_t.abs() < 0.01 && goal > 0.0 {
+            // It starts where the mouse came in, not from where it last was.
+            self.spring.bulge_x = x_goal;
+        }
+        spring(&mut self.spring.bulge_x, &mut self.spring.bulge_xv, x_goal, dt, 26.0 * speed, 1.0);
         self.ui_k = self.target_k();
     }
 
@@ -396,21 +496,30 @@ impl App {
         let k = self.ui_k;
 
         let Some(window) = self.window.clone() else { return };
-        // The size may swing a little past its goal while the notch opens.
-        let t = self.spring.progress.max(0.0);
         let wide = self.spring.view_t.clamp(0.0, 1.0);
-        let full_h = lerp(EXPANDED.1, LYRICS_H, wide) + self.spring.grow_t.max(0.0);
+        let (full_w, full_h) = self.open_size();
         // The closed notch grows to the compact notice size while a notice is showing.
         let ov = self.notices.t.clamp(0.0, 1.0);
         let closed = self.closed_size();
-        let base = (lerp(closed.0, OVERLAY.0, ov), lerp(closed.1, OVERLAY.1, ov));
-        // Opening the lyrics widens the notch evenly on both sides, so it stays centred on the screen.
-        let w = lerp(base.0, lerp(EXPANDED.0, LYRICS_W, wide), t);
-        let h = lerp(base.1, full_h, t);
-        // The Size setting scales the window itself; everything in it is drawn at the same scale.
-        let _ = window.request_inner_size(LogicalSize::new((w + 2.0 * EAR) * k, h * k));
+        let peek = self.spring.peek_t;
+        let base = (lerp(closed.0, OVERLAY.0, ov) + PEEK.0 * peek, lerp(closed.1, OVERLAY.1, ov) + PEEK.1 * peek);
+        // Opening the lyrics widens the notch evenly on both sides, so it stays centred on the screen. It opens like a
+        // liquid: a drop runs down first (the window grows down at once, the body follows, `drip_len`) and it widens
+        // a little later.
+        let (tw, th) = self.open_wh();
+        let w = lerp(base.0, full_w, tw);
+        let h = lerp(base.1, full_h, th);
+        // The Size setting scales the window itself; everything in it is drawn at the same scale. The floating pill
+        // has a gap above it, inside the window.
+        let gap = crate::glass::gap(self.settings.look);
+        let room = self.room_below();
 
-        if let Some(monitor) = self.island_monitor(&window) {
+        let Some(monitor) = self.island_monitor(&window) else {
+            let _ = window.request_inner_size(LogicalSize::new((w + 2.0 * EAR) * k, (h + gap + room) * k));
+            window.request_redraw();
+            return;
+        };
+        {
             let scale = window.scale_factor() * k;
             let mpos = monitor.position();
             let msize = monitor.size();
@@ -426,15 +535,152 @@ impl App {
                 self.vis.monitor_area = Some(area);
                 self.apply_visibility();
             }
-            let pw = (w + 2.0 * EAR) * scale;
-            let x = mpos.x as f64 + (msize.width as f64 - pw) / 2.0;
+            // In whole pixels, with the width odd or even like the screen's, so the notch is exactly in the middle: the
+            // space left of it and right of it is always the same, instead of one pixel more on one side every other
+            // frame while it grows.
+            let mut pw = ((w + 2.0 * EAR) * scale).round() as i32;
+            if (msize.width as i32 - pw) % 2 != 0 {
+                pw += 1;
+            }
+            let ph = ((h + gap + room) * scale).round().max(1.0) as i32;
+            let x = mpos.x + (msize.width as i32 - pw) / 2;
             // Tucked away, only a thin strip stays on screen, so the cursor can still find the island. A taskbar
             // along the top of the screen keeps it below, instead of covering the middle of the bar.
             let top = mpos.y as f64 + top_inset(&monitor) as f64;
-            let y = top - self.spring.tuck_t.clamp(0.0, 1.0) * (h - TUCK_STRIP) * scale;
-            window.set_outer_position(PhysicalPosition::new(x, y));
+            let y = (top - self.spring.tuck_t.clamp(0.0, 1.0) * (h + gap - TUCK_STRIP) * scale).round() as i32;
+            self.move_window(&window, (x, y, pw, ph));
+            self.ask_backdrop((x as f64, y as f64, pw as f64, (h + gap) * scale), (mpos.x, mpos.y, msize.width as i32, msize.height as i32), scale, full_h, wide);
         }
         window.request_redraw();
+    }
+
+    /// Move and resize the window in one step (pixels: left, top, width, height). Done apart, Windows can show a frame
+    /// with the new size at the old place, where the notch has grown to one side only, so it shakes while it grows.
+    fn move_window(&self, window: &Window, (x, y, w, h): (i32, i32, i32, i32)) {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos};
+        let Some(hwnd) = self.native_handle() else {
+            let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(w as u32, h as u32));
+            window.set_outer_position(PhysicalPosition::new(x, y));
+            return;
+        };
+        // SAFETY: the handle is this app's own live window.
+        let _ = unsafe { SetWindowPos(HWND(hwnd as *mut _), None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER) };
+    }
+
+    /// How far a drop hangs below the closed glass notch, in logical pixels: while a notice makes it swell or shrink
+    /// fast, the liquid lags behind and bulges out of its middle, and is pulled back in as it settles.
+    pub(crate) fn drop_hang(&self) -> f64 {
+        if self.spring.progress > 0.3 {
+            return 0.0;
+        }
+        crate::glass::DROP * (self.notices.v.abs() / 4.0).min(1.0)
+    }
+
+    /// The room below the closed notch the window keeps for that drop (plus a little for its soft edge), in logical
+    /// pixels; above the notch for the floating pill's gap, below it for this.
+    pub(crate) fn drop_room(&self) -> f64 {
+        let hang = self.drop_hang();
+        if hang > 0.0 { hang + 2.0 } else { 0.0 }
+    }
+
+    /// The room the window keeps below the notch, in logical pixels: for a notice's drop, the open notch's shadow,
+    /// which comes in as the notch opens, and the swelling towards the mouse.
+    pub(crate) fn room_below(&self) -> f64 {
+        let shadow = SHADOW * self.spring.progress.clamp(0.0, 1.0);
+        let bulge = if self.spring.bulge_t > 0.01 { BULGE_REACH + 1.0 } else { 0.0 };
+        self.drop_room() + shadow + bulge
+    }
+
+    /// While the notch opens or closes, how far the drop runs below its body, in logical pixels: the window is as tall as
+    /// it is going to be `t` of the way, the body only `t` squared.
+    pub(crate) fn drip_len(&self) -> f64 {
+        let t = self.open_wh().1;
+        if !self.liquid_part(self.settings.liquid_drip) || t <= 0.0 || t >= 1.0 {
+            return 0.0;
+        }
+        let base = lerp(self.closed_size().1, OVERLAY.1, self.notices.t.clamp(0.0, 1.0));
+        (self.open_size().1 - base).max(0.0) * (t - t * t)
+    }
+
+    /// The liquid parts of the outline, in pixels at scale `s`, for a window whose notch (without the flares) is `w`
+    /// pixels wide: the drop while it opens, the music's bubbles, a notice's bubbles running ahead of it, and the
+    /// swelling towards the mouse.
+    pub(crate) fn liquid(&self, s: f32, w: f32, with_bulge: bool) -> crate::glass::Liquid {
+        let s64 = s as f64;
+        let open = self.spring.progress.clamp(0.0, 1.0);
+        let ov = self.notices.t.clamp(0.0, 1.0);
+        let closed = self.closed_size();
+        let mut liquid = crate::glass::Liquid { drip: (self.drip_len() * s64) as f32, ..Default::default() };
+        let h = lerp(closed.1, OVERLAY.1, ov);
+        let bubbles = self.liquid_part(self.settings.liquid_bubbles);
+        if bubbles && ov > 0.005 && ov < 0.995 {
+            // A notice: the notch widens with a round bubble running ahead at each end and the body flowing after them
+            // (it lags behind by the cube), joined by a neck. The bubbles sit inside the round ends, so they are not
+            // seen at the start and the end.
+            let r = h / 2.0;
+            liquid.narrow = ((OVERLAY.0 - closed.0).max(0.0) * (ov - ov * ov * ov) * 1.6 * s64) as f32;
+            liquid.bubbles = Some((w / 2.0 - (r * s64) as f32, (r * 0.8 * s64) as f32));
+        } else if bubbles && ov <= 0.005 && open < 0.3 && self.music.k > 0.01 {
+            // The music: the record and the bars in bubbles of their own, apart from the body; they flow back in as it
+            // opens.
+            let k = self.music.k.clamp(0.0, 1.0);
+            let k = k * k * (3.0 - 2.0 * k) * (1.0 - open / 0.3);
+            let off = self.music_bubble_offset();
+            let r = closed.1 / 2.0 - 1.5;
+            let body = 2.0 * (off - r - BUBBLE_SEP);
+            liquid.narrow = ((w as f64 / s64 - body).max(0.0) * k * s64) as f32;
+            liquid.bubbles = Some(((off * s64) as f32, (r * k.sqrt() * s64) as f32));
+        }
+        if with_bulge && self.spring.bulge_t > 0.01 {
+            let reach = BULGE_REACH * self.spring.bulge_t.min(1.0);
+            liquid.bulge = Some((((self.spring.bulge_x + EAR) * s64) as f32, (reach * s64) as f32));
+        }
+        liquid
+    }
+
+    /// Tell the thread that copies what is behind the notch which part of the screen to copy: around the window as it
+    /// is and as it is going to be (open or closed), so the glass has what it needs while it grows. Nothing is copied
+    /// for the looks that do not show through, or while the notch is hidden.
+    pub(crate) fn ask_backdrop(&self, window: (f64, f64, f64, f64), screen: (i32, i32, i32, i32), scale: f64, full_h: f64, wide: f64) {
+        let Some(watcher) = &self.backdrop else { return };
+        let look = self.settings.look;
+        if !crate::glass::wants_backdrop(look) || self.vis.hidden {
+            watcher.ask(crate::glass::Want::default());
+            return;
+        }
+        let (x, y, w, h) = window;
+        let gap = crate::glass::gap(look);
+        // The open notch (or the closed one) as it will be: the copy covers both it and the window now.
+        let opening = self.target() > 0.5;
+        let goal_w = if opening { lerp(EXPANDED.0, LYRICS_W, wide) } else { self.closed_size().0.max(OVERLAY.0) };
+        let goal_h = if opening { full_h } else { self.closed_size().1.max(OVERLAY.1) };
+        let goal_w = (goal_w + 2.0 * EAR) * scale;
+        let goal_h = (goal_h + gap) * scale;
+        let centre = x + w / 2.0;
+        let half = w.max(goal_w) / 2.0 + crate::glass::MARGIN as f64;
+        let left = ((centre - half).floor() as i32).max(screen.0);
+        let right = ((centre + half).ceil() as i32).min(screen.0 + screen.2);
+        let top = (y.floor() as i32).max(screen.1);
+        let bottom = ((y + h.max(goal_h)).ceil() as i32 + crate::glass::MARGIN).min(screen.1 + screen.3);
+        let area = (right > left && bottom > top).then_some((left, top, right - left, bottom - top));
+        // Often while it moves, a few times a second while it rests open, now and then while it rests closed.
+        let every = if self.animating() {
+            Duration::from_millis(66)
+        } else if self.spring.progress > 0.01 {
+            Duration::from_millis(250)
+        } else {
+            Duration::from_millis(400)
+        };
+        watcher.ask(crate::glass::Want {
+            area,
+            hole: (x.round() as i32, y.round() as i32, w.round() as i32, h.round() as i32),
+            blur: crate::glass::blur_px(look, scale, self.settings.glass_frost as u8),
+            every,
+            look,
+            light: self.light(),
+            clear: self.settings.glass_clear as u8,
+        });
     }
 
     pub(crate) fn cursor_over_window(&self) -> bool {
@@ -479,10 +725,23 @@ impl App {
         (COLLAPSED.0 * self.spring.closed_k + self.music.w.max(0.0), COLLAPSED.1 * self.spring.closed_k)
     }
 
+    /// The size of the open notch, in logical pixels: wider for the lyrics, taller for a view with more in it.
+    pub(crate) fn open_size(&self) -> (f64, f64) {
+        let wide = self.spring.view_t.clamp(0.0, 1.0);
+        (lerp(EXPANDED.0, LYRICS_W, wide), lerp(EXPANDED.1, LYRICS_H, wide) + self.spring.grow_t.max(0.0))
+    }
+
     /// The height of the window in logical pixels, which the tab bar is measured from.
     pub(crate) fn window_h(&self) -> f32 {
+        if let Some(h) = self.layout_h.get() {
+            return h;
+        }
         let s = self.ui_scale() as f32;
-        self.window.as_ref().map_or(EXPANDED.1 as f32, |w| w.inner_size().height as f32 / s)
+        // The floating pill's gap is above what is drawn.
+        let gap = crate::glass::gap(self.settings.look) as f32;
+        // So is the room below it.
+        let below = self.room_below() as f32;
+        self.window.as_ref().map_or(EXPANDED.1 as f32, |w| w.inner_size().height as f32 / s - gap - below)
     }
 
     /// How long the mouse rests on the notch before it opens, and how long it is away before it closes.

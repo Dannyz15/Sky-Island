@@ -10,6 +10,16 @@ use std::cell::Cell;
 
 thread_local! {
     static LIGHT: Cell<bool> = const { Cell::new(false) };
+    static GLASS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Draw the controls on this thread as pieces of glass (the glass looks of the notch), or as before.
+pub fn set_glass(on: bool) {
+    GLASS.with(|g| g.set(on));
+}
+
+pub fn is_glass() -> bool {
+    GLASS.with(Cell::get)
 }
 
 /// Switch the drawing on this thread to the light look (or back to dark).
@@ -36,16 +46,6 @@ pub fn map(c: [u8; 4]) -> [u8; 4] {
         (kept + (flipped - kept) * neutral).round().clamp(0.0, 255.0) as u8
     };
     [channel(r), channel(g), channel(b), a]
-}
-
-/// The notch body: top, middle and bottom colours of its gradient.
-pub fn body() -> [[u8; 3]; 3] {
-    if is_light() { [[250, 250, 252], [241, 242, 246], [229, 231, 238]] } else { [[0, 0, 0], [7, 7, 10], [16, 16, 22]] }
-}
-
-/// The hairline around the notch.
-pub fn border() -> [u8; 4] {
-    if is_light() { [0, 0, 0, 40] } else { [255, 255, 255, 26] }
 }
 
 #[cfg(test)]
@@ -78,13 +78,5 @@ mod tests {
         assert!(amber[0] > amber[2] && amber[1] > amber[2], "still amber: {amber:?}");
         assert!(amber[0] < 255 && amber[0] > 150, "a little darker: {amber:?}");
         set_light(false);
-    }
-
-    #[test]
-    fn the_light_body_is_light_and_the_dark_one_is_dark() {
-        set_light(true);
-        assert!(body()[0][0] > 200 && border()[0] == 0);
-        set_light(false);
-        assert!(body()[0][0] < 20 && border()[0] == 255);
     }
 }

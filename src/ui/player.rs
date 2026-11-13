@@ -392,14 +392,24 @@ impl App {
                 }
             }
             _ => {
-                // No cover: a soft tile with a note on it.
-                let (top, bottom) = ([58, 58, 68, (alpha * 255.0) as u8], [30, 30, 38, (alpha * 255.0) as u8]);
-                gfx::gradient_rounded(pm, ax * s, ay * s, asz * s, asz * s, radius * s, top, bottom, false);
+                // No cover: a soft tile with a note on it (a tile of glass with the glass looks).
+                if theme::is_glass() {
+                    gfx::glass_piece(pm, ax * s, ay * s, asz * s, asz * s, radius * s, alpha * 1.6, None, s);
+                } else {
+                    let (top, bottom) = ([58, 58, 68, (alpha * 255.0) as u8], [30, 30, 38, (alpha * 255.0) as u8]);
+                    gfx::gradient_rounded(pm, ax * s, ay * s, asz * s, asz * s, radius * s, top, bottom, false);
+                }
                 let note = [150, 150, 165, (alpha * 255.0) as u8];
                 draw_tab_icon(pm, View::Player, (ax + asz / 2.0) * s, (ay + asz / 2.0) * s, s * (asz / 40.0).clamp(0.6, 1.8), note);
             }
         }
-        gfx::stroke_rounded(pm, ax * s, ay * s, asz * s, asz * s, radius * s, 1.0 * s, [255, 255, 255, (alpha * 26.0) as u8]);
+        if theme::is_glass() {
+            // The cover sits under a pane of glass: a soft shine across its top and a bright rim.
+            gfx::gradient_rounded(pm, ax * s, ay * s, asz * s, asz * s * 0.5, radius * s, [255, 255, 255, (alpha * 46.0) as u8], [255, 255, 255, 0], false);
+            gfx::glass_rim(pm, ax * s, ay * s, asz * s, asz * s, radius * s, 1.2 * s, alpha * 1.5);
+        } else {
+            gfx::stroke_rounded(pm, ax * s, ay * s, asz * s, asz * s, radius * s, 1.0 * s, [255, 255, 255, (alpha * 26.0) as u8]);
+        }
     }
 
     /// The lyrics to the right of the player: the line being sung is large and bright, the rest fade away.
@@ -539,12 +549,20 @@ impl App {
             let enabled = i != 2 || self.media.next_enabled;
             let glow = if enabled { self.hot_t((x - 18.0, CTRL_Y - 18.0, 36.0, 36.0), s) } else { 0.0 };
             if glow > 0.01 {
-                fill_circle(pm, x * s, py, 18.0 * s, [255, 255, 255, (alpha * 24.0 * glow) as u8]);
+                if theme::is_glass() {
+                    gfx::glass_piece(pm, (x - 18.0) * s, py - 18.0 * s, 36.0 * s, 36.0 * s, 18.0 * s, alpha * glow * 1.3, None, s);
+                } else {
+                    fill_circle(pm, x * s, py, 18.0 * s, [255, 255, 255, (alpha * 24.0 * glow) as u8]);
+                }
             }
         }
         // The lyrics button is lit while the lyrics are open.
         if open > 0.01 {
-            fill_circle(pm, lyrics_x * s, py, 16.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * open * 70.0) as u8]);
+            if theme::is_glass() {
+                gfx::glass_piece(pm, (lyrics_x - 16.0) * s, py - 16.0 * s, 32.0 * s, 32.0 * s, 16.0 * s, alpha * open, Some(rgb), s);
+            } else {
+                fill_circle(pm, lyrics_x * s, py, 16.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * open * 70.0) as u8]);
+            }
         }
         draw_lyrics_icon(pm, lyrics_x * s, py, s, gfx::mix(grey, white, open));
         // The volume of the speakers: a speaker that mutes, and a slider.
@@ -552,7 +570,11 @@ impl App {
         let (percent, muted) = self.volume.level.unwrap_or((0, false));
         let icon_hot = self.hot_t((vol.icon_x - 18.0, CTRL_Y - 18.0, 36.0, 36.0), s);
         if icon_hot > 0.01 {
-            fill_circle(pm, vol.icon_x * s, py, 18.0 * s, [255, 255, 255, (alpha * 24.0 * icon_hot) as u8]);
+            if theme::is_glass() {
+                gfx::glass_piece(pm, (vol.icon_x - 18.0) * s, py - 18.0 * s, 36.0 * s, 36.0 * s, 18.0 * s, alpha * icon_hot * 1.3, None, s);
+            } else {
+                fill_circle(pm, vol.icon_x * s, py, 18.0 * s, [255, 255, 255, (alpha * 24.0 * icon_hot) as u8]);
+            }
         }
         let speaker = if muted || self.volume.level.is_none() { grey } else { gfx::mix(grey, white, 0.5 + 0.5 * icon_hot) };
         draw_speaker(pm, vol.icon_x * s, py, s * 0.8, speaker, muted);
@@ -571,6 +593,10 @@ impl App {
         gfx::glow(pm, play_x * s, py, 34.0 * s, [rgb[0], rgb[1], rgb[2], (alpha * 56.0) as u8], None);
         let radius = (pick(21.0, 19.5, play)) * s;
         gfx::gradient_circle(pm, play_x * s, py, radius, white, [214, 214, 226, a]);
+        if theme::is_glass() {
+            // A pearl of glass: its rim catches the light.
+            gfx::glass_rim(pm, play_x * s - radius, py - radius, radius * 2.0, radius * 2.0, radius, 1.3 * s, alpha * 1.6);
+        }
         let pause = self.glows.follow(KEY_PLAYER_PLAY, if self.media.playing { 1.0 } else { 0.0 }, 30.0, 0.85) as f32;
         draw_play_pause(pm, play_x * s, py, s * 0.82, [12, 12, 16, a], pause);
     }

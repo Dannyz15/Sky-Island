@@ -186,4 +186,13 @@ impl App {
             w.request_redraw();
         }
     }
+
+    /// A new copy of what is behind the notch: the glass is drawn again with it.
+    pub(super) fn on_backdrop(&mut self) {
+        if crate::glass::wants_backdrop(self.settings.look)
+            && let Some(w) = &self.window
+        {
+            w.request_redraw();
+        }
+    }
 }

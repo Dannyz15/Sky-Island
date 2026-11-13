@@ -4,11 +4,17 @@ use super::*;
 
 pub(super) const THEME_NAMES: [&str; 3] = ["Dark", "Light", "Follow System"];
 
+pub(super) const LOOK_NAMES: [&str; 2] = ["Classic", "Floating"];
+
+pub(super) const GLASS_NAMES: [&str; 4] = ["Off", "Clear", "Smoky", "Black"];
+
 pub(super) const MOTION_NAMES: [&str; 4] = ["Calm", "Normal", "Snappy", "None"];
 
 pub(super) const SIZE_NAMES: [&str; 5] = ["Auto", "100%", "115%", "130%", "150%"];
 
 pub(super) const OPEN_NAMES: [&str; 2] = ["Hover", "Click"];
+
+pub(super) const LIQUID_ON_NAMES: [&str; 2] = ["All looks", "Glass only"];
 
 pub(super) const WEEK_NAMES: [&str; 2] = ["Sunday", "Monday"];
 
@@ -24,9 +30,11 @@ pub(super) const UNITS_NAMES: [&str; 2] = ["\u{00B0}C", "\u{00B0}F"];
 pub(super) fn seg_weights(seg: Seg) -> &'static [f32] {
     match seg {
         Seg::Theme => &[1.0, 1.0, 2.0],
+        Seg::Look => &[1.0, 1.0],
+        Seg::Glass => &[1.0, 1.0, 1.0, 1.0],
         Seg::Motion => &[1.0, 1.0, 1.0, 1.0],
         Seg::Size => &[1.0, 1.0, 1.0, 1.0, 1.0],
-        Seg::Open | Seg::WeekStart | Seg::CalView | Seg::Units | Seg::Asr => &[1.0, 1.0],
+        Seg::Open | Seg::WeekStart | Seg::CalView | Seg::Units | Seg::Asr | Seg::LiquidOn => &[1.0, 1.0],
         Seg::ClipKeep => &[1.0, 1.0, 1.0, 1.0],
     }
 }
@@ -34,9 +42,12 @@ pub(super) fn seg_weights(seg: Seg) -> &'static [f32] {
 pub(super) fn seg_width(seg: Seg) -> f32 {
     match seg {
         Seg::Theme => 260.0,
+        Seg::Look => 200.0,
+        Seg::Glass => 260.0,
         Seg::Motion => 240.0,
         Seg::Size => 300.0,
         Seg::Open | Seg::CalView => 170.0,
+        Seg::LiquidOn => 220.0,
         Seg::WeekStart => 190.0,
         Seg::ClipKeep => 270.0,
         Seg::Units => 130.0,
@@ -62,9 +73,12 @@ pub(super) fn seg_cells(seg: Seg, ctrl: Rect) -> Vec<Rect> {
 pub(super) fn seg_names(seg: Seg) -> &'static [&'static str] {
     match seg {
         Seg::Theme => &THEME_NAMES,
+        Seg::Look => &LOOK_NAMES,
+        Seg::Glass => &GLASS_NAMES,
         Seg::Motion => &MOTION_NAMES,
         Seg::Size => &SIZE_NAMES,
         Seg::Open => &OPEN_NAMES,
+        Seg::LiquidOn => &LIQUID_ON_NAMES,
         Seg::WeekStart => &WEEK_NAMES,
         Seg::CalView => &VIEW_NAMES,
         Seg::ClipKeep => &KEEP_NAMES,
@@ -80,6 +94,8 @@ pub(super) fn range_of(slide: Slide) -> Range {
         Slide::Volume => settings::VOLUME,
         Slide::AlarmEvery => settings::ALARM_EVERY,
         Slide::AlarmFor => settings::ALARM_FOR,
+        Slide::GlassClear => settings::GLASS_CLEAR,
+        Slide::GlassFrost => settings::GLASS_FROST,
     }
 }
 
@@ -87,7 +103,7 @@ pub(super) fn slider_text(slide: Slide, v: u32) -> String {
     match slide {
         Slide::OpenDelay if v == 0 => "Instant".to_string(),
         Slide::OpenDelay | Slide::CloseDelay => format!("{v} ms"),
-        Slide::Volume => format!("{v}%"),
+        Slide::Volume | Slide::GlassClear | Slide::GlassFrost => format!("{v}%"),
         Slide::AlarmEvery | Slide::AlarmFor => format!("{v} s"),
     }
 }
@@ -113,6 +129,10 @@ impl App {
             Toggle::ClosedMusic => self.settings.closed_music,
             Toggle::ClosedBars => self.settings.closed_bars,
             Toggle::ClosedSpin => self.settings.closed_spin,
+            Toggle::LiquidDrip => self.settings.liquid_drip,
+            Toggle::LiquidBubbles => self.settings.liquid_bubbles,
+            Toggle::LiquidBulge => self.settings.liquid_bulge,
+            Toggle::LiquidJelly => self.settings.liquid_jelly,
             Toggle::ClosedEdge => self.settings.closed_edge,
             Toggle::ClosedSound => self.settings.closed_sound,
             Toggle::LyricsOnline => self.settings.lyrics_online,
@@ -171,6 +191,10 @@ impl App {
             Toggle::ClosedMusic => self.settings.closed_music = !self.settings.closed_music,
             Toggle::ClosedBars => self.settings.closed_bars = !self.settings.closed_bars,
             Toggle::ClosedSpin => self.settings.closed_spin = !self.settings.closed_spin,
+            Toggle::LiquidDrip => self.settings.liquid_drip = !self.settings.liquid_drip,
+            Toggle::LiquidBubbles => self.settings.liquid_bubbles = !self.settings.liquid_bubbles,
+            Toggle::LiquidBulge => self.settings.liquid_bulge = !self.settings.liquid_bulge,
+            Toggle::LiquidJelly => self.settings.liquid_jelly = !self.settings.liquid_jelly,
             Toggle::ClosedEdge => self.settings.closed_edge = !self.settings.closed_edge,
             Toggle::ClosedSound => self.settings.closed_sound = !self.settings.closed_sound,
             Toggle::LyricsOnline => {
@@ -275,9 +299,12 @@ impl App {
     pub(super) fn seg_value(&self, seg: Seg) -> usize {
         match seg {
             Seg::Theme => ThemeMode::ALL.iter().position(|t| *t == self.settings.theme).unwrap_or(0),
+            Seg::Look => NotchShape::ALL.iter().position(|l| *l == self.settings.shape).unwrap_or(0),
+            Seg::Glass => NotchGlass::ALL.iter().position(|g| *g == self.settings.glass).unwrap_or(1),
             Seg::Motion => Motion::ALL.iter().position(|m| *m == self.settings.motion).unwrap_or(1),
             Seg::Size => NotchSize::ALL.iter().position(|z| *z == self.settings.size).unwrap_or(0),
             Seg::Open => usize::from(self.settings.open_on_click),
+            Seg::LiquidOn => usize::from(self.settings.liquid_glass_only),
             Seg::WeekStart => usize::from(self.settings.week_monday),
             Seg::CalView => usize::from(self.settings.calendar_week),
             Seg::ClipKeep => ClipKeep::ALL.iter().position(|k| *k == self.settings.clip_keep).unwrap_or(0),
@@ -289,9 +316,18 @@ impl App {
     pub(super) fn set_seg(&mut self, seg: Seg, i: usize) {
         match seg {
             Seg::Theme => self.settings.theme = ThemeMode::ALL[i.min(2)],
+            Seg::Look => {
+                self.settings.shape = NotchShape::ALL[i.min(NotchShape::ALL.len() - 1)];
+                self.settings.set_look();
+            }
+            Seg::Glass => {
+                self.settings.glass = NotchGlass::ALL[i.min(NotchGlass::ALL.len() - 1)];
+                self.settings.set_look();
+            }
             Seg::Motion => self.settings.motion = Motion::ALL[i.min(3)],
             Seg::Size => self.settings.size = NotchSize::ALL[i.min(4)],
             Seg::Open => self.settings.open_on_click = i == 1,
+            Seg::LiquidOn => self.settings.liquid_glass_only = i == 1,
             Seg::WeekStart => self.settings.week_monday = i == 1,
             Seg::CalView => self.settings.calendar_week = i == 1,
             Seg::ClipKeep => self.settings.clip_keep = ClipKeep::ALL[i.min(3)],
@@ -301,6 +337,10 @@ impl App {
         self.settings_changed();
         if seg == Seg::Asr {
             self.sync_prayer();
+        }
+        if matches!(seg, Seg::Look | Seg::Glass) {
+            // The floating pill's window is taller, and the glass may now need what is behind it.
+            self.step();
         }
     }
 
@@ -357,6 +397,8 @@ impl App {
             Slide::Volume => self.settings.volume,
             Slide::AlarmEvery => self.settings.alarm_every,
             Slide::AlarmFor => self.settings.alarm_for,
+            Slide::GlassClear => self.settings.glass_clear,
+            Slide::GlassFrost => self.settings.glass_frost,
         }
     }
 
@@ -369,6 +411,8 @@ impl App {
             Slide::Volume => self.settings.volume = v,
             Slide::AlarmEvery => self.settings.alarm_every = v,
             Slide::AlarmFor => self.settings.alarm_for = v,
+            Slide::GlassClear => self.settings.glass_clear = v,
+            Slide::GlassFrost => self.settings.glass_frost = v,
         }
     }
 

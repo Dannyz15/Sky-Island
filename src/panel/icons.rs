@@ -79,6 +79,7 @@ pub(super) fn draw_page_icon(pm: &mut Pixmap, page: Page, x: f32, y: f32, size: 
         Page::General => icon_gear(pm, &g),
         Page::Notch => icon_screen(pm, &g),
         Page::ClosedNotch => icon_closed_notch(pm, &g),
+        Page::Liquid => icon_drop(pm, &g),
         Page::Music => icon_music(pm, &g),
         Page::Appearance => icon_half_circle(pm, &g),
         Page::Tabs => icon_tiles(pm, &g),
@@ -123,6 +124,14 @@ fn icon_closed_notch(pm: &mut Pixmap, g: &Glyph) {
     let eye = gfx::mix(from, to, 0.6);
     crate::fill_rounded(pm, cx - 3.6 * u, cy - 1.8 * u, 2.0 * u, 3.6 * u, 1.0 * u, eye);
     crate::fill_rounded(pm, cx + 1.6 * u, cy - 1.8 * u, 2.0 * u, 3.6 * u, 1.0 * u, eye);
+}
+
+/// A drop of liquid: a point at the top, round at the bottom.
+fn icon_drop(pm: &mut Pixmap, g: &Glyph) {
+    let Glyph { cx, cy, u, w, .. } = *g;
+    let mut drop = vec![(cx, cy - 8.0 * u)];
+    drop.extend(arc_points(cx, cy + 2.2 * u, 5.6 * u, -32.0, 212.0, 30));
+    fill_poly(pm, &drop, w);
 }
 
 /// Two notes under one beam, as on the notch's Music tab.

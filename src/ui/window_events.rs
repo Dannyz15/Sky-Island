@@ -6,6 +6,7 @@ impl App {
     /// The mouse came onto the notch.
     pub(super) fn on_cursor_entered(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
+        self.pointer.inside = true;
         self.pointer.leave_at = None;
         // With "Open the notch" on Click, resting on it does nothing, except to bring an auto-hidden
         // island back into view.
@@ -19,6 +20,7 @@ impl App {
     /// The mouse left the notch.
     pub(super) fn on_cursor_left(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
+        self.pointer.inside = false;
         self.pointer.enter_at = None; // a fly-by never opened it
         if self.pointer.hovered && self.play.scrub.is_none() && !self.lyric.settle {
             self.pointer.leave_at = Some(now + self.hover_close());
@@ -28,9 +30,11 @@ impl App {
 
     /// The mouse moved over the notch.
     pub(super) fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
-        // The window has a flare on each side of the notch; positions count from the notch itself.
+        // The window has a flare on each side of the notch (and the floating pill a gap above it); positions count from
+        // the notch itself.
         let ear = EAR * self.ui_scale();
-        let position = PhysicalPosition::new(position.x - ear, position.y);
+        let gap = crate::glass::gap(self.settings.look) * self.ui_scale();
+        let position = PhysicalPosition::new(position.x - ear, position.y - gap);
         self.pointer.cursor = (position.x, position.y);
         if self.play.scrub.is_some() {
             let s = self.ui_scale();

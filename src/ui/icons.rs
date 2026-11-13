@@ -234,32 +234,6 @@ pub(crate) fn draw_prev(pm: &mut Pixmap, cx: f32, cy: f32, s: f32, c: [u8; 4]) {
     fill_rect(pm, cx - 8.0 * s, cy - 8.0 * s, 3.0 * s, 16.0 * s, c);
 }
 
-/// The curved flares on both sides of the notch's top edge, where it meets the top of the screen: the
-/// outer corners curve inwards, like a notch cut into the screen. `ear` is their width and height.
-pub(crate) fn draw_ears(pm: &mut Pixmap, ear: f32) {
-    if ear < 1.0 {
-        return;
-    }
-    let width = pm.width() as f32;
-    let body = theme::body()[0];
-    let mut paint = Paint::default();
-    paint.set_color_rgba8(body[0], body[1], body[2], 255);
-    paint.anti_alias = true;
-    for left in [true, false] {
-        // Drawn for the left side, then mirrored for the right.
-        let x = |v: f32| if left { v } else { width - v };
-        let mut pb = PathBuilder::new();
-        pb.move_to(x(0.0), 0.0);
-        pb.line_to(x(ear), 0.0);
-        pb.line_to(x(ear), ear);
-        pb.quad_to(x(ear), 0.0, x(0.0), 0.0);
-        pb.close();
-        if let Some(path) = pb.finish() {
-            pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
-        }
-    }
-}
-
 /// The colour of the eyes (and of their sleepy and happy faces) in a style.
 pub(crate) fn eye_colour(style: EyeStyle) -> [u8; 3] {
     match style {

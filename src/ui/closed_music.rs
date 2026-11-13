@@ -182,6 +182,12 @@ impl App {
         (needed as f64 - COLLAPSED.0 * self.spring.closed_k).max(0.0)
     }
 
+    /// How far the middles of the record and of the bars are from the middle of the closed notch, in logical pixels:
+    /// where their bubbles go.
+    pub(crate) fn music_bubble_offset(&self) -> f64 {
+        (self.centre_width() / 2.0 + GAP + SLOT / 2.0) as f64
+    }
+
     /// Whether the music is on the closed notch and something on it moves, so it needs a frame now and then.
     pub(crate) fn bars_running(&self) -> bool {
         self.music.k > 0.02 && self.media.playing && !self.vis.hidden && self.spring.tuck_t < 1.0 && self.spring.progress <= 0.0 && self.notices.until.is_none()

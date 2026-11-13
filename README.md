@@ -85,6 +85,8 @@ To update, run a newer setup, or use **Check for updates** in Settings > About. 
 
 Hover over the notch at the top edge of your screen to open it. Move away and it closes. It also pops up briefly when something changes on your PC, such as the volume or the battery.
 
+Choose its shape in Settings > Appearance > **Notch look**, joined to the top of the screen (Classic) or a pill floating just below it, and what it is made of in **Glass**: no glass, clear or smoky liquid glass that shows, blurred, what is behind it, or black glass. **Transparency** and **Frost** set how see-through the glass is and how blurred what shows through it is. Settings > **Liquid** adds liquid effects, each on its own: a drop running down as it opens, the music and notices in bubbles of their own, the edge swelling towards the mouse, and opening like jelly. They are all off at first.
+
 Closed, the notch shows the clock, or a pair of blinking eyes in one of ten styles. While a song plays it also shows the album cover as a spinning record, with a ring that fills as the song goes on, and five bars that rise and fall with the real loudness of the music. Choose the look in Settings > Closed notch.
 
 ## Questions
@@ -154,6 +156,8 @@ Network requests, and why:
 - **Updates:** GitHub, to look for a newer version at start and every 6 hours (switch off in Settings > Notices). Nothing is downloaded until you press Download.
 
 **Sound:** while a song plays and the closed notch shows its bars, Sky Island listens to the sound your PC sends to the speakers or headphones (Windows calls it loopback) to make the bars follow the music. It only measures how loud each pitch is, about 45 times a second. Nothing is recorded, saved or sent, the microphone is not used, and it stops a moment after the bars go away. Switch it off with **Bars follow the sound** in Settings > Closed notch. It hears everything the PC plays, not only the song.
+
+**Glass:** with Clear or Smoky glass, Sky Island copies the part of the screen right around the notch a few times a second, to show it blurred through the glass. The copy is kept in memory only; it is never saved or sent. Nothing is copied with Black glass or no glass.
 
 To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whether one of those two keys was pressed. It never records or sends what you type. **Start with Windows** adds one startup entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 </details>
