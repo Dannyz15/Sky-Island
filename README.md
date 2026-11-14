@@ -124,6 +124,12 @@ Settings > Closed notch. **Eye style** is a grid of ten styles; pick one to see 
 </details>
 
 <details>
+<summary>How do I change how loud a reminder is, or use my own sound?</summary>
+
+Settings > Timer & Sounds. **Sounds** turns the chimes on or off and **Master volume** scales all of them. The timer, the to-do reminders, the water reminders and the prayer times each have their own **Volume** and a **Sound** button for a file of your own (`.wav`, `.mp3`, `.m4a`, `.wma` or `.aac`). The timer alarm also has **Repeat every** and **Ring for**.
+</details>
+
+<details>
 <summary>Where is my data, and how do I start over?</summary>
 
 In `%APPDATA%\Sky-Island`. Settings > About has **Open data folder** and **Reset to defaults**.

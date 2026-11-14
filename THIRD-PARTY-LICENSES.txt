@@ -63,7 +63,7 @@ raw-window-handle 0.6.2  [MIT OR Apache-2.0 OR Zlib]  https://github.com/rust-wi
 ring 0.17.14  [Apache-2.0 AND ISC]  https://github.com/briansmith/ring
 rustls 0.23.46  [Apache-2.0 OR ISC OR MIT]  https://github.com/rustls/rustls
 rustls-pki-types 1.16.0  [MIT OR Apache-2.0]  https://github.com/rustls/pki-types
-rustls-webpki 0.103.16  [ISC]  https://github.com/rustls/webpki
+rustls-webpki 0.103.17  [ISC]  https://github.com/rustls/webpki
 serde 1.0.229  [MIT OR Apache-2.0]  https://github.com/serde-rs/serde
 serde_core 1.0.229  [MIT OR Apache-2.0]  https://github.com/serde-rs/serde
 serde_json 1.0.154  [MIT OR Apache-2.0]  https://github.com/serde-rs/json
@@ -87,7 +87,7 @@ typenum 1.20.1  [MIT OR Apache-2.0]  https://github.com/paholg/typenum
 unicode-ident 1.0.27  [(MIT OR Apache-2.0) AND Unicode-3.0]  https://github.com/dtolnay/unicode-ident
 unicode-segmentation 1.13.3  [MIT OR Apache-2.0]  https://github.com/unicode-rs/unicode-segmentation
 untrusted 0.9.0  [ISC]  https://github.com/briansmith/untrusted
-ureq 3.5.1  [MIT OR Apache-2.0]  https://github.com/algesten/ureq
+ureq 3.5.2  [MIT OR Apache-2.0]  https://github.com/algesten/ureq
 ureq-proto 0.7.1  [MIT OR Apache-2.0]  https://github.com/algesten/ureq-proto
 utf8-zero 0.8.1  [MIT OR Apache-2.0]  https://github.com/algesten/utf8-zero
 webpki-roots 1.0.12  [CDLA-Permissive-2.0]  https://github.com/rustls/webpki-roots
@@ -4860,7 +4860,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ================================================================================
-Used by: rustls-webpki 0.103.16
+Used by: rustls-webpki 0.103.17
 ================================================================================
 
 Except as otherwise noted, this project is licensed under the following
@@ -5674,7 +5674,7 @@ Used by: untrusted 0.9.0
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ================================================================================
-Used by: ureq 3.5.1, ureq-proto 0.7.1, zeroize 1.9.1, zune-core 0.5.3, zune-jpeg 0.5.15
+Used by: ureq 3.5.2, ureq-proto 0.7.1, zeroize 1.9.1, zune-core 0.5.3, zune-jpeg 0.5.15
 ================================================================================
 
 Apache License
@@ -5880,7 +5880,7 @@ Apache License
    limitations under the License.
 
 ================================================================================
-Used by: ureq 3.5.1
+Used by: ureq 3.5.2
 ================================================================================
 
 MIT License

@@ -2,7 +2,7 @@
 name = "sky-island"
 version = "1.6.1"
 edition = "2024"
-rust-version = "1.99"
+rust-version = "1.100"
 description = "A notch for the top of your Windows screen: music with lyrics, timer, water, weather, prayer times, system stats, file shelf, to-do, calendar, clipboard and system notices."
 license = "MIT"
 publish = false
