@@ -149,7 +149,7 @@ impl Default for Visibility {
 }
 
 impl App {
-    fn target(&self) -> f64 {
+    pub(crate) fn target(&self) -> f64 {
         if self.pointer.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_entry.field.is_some() || self.notices.alert_until.is_some() { 1.0 } else { 0.0 }
     }
 
@@ -365,6 +365,10 @@ impl App {
         self.eyes_step(dt, speed, bounce);
 
         self.step_open(dt, speed, bounce);
+        // The Stats view starts looking at the numbers as the notch opens, not when it has settled.
+        if self.stats_open() {
+            let _ = self.stats_tick(now);
+        }
         self.step_lists(dt, speed, bounce);
         self.step_overlay(dt, speed, bounce);
         self.step_closed(dt, speed, bounce);

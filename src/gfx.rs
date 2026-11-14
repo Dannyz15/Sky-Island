@@ -161,15 +161,26 @@ pub fn fill_through(pm: &mut Pixmap, c: [u8; 3], mask: &Mask) {
 
 /// A soft shadow below a rounded rectangle, built from a few growing translucent layers.
 pub fn soft_shadow(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spread: f32, strength: u8) {
-    shadow_layers(pm, x, y, w, h, r, spread, strength, tiny_skia::BlendMode::SourceOver);
+    shadow_layers(pm, x, y, w, h, r, spread, strength, tiny_skia::BlendMode::SourceOver, false);
 }
 
-/// The same shadow, drawn behind what is already on `pm` (so it shows only where that is clear or see-through).
+/// The same shadow, drawn behind a solid shape that fills the rectangle (so it shows only outside it). The part under the
+/// shape is left out: it would be covered anyway, and for a big notch it is most of the cost of the shadow.
 pub fn soft_shadow_behind(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spread: f32, strength: u8) {
-    shadow_layers(pm, x, y, w, h, r, spread, strength, tiny_skia::BlendMode::DestinationOver);
+    shadow_layers(pm, x, y, w, h, r, spread, strength, tiny_skia::BlendMode::DestinationOver, true);
 }
 
-fn shadow_layers(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spread: f32, strength: u8, blend: tiny_skia::BlendMode) {
+/// How far inside the rectangle the shadow's hole starts when it is left out under the shape, in pixels: the shape's soft
+/// edge lies over the shadow a little.
+const SHADOW_HOLE_INSET: f32 = 2.0;
+
+#[allow(clippy::too_many_arguments)]
+fn shadow_layers(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spread: f32, strength: u8, blend: tiny_skia::BlendMode, leave_hole: bool) {
+    let hole = if leave_hole {
+        rounded_path(x + SHADOW_HOLE_INSET, y + SHADOW_HOLE_INSET, w - 2.0 * SHADOW_HOLE_INSET, h - 2.0 * SHADOW_HOLE_INSET, (r - SHADOW_HOLE_INSET).max(0.0))
+    } else {
+        None
+    };
     const LAYERS: u32 = 6;
     for i in 0..LAYERS {
         let t = (i + 1) as f32 / LAYERS as f32;
@@ -184,7 +195,17 @@ fn shadow_layers(pm: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, spread
             paint.set_color_rgba8(0, 0, 0, alpha);
             paint.anti_alias = true;
             paint.blend_mode = blend;
-            pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            // With the hole, the layer is the ring between the two outlines.
+            let (path, rule) = match &hole {
+                Some(hole) => {
+                    let mut pb = PathBuilder::new();
+                    pb.push_path(&path);
+                    pb.push_path(hole);
+                    (pb.finish().unwrap_or(path), FillRule::EvenOdd)
+                }
+                None => (path, FillRule::Winding),
+            };
+            pm.fill_path(&path, &paint, rule, Transform::identity(), None);
         }
     }
 }
@@ -404,6 +425,32 @@ mod tests {
             let worst = quick.data().iter().zip(slow.data()).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
             assert!(worst <= 2, "offset ({dx}, {dy}): the pictures differ by {worst}");
         }
+    }
+
+    #[test]
+    fn a_shadow_behind_a_solid_shape_looks_the_same_without_the_part_under_it() {
+        let (w, h) = (300u32, 220u32);
+        let body = |pm: &mut Pixmap, c: [u8; 4]| {
+            if let Some(path) = rounded_path(20.0, -40.0, 260.0, 220.0, 24.0) {
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(c[0], c[1], c[2], c[3]);
+                paint.anti_alias = true;
+                pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        };
+        let mut ring = Pixmap::new(w, h).unwrap();
+        body(&mut ring, [200, 40, 40, 255]);
+        soft_shadow_behind(&mut ring, 20.0, -40.0, 260.0, 220.0, 24.0, 10.0, 150);
+        // The same with the whole shadow laid under it.
+        let mut full = Pixmap::new(w, h).unwrap();
+        shadow_layers(&mut full, 20.0, -40.0, 260.0, 220.0, 24.0, 10.0, 150, tiny_skia::BlendMode::SourceOver, false);
+        let mut under = Pixmap::new(w, h).unwrap();
+        body(&mut under, [200, 40, 40, 255]);
+        full.draw_pixmap(0, 0, under.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+        let differ = ring.pixels().iter().zip(full.pixels()).filter(|(a, b)| a.red().abs_diff(b.red()) > 2 || a.alpha().abs_diff(b.alpha()) > 5).count();
+        assert_eq!(differ, 0, "{differ} pixels differ");
+        assert!(ring.pixel(150, 80).unwrap().alpha() == 255, "the shape itself is untouched");
+        assert!(ring.pixel(150, 188).unwrap().alpha() > 0, "the shadow shows below it");
     }
 
     #[test]

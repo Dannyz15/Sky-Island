@@ -233,14 +233,6 @@ impl App {
         if liquid.drip > 0.0 || liquid.bubbles.is_some() {
             gfx::clip_to(&mut pixmap, &out, ear as i32, gap as i32);
         }
-        if open > 0.0 {
-            // The open notch casts a soft shadow on what is below it (the floating pill all round, below the gap above
-            // it; the others from the top edge of the screen).
-            let r = (body_h / 2.0).min(30.0 * s);
-            let strength = (open * if self.light() { 70.0 } else { 150.0 }) as u8;
-            let top = if look.floating() { gap as f32 } else { -40.0 * s };
-            gfx::soft_shadow_behind(&mut out, ear, top, fw, gap as f32 + body_h - top, r, 10.0 * s, strength);
-        }
         gfx::blit_over(&mut out, &pixmap, ear as i32, gap as i32);
 
         let Some(surface) = self.surface.as_mut() else { return };
@@ -366,6 +358,15 @@ impl App {
             clear: self.settings.glass_clear as u8,
         };
         crate::glass::paint(&mut pm, &g);
+        if open > 0.0 {
+            // The open notch casts a soft shadow on what is below it (the floating pill all round, below the gap above
+            // it; the others from the top edge of the screen). It is part of the body, so it is kept with it at rest.
+            let body_h = (size.1 as f32 - gap - room - liquid.drip).max(1.0);
+            let (fw, r) = ((size.0 as f32 - 2.0 * ear).max(1.0), (body_h / 2.0).min(30.0 * s));
+            let strength = (open * if self.light() { 70.0 } else { 150.0 }) as u8;
+            let top = if look.floating() { gap } else { -40.0 * s };
+            gfx::soft_shadow_behind(&mut pm, ear, top, fw, gap + body_h - top, r, 10.0 * s, strength);
+        }
         if let Some(key) = key {
             self.body = Some((key, pm.clone()));
         }

@@ -21,6 +21,8 @@ type Area = (f32, f32, f32, f32);
 pub(crate) struct StatsTab {
     pub(crate) data: stats::Stats,
     pub(crate) at: Option<Instant>,
+    /// When the first look of this opening was taken.
+    pub(crate) since: Option<Instant>,
     pub(crate) frame: Option<Instant>,
     pub(crate) backdrops: std::cell::RefCell<StatsBackdrops>,
 }
@@ -212,6 +214,11 @@ fn fill_under(pm: &mut Pixmap, line: &[(f32, f32)], top: f32, base: f32, c: [u8;
     pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
 }
 
+/// How far open the notch is when the Stats view starts looking at the numbers.
+const STATS_FROM: f64 = 0.4;
+/// How long the looks stay quick while a graphics chip has not shown its load yet.
+const GPU_WAIT: Duration = Duration::from_secs(2);
+
 impl App {
     /// How much taller than normal the notch is while the Stats view is open, to fit the cards, the graphs and a row
     /// for each drive.
@@ -223,12 +230,18 @@ impl App {
         extra_height(p.end) as f64
     }
 
+    /// Whether the Stats view is open or opening: it is the view, the notch is well on its way open and is going to stay
+    /// so. The looks at the numbers start then, while it is still growing, instead of when it has stopped.
+    pub(crate) fn stats_open(&self) -> bool {
+        self.view == View::Stats && self.spring.progress >= STATS_FROM && self.target() > 0.5
+    }
+
     /// While the Stats view is open, look at the numbers (the first two looks come quickly, then once a second) and
     /// say when to wake for the next one, which is soon: the graphs glide between two looks, so they are drawn about
     /// thirty times a second. Nothing is looked at, or drawn, while it is closed; its numbers are forgotten, so that
     /// it starts afresh next time.
     pub(crate) fn stats_tick(&mut self, now: Instant) -> Option<Instant> {
-        if self.spring.progress < 1.0 || self.view != View::Stats {
+        if !self.stats_open() {
             if self.stats.data.started {
                 // The drives and the names of the graphics chips stay, so the view keeps its shape while it slides out
                 // and opens at the right height.
@@ -239,14 +252,19 @@ impl App {
                 self.stats.data.last.disks = disks;
                 self.stats.data.last.gpus = chips;
                 self.stats.at = None;
+                self.stats.since = None;
                 self.stats.frame = None;
             }
             return None;
         }
-        let gap = if self.stats.data.ready() { stats::EVERY } else { stats::FIRST_AGAIN };
+        // The looks come quickly until the processor has shown its load and, for a couple of seconds, until the
+        // graphics chips have shown theirs; then once a second.
+        let waiting = !self.stats.data.ready() || (self.stats.data.gpu_pending() && self.stats.since.is_none_or(|s| now.saturating_duration_since(s) < GPU_WAIT));
+        let gap = if waiting { stats::FIRST_AGAIN } else { stats::EVERY };
         let due = self.stats.at.map_or(now, |at| at + gap);
         let mut frame_due = false;
         if now >= due {
+            self.stats.since.get_or_insert(now);
             self.stats.data.sample(now);
             self.stats.at = Some(now);
             // The numbers have just changed: draw at once, so that the glide starts.

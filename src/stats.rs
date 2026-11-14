@@ -24,7 +24,7 @@ use windows::core::PCWSTR;
 /// How often the numbers are looked at while the tab is open.
 pub const EVERY: Duration = Duration::from_secs(1);
 /// The first look is quick, so the tab does not sit empty: the processor and the network need two looks to say anything.
-pub const FIRST_AGAIN: Duration = Duration::from_millis(400);
+pub const FIRST_AGAIN: Duration = Duration::from_millis(250);
 /// How many seconds of the processor's history are kept for the graph.
 pub const HISTORY: usize = 60;
 /// The disks are looked at this often (they hardly change; a drive plugged in shows up within this time).
@@ -179,6 +179,12 @@ impl Stats {
     pub fn ready(&self) -> bool {
         self.last.cpu.is_some()
     }
+
+    /// Whether the graphics chips have not shown their load yet: they are not named yet, or named without a load (the
+    /// first reading is on its way). A PC with no load to show stays "pending", so the caller only waits for a while.
+    pub fn gpu_pending(&self) -> bool {
+        self.last.gpus.is_empty() || self.last.gpus.iter().any(|c| c.load.is_none())
+    }
 }
 
 /// What the look at the graphics chips has found: nothing yet (`None`), or the chips (none at all when Windows has no
@@ -332,8 +338,11 @@ fn watch_gpus(report: &Mutex<Option<Vec<Chip>>>, asked: &AtomicU64) {
                 std::thread::park();
             }
             let _ = PdhCollectQueryData(query);
+            // The first reading after waking comes quickly, so the graphics chips show their load soon; then once a second.
+            let mut wait = 300;
             while gpu_wanted(asked.load(Ordering::Relaxed), now_ms()) {
-                std::thread::sleep(Duration::from_millis(1000));
+                std::thread::sleep(Duration::from_millis(wait));
+                wait = 1000;
                 if PdhCollectQueryData(query) != 0 {
                     continue;
                 }
