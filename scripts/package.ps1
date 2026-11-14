@@ -29,11 +29,25 @@ if (-not $iscc) {
 }
 
 # The compiler may sit in a folder any program of yours can write to (Inno Setup installs into the user's own folder
-# when it is not run as administrator), and whatever runs here goes into the setup. Run only the real one: its
-# Authenticode signature must be valid and be the Inno Setup author's (Pyrsys B.V.).
-$signature = Get-AuthenticodeSignature $iscc
-if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(^|, )O=Pyrsys B\.V\.(,|$)') {
-    throw "ISCC.exe at $iscc is not signed by the Inno Setup author (signature: $($signature.Status), signer: $($signature.SignerCertificate.Subject)). Reinstall Inno Setup 7 from https://jrsoftware.org/isinfo.php."
+# when it is not run as administrator), and whatever runs here goes into the setup. Run only the real one: every
+# program in its folder (ISCC.exe, the compiler DLLs, the tools) must have a valid Authenticode signature of the Inno
+# Setup author (Pyrsys B.V.). The setup stubs (Setup.e32 and the like) and the compiler DLL cannot carry one, so
+# Inno Setup 7 itself checks them against the signature files shipped beside them (`.issig`) and stops with "is not
+# trusted (incorrect hash)" when one was changed; that check is tested for a changed stub and a changed DLL, and it
+# stays on because the installer script must not set DisablePrecompiledFileVerifications (checked below).
+function Assert-InnoFolder([string]$dir) {
+    $bad = @(Get-ChildItem $dir -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object {
+        $s = Get-AuthenticodeSignature $_.FullName
+        if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch '(^|, )O=Pyrsys B\.V\.(,|$)') { "  $($_.FullName) (signature: $($s.Status), signed by: $($s.SignerCertificate.Subject))" }
+    })
+    if ($bad.Count -gt 0) {
+        throw "These files in the Inno Setup folder are not signed by the Inno Setup author:`n$($bad -join "`n")`nReinstall Inno Setup 7 from https://jrsoftware.org/isinfo.php."
+    }
+}
+$innoDir = Split-Path $iscc -Parent
+Assert-InnoFolder $innoDir
+if (Select-String -Path 'installer\sky-island.iss' -Pattern 'DisablePrecompiledFileVerifications' -Quiet) {
+    throw 'installer\sky-island.iss turns off the Inno Setup file verification (DisablePrecompiledFileVerifications); remove it.'
 }
 
 # A release is built from the working tree BEFORE it is committed, and the only changes it makes are the version bump
@@ -76,6 +90,16 @@ if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
 & (Join-Path $PSScriptRoot 'third-party.ps1')
 if ($LASTEXITCODE -ne 0 -or -not $?) { throw 'third-party licence list failed' }
 
-& $iscc "/DAppVersion=$version" 'installer\sky-island.iss'
-if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
+# The tests and the build above took a while, and the Inno Setup folder may be one that other programs of yours can
+# write to. So copy it now to a folder of its own, check the COPY and run the compiler from the copy: what is checked
+# is what runs, with no gap in between (a program that swapped a file during the build is caught by the check).
+$private = Join-Path ([IO.Path]::GetTempPath()) ('sky-island-inno-' + [guid]::NewGuid().ToString('N'))
+try {
+    Copy-Item $innoDir $private -Recurse
+    Assert-InnoFolder $private
+    & (Join-Path $private 'ISCC.exe') "/DAppVersion=$version" 'installer\sky-island.iss'
+    if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
+} finally {
+    Remove-Item $private -Recurse -Force -ErrorAction SilentlyContinue
+}
 Write-Host "Created dist\Sky-Island-Setup-$version.exe"

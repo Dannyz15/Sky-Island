@@ -26,6 +26,13 @@ pub const STALE: Duration = Duration::from_secs(10 * 60);
 /// How many days the forecast has, today included.
 const DAYS: usize = 6;
 
+/// The most characters a place's name keeps. The name comes from a web service (or from settings.json), is kept in
+/// settings.json and is measured and drawn on three pages, so it is cut where it is made: no answer, however long,
+/// can make a page slow. A real city, region and country fit in this many with room to spare.
+pub const NAME_MAX: usize = 120;
+/// The longest time-zone name kept ("America/Argentina/ComodRivadavia" is 32).
+const TZ_MAX: usize = 64;
+
 /// A city: what to call it, where it is and which time zone it is in.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Place {
@@ -44,10 +51,14 @@ impl Place {
     }
 
     pub fn from_json(v: &Value) -> Option<Place> {
-        let name = v.get("name")?.as_str()?.trim().to_string();
+        let name = crate::lyrics::clip(v.get("name")?.as_str()?.trim(), NAME_MAX).trim_end().to_string();
         let (lat, lon) = (coarse(v.get("lat")?.as_f64()?), coarse(v.get("lon")?.as_f64()?));
-        let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
-        let (tz, cc) = (text("tz"), text("cc"));
+        let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default();
+        // A time zone is a short name of letters, digits and `_ / + -`; a country is two letters. Anything else is
+        // treated as not known (empty), which every use of them already handles.
+        let tz =
+            Some(text("tz")).filter(|t| t.len() <= TZ_MAX && t.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '+' | '-'))).unwrap_or_default().to_string();
+        let cc = Some(text("cc")).filter(|c| c.len() == 2 && c.chars().all(|c| c.is_ascii_alphabetic())).unwrap_or_default().to_ascii_uppercase();
         let on_earth = (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon);
         (!name.is_empty() && on_earth).then_some(Place { name, lat, lon, tz, cc })
     }
@@ -425,6 +436,44 @@ mod tests {
     fn the_agent_refuses_plain_http() {
         let err = agent().get("http://127.0.0.1:9/x").call().unwrap_err();
         assert!(matches!(err, ureq::Error::RequireHttpsOnly(_)), "{err}");
+    }
+
+    /// A name, time zone and country that a web service (or a hand-edited settings.json) made huge or odd are cut or
+    /// dropped where the place is made, so the pages that draw them never see more than a short name.
+    #[test]
+    fn a_place_keeps_a_short_name_and_a_plain_time_zone_and_country() {
+        let huge = "x".repeat(2_000_000);
+        let p = Place::from_json(&json!({ "name": huge, "lat": 3.0, "lon": 101.0, "tz": "a/".repeat(1000), "cc": "Malaysia" })).expect("a place");
+        assert_eq!(p.name.chars().count(), NAME_MAX, "a huge name is cut");
+        assert_eq!((p.tz.as_str(), p.cc.as_str()), ("", ""), "a huge time zone and a long country are dropped");
+
+        let wide = Place::from_json(&json!({ "name": "\u{4E2D}".repeat(5000), "lat": 3.0, "lon": 101.0, "tz": "", "cc": "" })).expect("a place");
+        assert_eq!(wide.name.chars().count(), NAME_MAX, "the cut counts characters, not bytes");
+
+        for tz in ["Asia/Kuala_Lumpur", "Etc/GMT+5", "America/Argentina/ComodRivadavia", ""] {
+            let p = Place::from_json(&json!({ "name": "A", "lat": 1.0, "lon": 1.0, "tz": tz, "cc": "my" })).expect("a place");
+            assert_eq!(p.tz, tz, "a real time zone stays");
+            assert_eq!(p.cc, "MY", "a country is two letters, upper case");
+        }
+        for tz in ["../x", "a b", "Asia/Kuala_Lumpur\n", "\u{4E2D}\u{6587}"] {
+            let p = Place::from_json(&json!({ "name": "A", "lat": 1.0, "lon": 1.0, "tz": tz, "cc": "1" })).expect("a place");
+            assert_eq!((p.tz.as_str(), p.cc.as_str()), ("", ""), "{tz:?} is not a time zone");
+        }
+        // The cut keeps a name that was fine.
+        let kl = Place::from_json(&json!({ "name": "  Kuala Lumpur, Malaysia ", "lat": 3.15, "lon": 101.69, "tz": "Asia/Kuala_Lumpur", "cc": "MY" })).expect("a place");
+        assert_eq!(kl.name, "Kuala Lumpur, Malaysia");
+    }
+
+    /// Every way a place is made (typed city, Detect by internet, Windows Location) goes through the same cut.
+    #[test]
+    fn a_huge_answer_from_a_service_becomes_a_short_place_name() {
+        let city = "c".repeat(500_000);
+        let search = json!([{ "lat": "3.15", "lon": "101.69", "address": { "city": city, "state": "s".repeat(500_000), "country": "k".repeat(500_000), "country_code": "my" } }]);
+        assert!(place_from_search(&search).expect("a place").name.chars().count() <= NAME_MAX);
+        let ip = json!({ "success": true, "city": city, "region": "r".repeat(500_000), "country": "k".repeat(500_000), "country_code": "MY", "latitude": 3.15, "longitude": 101.69, "timezone": { "id": "t".repeat(500_000) } });
+        let p = place_from_ip(&ip).expect("a place");
+        assert!(p.name.chars().count() <= NAME_MAX);
+        assert_eq!(p.tz, "", "a time zone name of half a million letters is not kept");
     }
 
     fn answer() -> Value {

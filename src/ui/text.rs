@@ -112,7 +112,11 @@ impl<'a> Faces<'a> {
     }
 }
 
+/// How wide `text` is drawn. Only the first `MAX_DRAW_CHARS` characters are measured (a row can never show more, and
+/// `draw_text` cuts there too), so the work has a ceiling whatever string a caller passes, such as a place name that a
+/// web service answered with.
 pub(crate) fn text_width(font: &Font, text: &str, px: f32) -> f32 {
+    let text = crate::lyrics::clip(text, MAX_DRAW_CHARS);
     Faces::new(font, text).width(text, px)
 }
 
@@ -309,6 +313,20 @@ mod tests {
             }
         }
         assert!(tested > 20, "only {tested} characters were drawn by Windows fonts");
+    }
+
+    /// Measuring a string of any length looks at its first `MAX_DRAW_CHARS` characters only, so the work has a ceiling.
+    #[test]
+    fn measuring_a_huge_string_costs_no_more_than_measuring_its_first_thousand_characters() {
+        let font = load_font().expect("a system font");
+        for unit in ["a", "\u{4E2D}"] {
+            let huge = unit.repeat(1_000_000);
+            let first: String = huge.chars().take(MAX_DRAW_CHARS).collect();
+            let started = std::time::Instant::now();
+            let (wide, narrow) = (text_width(&font, &huge, 12.0), text_width(&font, &first, 12.0));
+            assert_eq!(wide, narrow, "{unit:?}: the same width as the first thousand characters");
+            assert!(started.elapsed() < std::time::Duration::from_secs(5), "{unit:?}: took {:?}", started.elapsed());
+        }
     }
 
     /// An answer from Windows is kept: asking again gives the same picture.
