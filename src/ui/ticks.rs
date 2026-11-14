@@ -83,7 +83,7 @@ impl App {
             self.notices.alert_until = Some(now + ALERT);
             self.view = View::Todo;
             self.last_tick = now;
-            self.play_sound(sound::Chime::Reminder);
+            self.play_slot(sound::Slot::Todo);
         }
         // Copied items are forgotten after the time the user chose.
         if let Some(keep) = self.settings.clip_keep.duration()
@@ -101,7 +101,7 @@ impl App {
             self.notices.alert_until = Some(now + ALERT);
             self.view = View::Water;
             self.last_tick = now;
-            self.play_sound(sound::Chime::Reminder);
+            self.play_slot(sound::Slot::Water);
         }
         if self.notices.next_chime.is_some_and(|t| now >= t) {
             if self.notices.alert_until.is_some() && self.notices.alert_msg == TIMES_UP {
@@ -113,7 +113,7 @@ impl App {
         }
         if self.notices.alert_until.is_some_and(|t| now >= t) {
             if self.notices.alert_msg == TIMES_UP {
-                sound::stop_file();
+                sound::stop_file(sound::Slot::Timer);
             }
             self.notices.alert_until = None;
             self.last_tick = now;

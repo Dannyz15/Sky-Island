@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::sound::Slot;
 use crate::store;
 use crate::weather::Place;
 use crate::{hotkey, prayer};
@@ -496,11 +497,26 @@ pub struct Settings {
     pub motion: Motion,
     pub open_delay: u32,
     pub close_delay: u32,
+    /// The master volume: every part's own volume is scaled by it.
     pub volume: u32,
     pub alarm_every: u32,
     pub alarm_for: u32,
-    /// A sound file to play instead of the built-in chime when the timer ends.
-    pub alarm_sound: Option<PathBuf>,
+    /// Each part's own volume in percent, indexed by `Slot::index` (timer, to-do, water, prayer).
+    pub slot_volume: [u32; 4],
+    /// A sound file for each part to play instead of the built-in chime, indexed by `Slot::index`.
+    pub slot_file: [Option<PathBuf>; 4],
+}
+
+impl Settings {
+    /// How loud a part plays, in percent: its own volume scaled by the master volume.
+    pub fn level(&self, slot: Slot) -> u32 {
+        crate::sound::level(self.volume, self.slot_volume[slot.index()])
+    }
+
+    /// The sound file a part plays instead of the built-in chime, if one is chosen.
+    pub fn file(&self, slot: Slot) -> Option<&PathBuf> {
+        self.slot_file[slot.index()].as_ref()
+    }
 }
 
 impl Default for Settings {
@@ -572,7 +588,8 @@ impl Default for Settings {
             volume: 100,
             alarm_every: 3,
             alarm_for: 60,
-            alarm_sound: None,
+            slot_volume: [VOLUME.max; 4],
+            slot_file: [None, None, None, None],
         }
     }
 }
@@ -709,8 +726,12 @@ impl Settings {
         out.glass_frost = num("glass_frost", GLASS_FROST, out.glass_frost);
         out.alarm_every = num("alarm_every", ALARM_EVERY, out.alarm_every);
         out.alarm_for = num("alarm_for", ALARM_FOR, out.alarm_for);
-        // A quote cannot be in a real file name (see `sound::play_file`), so such a value is dropped.
-        out.alarm_sound = v.get("alarm_sound").and_then(Value::as_str).filter(|p| !p.is_empty() && crate::sound::safe_path(p)).map(PathBuf::from);
+        for slot in Slot::ALL {
+            let i = slot.index();
+            out.slot_volume[i] = num(slot.volume_key(), VOLUME, out.slot_volume[i]);
+            // A quote cannot be in a real file name (see `sound::play_file`), so such a value is dropped.
+            out.slot_file[i] = v.get(slot.file_key()).and_then(Value::as_str).filter(|p| !p.is_empty() && crate::sound::safe_path(p)).map(PathBuf::from);
+        }
         out.place = v.get("place").and_then(Place::from_json);
         let number = |k: &str| v.get(k).and_then(Value::as_u64).map(|n| n.min(u64::from(u32::MAX)) as u32);
         if let (Some(mods), Some(vk)) = (number("hotkey_mods"), number("hotkey_vk"))
@@ -746,7 +767,10 @@ impl Settings {
         body.insert("glass_frost".into(), json!(self.glass_frost));
         body.insert("alarm_every".into(), json!(self.alarm_every));
         body.insert("alarm_for".into(), json!(self.alarm_for));
-        body.insert("alarm_sound".into(), json!(self.alarm_sound.as_ref().map(|p| p.to_string_lossy().into_owned())));
+        for slot in Slot::ALL {
+            body.insert(slot.volume_key().into(), json!(self.slot_volume[slot.index()]));
+            body.insert(slot.file_key().into(), json!(self.file(slot).map(|p| p.to_string_lossy().into_owned())));
+        }
         body.insert("prayer_method".into(), json!(self.prayer_method));
         body.insert("prayer_zone".into(), json!(self.prayer_zone));
         body.insert("hotkey_mods".into(), json!(self.hotkey_mods));
@@ -891,7 +915,13 @@ mod tests {
             volume: 40,
             alarm_every: 5,
             alarm_for: 30,
-            alarm_sound: Some(PathBuf::from("C:/Sounds/ring.wav")),
+            slot_volume: [70, 60, 50, 30],
+            slot_file: [
+                Some(PathBuf::from("C:/Sounds/ring.wav")),
+                Some(PathBuf::from("C:/Sounds/todo.mp3")),
+                Some(PathBuf::from("C:/Sounds/water.wav")),
+                Some(PathBuf::from("C:/Sounds/adhan.mp3")),
+            ],
         }
     }
 
@@ -930,10 +960,22 @@ mod tests {
 
     #[test]
     fn an_alarm_sound_with_a_quote_in_it_is_dropped() {
-        let bad = Settings::from_json(&json!({ "alarm_sound": "x.mp3\" type waveaudio alias other" }));
-        assert_eq!(bad.alarm_sound, None, "no real file name has a quote");
+        let bad = Settings::from_json(&json!({ "alarm_sound": "x.mp3\" type waveaudio alias other", "water_sound": "y.mp3\" type waveaudio alias other" }));
+        assert_eq!(bad.file(Slot::Timer), None, "no real file name has a quote");
+        assert_eq!(bad.file(Slot::Water), None, "the same for every part");
         let good = Settings::from_json(&json!({ "alarm_sound": "C:/Sounds/ring.wav" }));
-        assert_eq!(good.alarm_sound, Some(PathBuf::from("C:/Sounds/ring.wav")));
+        assert_eq!(good.file(Slot::Timer), Some(&PathBuf::from("C:/Sounds/ring.wav")), "what 1.6.0 saved still loads");
+    }
+
+    #[test]
+    fn each_part_keeps_its_own_volume_and_a_file_for_one_part_is_not_another_s() {
+        let s = Settings::from_json(&json!({ "volume": 50, "todo_volume": 40, "prayer_volume": 9000, "todo_sound": "C:/Sounds/todo.mp3" }));
+        assert_eq!(s.slot_volume, [100, 40, 100, 100], "an unsaved part is at full volume; a huge one is held to the range");
+        assert_eq!(s.level(Slot::Todo), 20, "its own volume times the master");
+        assert_eq!(s.level(Slot::Timer), 50);
+        assert_eq!(s.file(Slot::Todo), Some(&PathBuf::from("C:/Sounds/todo.mp3")));
+        assert_eq!(s.file(Slot::Timer), None);
+        assert_eq!(s.file(Slot::Water), None);
     }
 
     #[test]

@@ -9,8 +9,13 @@ fn every_page_fits_inside_the_window() {
         let lay = layout(page, frame_for(WIDTH as f32));
         for g in &lay.groups {
             assert!(g.rect.0 >= SIDEBAR_W && g.rect.0 + g.rect.2 <= WIDTH as f32, "{} is outside on {}", g.title, page.title());
-            // About and Closed notch are taller than the default window and scroll; every other page fits.
-            assert!(matches!(page, Page::About | Page::ClosedNotch) || g.rect.1 + g.rect.3 <= HEIGHT as f32 - 14.0, "{} runs past the bottom on {}", g.title, page.title());
+            // About, Closed notch and Sounds are taller than the default window and scroll; every other page fits.
+            assert!(
+                matches!(page, Page::About | Page::ClosedNotch | Page::Sounds) || g.rect.1 + g.rect.3 <= HEIGHT as f32 - 14.0,
+                "{} runs past the bottom on {}",
+                g.title,
+                page.title()
+            );
         }
         for item in &lay.items {
             assert!(item.row.0 + item.row.2 <= WIDTH as f32, "{} is too wide", item.label);
@@ -52,13 +57,14 @@ fn the_content_grows_with_the_window_and_stays_in_the_middle() {
 fn a_page_scrolls_only_as_far_as_it_is_taller_than_the_window() {
     for page in Page::ALL {
         let lay = layout(page, frame_for(WIDTH as f32));
-        // Most pages fit the default window; About (a tall card) and Closed notch (the eye picker) scroll a little.
+        // Most pages fit the default window; About (a tall card), Closed notch (the eye picker) and Sounds (a volume and a sound for each part) scroll.
         let limit = match page {
             Page::About => 330.0,
             Page::ClosedNotch => 220.0,
+            Page::Sounds => 280.0,
             _ => 0.0,
         };
-        assert!(scroll_limit(&lay, HEIGHT as f32) <= limit, "{} needs too much scrolling in the default window", page.title());
+        assert!(scroll_limit(&lay, HEIGHT as f32) <= limit, "{} needs too much scrolling in the default window: {}", page.title(), scroll_limit(&lay, HEIGHT as f32));
         let short = scroll_limit(&lay, MIN_HEIGHT as f32);
         assert!((short - (lay.bottom() + BOTTOM_PAD - MIN_HEIGHT as f32).max(0.0)).abs() < 0.01);
         assert!(scroll_limit(&lay, 300.0) > short || short == 0.0 && lay.bottom() + BOTTOM_PAD <= 300.0, "{}", page.title());
@@ -188,7 +194,7 @@ fn every_setting_is_on_exactly_one_page() {
                 Kind::Toggle(t) => toggles.push(t),
                 Kind::Seg(g) => segs.push(g),
                 Kind::Slider(l) => slides.push(l),
-                Kind::Pick => picks += 1,
+                Kind::Pick(_) => picks += 1,
                 // The tab switches are the tiles of the tab grid.
                 Kind::TabGrid => toggles.extend(TAB_TILES.iter().map(|t| t.1)),
                 _ => {}
@@ -200,8 +206,8 @@ fn every_setting_is_on_exactly_one_page() {
         assert!(!toggles[i + 1..].contains(a), "{a:?} is on two pages");
     }
     assert_eq!(segs.len(), 12);
-    assert_eq!(slides.len(), 7);
-    assert_eq!(picks, 1);
+    assert_eq!(slides.len(), 11, "the master volume and one for each of the four parts");
+    assert_eq!(picks, 4, "a sound file for each of the four parts");
 }
 
 #[test]

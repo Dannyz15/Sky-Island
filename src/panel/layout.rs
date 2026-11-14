@@ -1,6 +1,7 @@
 //! What is on each page of the settings window and where it sits: the pages, their rows and controls, and the layout of a page for a window of a given width.
 
 use super::*;
+use crate::sound::Slot;
 
 /// Where a page's content sits across the window: it grows with the window up to a limit and stays in the middle.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -81,7 +82,10 @@ pub(super) enum Seg {
 pub(super) enum Slide {
     OpenDelay,
     CloseDelay,
+    /// The master volume, which scales every part's own.
     Volume,
+    /// The volume of one part of the app (the timer, to-do, water or prayer).
+    Own(Slot),
     AlarmEvery,
     AlarmFor,
     GlassClear,
@@ -121,8 +125,8 @@ pub(super) enum Kind {
     Seg(Seg),
     Slider(Slide),
     Button(Act),
-    /// A button that shows the current choice, for the timer's alarm sound.
-    Pick,
+    /// A button that shows the sound file chosen for one part of the app (the built-in chime when there is none).
+    Pick(Slot),
     /// A box to type in.
     Text(Field),
     /// The current choice of a long list, with arrows to step to the one before and the one after.
@@ -210,7 +214,7 @@ impl Page {
             Page::Tabs => "Click a tab to switch it on or off. The notch always keeps at least one.",
             Page::Music => "The lyrics of what plays, and where they come from.",
             Page::Location => "Your city, the weather and the prayer times.",
-            Page::Sounds => "Chimes for reminders, and the timer's alarm.",
+            Page::Sounds => "A volume and a sound for each reminder, and the timer's alarm.",
             Page::Calendar => "How the calendar counts its weeks and what it shows.",
             Page::Shelf => "The files you park on the shelf, and what you copy.",
             Page::About => "This version, updates and your data.",
@@ -286,6 +290,8 @@ pub(super) type RowSpec = (&'static str, &'static str, Kind, &'static str);
 /// The groups (title and rows) on a page.
 pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
     use Kind::{Button, Cycle, EyeGrid, Link, Pick, ScreenMap, Seg as S, Slider, TabGrid, Text, Toggle as T};
+    let own = |slot, what: &'static str| ("Volume", what, Slider(Slide::Own(slot)), "");
+    let file = |slot| ("Sound", "Use a sound file of your own", Pick(slot), "");
     match page {
         Page::General => vec![
             ("Startup", vec![("Start with Windows", "Open Sky Island when you sign in", T(Toggle::Autostart), "")]),
@@ -424,15 +430,25 @@ pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
             ),
         ],
         Page::Sounds => vec![
-            ("Chimes", vec![("Sounds", "Chimes for the timer, to-do and water reminders", T(Toggle::Sound), ""), ("Volume", "How loud they are", Slider(Slide::Volume), "")]),
+            (
+                "Chimes",
+                vec![
+                    ("Sounds", "Chimes for the timer, to-do, water and prayer reminders", T(Toggle::Sound), ""),
+                    ("Master volume", "Every sound below is scaled by this", Slider(Slide::Volume), ""),
+                ],
+            ),
             (
                 "Timer alarm",
                 vec![
+                    own(Slot::Timer, "How loud the alarm is"),
+                    file(Slot::Timer),
                     ("Repeat every", "How often the alarm sounds again", Slider(Slide::AlarmEvery), ""),
                     ("Ring for", "How long it rings if nobody stops it", Slider(Slide::AlarmFor), ""),
-                    ("Alarm sound", "Use a sound file of your own", Pick, ""),
                 ],
             ),
+            ("To-do reminders", vec![own(Slot::Todo, "How loud a task reminder is"), file(Slot::Todo)]),
+            ("Water reminders", vec![own(Slot::Water, "How loud the drink reminder is"), file(Slot::Water)]),
+            ("Prayer times", vec![own(Slot::Prayer, "How loud the sound at a prayer time is"), file(Slot::Prayer)]),
         ],
         Page::Calendar => {
             vec![("Options", vec![("Week starts on", "The first column of the month", S(Seg::WeekStart), ""), ("Default view", "A month, or just one week", S(Seg::CalView), "")])]
@@ -535,7 +551,7 @@ fn ctrl_rect(kind: Kind, btn: &str, row: Rect) -> Rect {
         Kind::Toggle(_) => (right - 40.0, mid - 11.25, 40.0, 22.5),
         Kind::Seg(seg) => (right - seg_width(seg), mid - 14.0, seg_width(seg), 28.0),
         Kind::Slider(_) => (right - SLIDER_TEXT_W - 12.0 - SLIDER_W, mid - 2.0, SLIDER_W, 4.0),
-        Kind::Pick => (right - 200.0, mid - 14.0, 200.0, 28.0),
+        Kind::Pick(_) => (right - 200.0, mid - 14.0, 200.0, 28.0),
         // The zone's name is longer than the others, so its control is wider.
         Kind::Cycle(Stepper::Zone) => (right - 300.0, mid - 14.0, 300.0, 28.0),
         Kind::Text(_) | Kind::Cycle(_) => (right - 260.0, mid - 14.0, 260.0, 28.0),

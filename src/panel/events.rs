@@ -99,9 +99,11 @@ impl App {
         if state == ElementState::Released {
             if let Some(slide) = self.panel.as_mut().and_then(|p| p.drag.take()) {
                 self.settings_changed();
-                if slide == Slide::Volume {
-                    // Let the new loudness be heard.
-                    self.play_sound(crate::sound::Chime::Reminder);
+                // Let the new loudness be heard: a part plays its own sound; the master volume plays the to-do one.
+                match slide {
+                    Slide::Own(slot) => self.play_slot(slot),
+                    Slide::Volume => self.play_slot(crate::sound::Slot::Todo),
+                    _ => {}
                 }
             }
             return;
@@ -135,7 +137,7 @@ impl App {
         let lay = self.layout_of(p, page, frame);
         let Some(item) = lay.items.iter().find(|i| match i.kind {
             Kind::Slider(_) => inside((i.ctrl.0 - 8.0, i.row.1, SLIDER_W + 16.0, i.row.3), cx, cy),
-            Kind::Seg(_) | Kind::Pick | Kind::Text(_) | Kind::Cycle(_) | Kind::Button(_) | Kind::EyeGrid | Kind::ScreenMap | Kind::TabGrid => inside(i.ctrl, cx, cy),
+            Kind::Seg(_) | Kind::Pick(_) | Kind::Text(_) | Kind::Cycle(_) | Kind::Button(_) | Kind::EyeGrid | Kind::ScreenMap | Kind::TabGrid => inside(i.ctrl, cx, cy),
             Kind::Link(url) => !url.is_empty() && inside(i.row, cx, cy),
             Kind::Toggle(_) => inside(i.row, cx, cy),
         }) else {
@@ -200,24 +202,24 @@ impl App {
                     p.redraw();
                 }
             }
-            Kind::Pick => self.click_pick(item, cx),
+            Kind::Pick(slot) => self.click_pick(item, cx, slot),
             Kind::Button(act) => self.click_button(act),
         }
     }
 
-    /// A click on the button that chooses the alarm sound.
-    pub(super) fn click_pick(&mut self, item: &Item, cx: f32) {
-        if self.settings.alarm_sound.is_some() && cx >= item.ctrl.0 + item.ctrl.2 - 30.0 {
+    /// A click on the button that chooses the sound of one part of the app.
+    pub(super) fn click_pick(&mut self, item: &Item, cx: f32, slot: crate::sound::Slot) {
+        if self.settings.file(slot).is_some() && cx >= item.ctrl.0 + item.ctrl.2 - 30.0 {
             // The cross on the right goes back to the built-in chime.
-            crate::sound::stop_file();
-            self.settings.alarm_sound = None;
+            crate::sound::stop_file(slot);
+            self.settings.slot_file[slot.index()] = None;
             self.settings_changed();
         } else if let Some(path) = self.panel.as_ref().and_then(|p| pick_sound(&p.window)) {
-            self.settings.alarm_sound = Some(path);
+            self.settings.slot_file[slot.index()] = Some(path);
             self.settings_changed();
             // Let the new sound be heard (a file still playing is stopped first).
-            crate::sound::stop_file();
-            self.play_alarm();
+            crate::sound::stop_file(slot);
+            self.play_slot(slot);
         }
         if let Some(p) = &self.panel {
             p.redraw();

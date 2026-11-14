@@ -30,7 +30,7 @@ impl App {
                 self.paint_screen_choices(pm, &c, screens.len());
             }
             Kind::Slider(slide) => self.paint_slider(pm, &c, slide),
-            Kind::Pick => self.paint_pick(pm, &c),
+            Kind::Pick(slot) => self.paint_pick(pm, &c, slot),
             Kind::Cycle(stepper) => self.paint_cycle(pm, &c, stepper),
             Kind::Text(Field::Hotkey) => self.paint_hotkey(pm, &c),
             Kind::Text(Field::City) => self.paint_city(pm, &c),
@@ -313,8 +313,8 @@ impl App {
         crate::draw_text(pm, font, &text, (item.row.0 + item.row.2 - 18.0) * s - tw, (item.row.1 + item.row.3 / 2.0 + 4.5) * s, 12.0 * s, grey, SLIDER_TEXT_W * s);
     }
 
-    /// The button that shows the chosen alarm sound.
-    fn paint_pick(&self, pm: &mut Pixmap, c: &Ctl) {
+    /// The button that shows the sound file chosen for one part of the app.
+    fn paint_pick(&self, pm: &mut Pixmap, c: &Ctl, slot: crate::sound::Slot) {
         let Ctl { panel, font, heading, item, key, accent, s } = *c;
         let (cx, cy) = panel.cursor;
         let white = [255, 255, 255, 255];
@@ -333,7 +333,7 @@ impl App {
             false,
         );
         gfx::stroke_rounded(pm, x + 0.5 * s, y + 0.5 * s, w - s, h - s, h / 2.0, s, [accent[0], accent[1], accent[2], 130]);
-        let custom = self.settings.alarm_sound.as_ref();
+        let custom = self.settings.file(slot);
         let name = custom.and_then(|p| p.file_name()).map_or_else(|| "Built-in chime".to_string(), |n| n.to_string_lossy().into_owned());
         let text_w = if custom.is_some() { item.ctrl.2 - 44.0 } else { item.ctrl.2 - 20.0 };
         crate::draw_text_centered(pm, heading, &name, (item.ctrl.0 + 10.0 + text_w / 2.0) * s, (item.ctrl.1 + 18.5) * s, 12.0 * s, white, text_w * s);

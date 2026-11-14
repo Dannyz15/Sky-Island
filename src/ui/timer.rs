@@ -324,24 +324,25 @@ impl App {
         }
     }
 
-    /// The timer's alarm: the sound file chosen in the settings window, or the built-in chime when there
-    /// is none (or it can't be played). A long file that is still playing is left to finish.
+    /// The timer's alarm.
     pub(crate) fn play_alarm(&self) {
+        self.play_slot(sound::Slot::Timer);
+    }
+
+    /// The sound of one part of the app (the timer, to-do, water or prayer): the sound file chosen for it in the
+    /// settings window, or its built-in chime when there is none (or it can't be played), at its own volume scaled
+    /// by the master one. A long file that is still playing is left to finish.
+    pub(crate) fn play_slot(&self, slot: sound::Slot) {
         if !self.settings.sound {
             return;
         }
-        if let Some(path) = &self.settings.alarm_sound
-            && sound::play_file(path, self.settings.volume)
+        let volume = self.settings.level(slot);
+        if let Some(path) = self.settings.file(slot)
+            && sound::play_file(slot, path, volume)
         {
             return;
         }
-        sound::play(sound::Chime::TimerDone, self.settings.volume);
-    }
-
-    pub(crate) fn play_sound(&self, chime: sound::Chime) {
-        if self.settings.sound {
-            sound::play(chime, self.settings.volume);
-        }
+        sound::play(slot.chime(), volume);
     }
 
     /// A click in the Timer view. (`cx`, `cy`) is the spot in the view's own coordinates.
@@ -395,7 +396,7 @@ impl App {
             if cx >= STOP_BUTTON.0 && cx <= STOP_BUTTON.0 + STOP_BUTTON.2 && cy >= STOP_BUTTON.1 && cy <= STOP_BUTTON.1 + STOP_BUTTON.3 {
                 self.notices.alert_until = None;
                 self.notices.next_chime = None;
-                sound::stop_file();
+                sound::stop_file(sound::Slot::Timer);
                 window.request_redraw();
                 return true;
             }

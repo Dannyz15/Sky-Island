@@ -91,7 +91,7 @@ pub(super) fn range_of(slide: Slide) -> Range {
     match slide {
         Slide::OpenDelay => settings::OPEN_DELAY,
         Slide::CloseDelay => settings::CLOSE_DELAY,
-        Slide::Volume => settings::VOLUME,
+        Slide::Volume | Slide::Own(_) => settings::VOLUME,
         Slide::AlarmEvery => settings::ALARM_EVERY,
         Slide::AlarmFor => settings::ALARM_FOR,
         Slide::GlassClear => settings::GLASS_CLEAR,
@@ -103,7 +103,7 @@ pub(super) fn slider_text(slide: Slide, v: u32) -> String {
     match slide {
         Slide::OpenDelay if v == 0 => "Instant".to_string(),
         Slide::OpenDelay | Slide::CloseDelay => format!("{v} ms"),
-        Slide::Volume | Slide::GlassClear | Slide::GlassFrost => format!("{v}%"),
+        Slide::Volume | Slide::Own(_) | Slide::GlassClear | Slide::GlassFrost => format!("{v}%"),
         Slide::AlarmEvery | Slide::AlarmFor => format!("{v} s"),
     }
 }
@@ -395,6 +395,7 @@ impl App {
             Slide::OpenDelay => self.settings.open_delay,
             Slide::CloseDelay => self.settings.close_delay,
             Slide::Volume => self.settings.volume,
+            Slide::Own(slot) => self.settings.slot_volume[slot.index()],
             Slide::AlarmEvery => self.settings.alarm_every,
             Slide::AlarmFor => self.settings.alarm_for,
             Slide::GlassClear => self.settings.glass_clear,
@@ -409,6 +410,7 @@ impl App {
             Slide::OpenDelay => self.settings.open_delay = v,
             Slide::CloseDelay => self.settings.close_delay = v,
             Slide::Volume => self.settings.volume = v,
+            Slide::Own(slot) => self.settings.slot_volume[slot.index()] = v,
             Slide::AlarmEvery => self.settings.alarm_every = v,
             Slide::AlarmFor => self.settings.alarm_for = v,
             Slide::GlassClear => self.settings.glass_clear = v,

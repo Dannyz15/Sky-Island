@@ -21,13 +21,55 @@ pub enum Chime {
     Reminder,
 }
 
+/// The parts of the app that make a sound, each with its own volume and its own sound file in the settings.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Slot {
+    Timer,
+    Todo,
+    Water,
+    Prayer,
+}
+
+impl Slot {
+    pub const ALL: [Slot; 4] = [Slot::Timer, Slot::Todo, Slot::Water, Slot::Prayer];
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The chime that plays when this part has no sound file of its own.
+    pub fn chime(self) -> Chime {
+        if self == Slot::Timer { Chime::TimerDone } else { Chime::Reminder }
+    }
+
+    /// The name of its volume in settings.json.
+    pub fn volume_key(self) -> &'static str {
+        ["timer_volume", "todo_volume", "water_volume", "prayer_volume"][self.index()]
+    }
+
+    /// The name of its sound file in settings.json (the timer's is `alarm_sound`, as it was before the others).
+    pub fn file_key(self) -> &'static str {
+        ["alarm_sound", "todo_sound", "water_sound", "prayer_sound"][self.index()]
+    }
+
+    /// The name MCI knows its sound file by, so that one part's long file does not hold back another's.
+    fn alias(self) -> &'static str {
+        ["skyalarm", "skytodo", "skywater", "skyprayer"][self.index()]
+    }
+}
+
+/// How loud a part plays: its own volume scaled by the master volume, both in percent.
+pub fn level(master: u32, own: u32) -> u32 {
+    (master.min(100) * own.min(100) / 100).max(1)
+}
+
 /// Play a chime without blocking, at `volume` percent. Does nothing if it can't be played.
 pub fn play(chime: Chime, volume: u32) {
     // Each chime is made once per volume and kept for good, because it must stay valid while it plays
-    // in the background. The volume moves in steps of 10, so there are at most twenty of them.
+    // in the background. The volume is rounded to a step of 10, so there are at most ten of them.
     type Cache = HashMap<(u8, u32), &'static [u8]>;
     static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
-    let volume = volume.clamp(10, 100) / 10 * 10;
+    let volume = ((volume + 5) / 10 * 10).clamp(10, 100);
     let key = (chime as u8, volume);
     #[allow(clippy::explicit_auto_deref)]
     let wav: &'static [u8] = {
@@ -97,33 +139,33 @@ fn reachable(path: &Path) -> bool {
 /// Play a sound file the user picked, without blocking, at `volume` percent. A file that is still
 /// playing is left alone, so a long song is not restarted by every repeat of the alarm. Returns
 /// whether it is playing; false means the file could not be played.
-pub fn play_file(path: &Path, volume: u32) -> bool {
-    const ALIAS: &str = "skyalarm";
-    if mci(&format!("status {ALIAS} mode")).1 == "playing" {
+pub fn play_file(slot: Slot, path: &Path, volume: u32) -> bool {
+    let alias = slot.alias();
+    if mci(&format!("status {alias} mode")).1 == "playing" {
         return true;
     }
-    mci(&format!("close {ALIAS}"));
+    mci(&format!("close {alias}"));
     // Quotes are not allowed in Windows file names, so a path with one did not come from a real file (only from a
     // settings file edited by hand) and is refused: in the command it would end the name and add words of its own.
     if !safe_path(&path.display().to_string()) || !reachable(path) {
         return false;
     }
-    if !mci(&format!("open \"{}\" type mpegvideo alias {ALIAS}", path.display())).0 {
+    if !mci(&format!("open \"{}\" type mpegvideo alias {alias}", path.display())).0 {
         return false;
     }
     // MCI's volume runs from 0 to 1000; not every kind of file supports it, which is fine.
-    mci(&format!("setaudio {ALIAS} volume to {}", volume.clamp(0, 100) * 10));
-    if mci(&format!("play {ALIAS} from 0")).0 {
+    mci(&format!("setaudio {alias} volume to {}", volume.clamp(0, 100) * 10));
+    if mci(&format!("play {alias} from 0")).0 {
         true
     } else {
-        mci(&format!("close {ALIAS}"));
+        mci(&format!("close {alias}"));
         false
     }
 }
 
-/// Stop the user's sound file if it is playing.
-pub fn stop_file() {
-    mci("close skyalarm");
+/// Stop a part's sound file if it is playing.
+pub fn stop_file(slot: Slot) {
+    mci(&format!("close {}", slot.alias()));
 }
 
 /// A 16-bit mono WAV file of bell-like notes: a sine with two quieter overtones that fades out.
@@ -204,7 +246,26 @@ mod tests {
 
     #[test]
     fn a_missing_sound_file_is_refused_so_the_chime_is_used() {
-        assert!(!play_file(Path::new(r"C:\no\such\sound.mp3"), 50));
+        assert!(!play_file(Slot::Timer, Path::new(r"C:\no\such\sound.mp3"), 50));
+    }
+
+    #[test]
+    fn a_part_plays_at_its_own_volume_scaled_by_the_master() {
+        assert_eq!(level(100, 100), 100);
+        assert_eq!(level(50, 100), 50);
+        assert_eq!(level(100, 30), 30);
+        assert_eq!(level(50, 50), 25);
+        assert_eq!(level(10, 10), 1, "never silent");
+        assert_eq!(level(500, 500), 100, "held to the range");
+    }
+
+    #[test]
+    fn every_part_has_its_own_names_in_the_settings_file() {
+        let mut keys: Vec<&str> = Slot::ALL.iter().flat_map(|s| [s.volume_key(), s.file_key(), s.alias()]).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), 12, "no two parts share a name");
+        assert_eq!(Slot::Timer.file_key(), "alarm_sound", "what older versions saved");
     }
 
     /// Plays a real file, so it needs a sound card: run it by hand with `cargo test -- --ignored`.
@@ -212,10 +273,10 @@ mod tests {
     #[ignore]
     fn a_real_sound_file_plays_and_stops() {
         let path = Path::new(r"C:\Windows\Media\tada.wav");
-        assert!(play_file(path, 10));
+        assert!(play_file(Slot::Timer, path, 10));
         assert_eq!(mci("status skyalarm mode").1, "playing");
-        assert!(play_file(path, 10), "a file that is still playing is left alone");
-        stop_file();
+        assert!(play_file(Slot::Timer, path, 10), "a file that is still playing is left alone");
+        stop_file(Slot::Timer);
         assert!(!mci("status skyalarm mode").0, "stopping closes it");
     }
 

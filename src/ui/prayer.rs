@@ -103,7 +103,7 @@ impl App {
         }
         self.prayer.told = Some((today, index));
         self.show_notice(sys::Notice::Prayer { name: prayer::NAMES[index], minute });
-        self.play_sound(sound::Chime::Reminder);
+        self.play_slot(sound::Slot::Prayer);
     }
 
     /// When the loop has to wake for the next prayer time (a second after it, so the clock has reached it).
