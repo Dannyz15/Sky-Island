@@ -59,6 +59,13 @@ fn main() {
         }
         Err(problem) => println!("cargo:warning=the icon and version information were not added to the exe: {problem}"),
     }
+    // Load the DLLs the exe is linked to from the Windows system folder only. Without this Windows looks in the folder
+    // the exe is in first, and the installer puts it in a folder under the user's own profile, where any program of
+    // the user could have left a DLL with the name of one that is not a "known DLL" (winmm, dwmapi, pdh, dxgi, ...).
+    // (The linker flag is for the MSVC linker, the only one this app is built with.)
+    if env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|e| e == "msvc") {
+        println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
+    }
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=assets/icon.ico");
     println!("cargo:rerun-if-changed=Cargo.toml");

@@ -107,9 +107,14 @@ fn open_clipboard() -> bool {
 }
 
 /// The `CanIncludeInClipboardHistory` format holds a DWORD that is 0 when the app that copied wants the
-/// content kept out of the clipboard history (password managers set it for what they copy).
-fn is_barred_from_history(flag: &[u8]) -> bool {
-    flag.len() >= 4 && flag[..4] == [0, 0, 0, 0]
+/// content kept out of the clipboard history (password managers set it for what they copy). `flag` is what could be
+/// read of it. A format that is there but cannot be read, or is shorter than a number, says nothing: it counts as
+/// a wish to stay out, because keeping a password in the history is worse than missing one copy.
+fn is_barred_from_history(flag: Option<&[u8]>) -> bool {
+    match flag {
+        Some(flag) if flag.len() >= 4 => flag[..4] == [0, 0, 0, 0],
+        _ => true,
+    }
 }
 
 /// What is on the clipboard, unless the app that copied it asked not to be monitored (password
@@ -125,7 +130,7 @@ fn read_content() -> Option<Content> {
             format != 0 && IsClipboardFormatAvailable(format).is_ok()
         };
         let can_include = RegisterClipboardFormatW(w!("CanIncludeInClipboardHistory"));
-        let kept_out_of_history = can_include != 0 && IsClipboardFormatAvailable(can_include).is_ok() && read_flag(can_include).is_some_and(|flag| is_barred_from_history(&flag));
+        let kept_out_of_history = can_include != 0 && IsClipboardFormatAvailable(can_include).is_ok() && is_barred_from_history(read_flag(can_include).as_deref());
         if marked(w!("ExcludeClipboardContentFromMonitorProcessing")) || marked(w!("Clipboard Viewer Ignore")) || kept_out_of_history {
             (None, None, None)
         } else if let Some(text) = read_unicode_text().filter(|t| !t.trim().is_empty()) {
@@ -307,10 +312,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_zero_flag_keeps_a_copy_out_of_the_history() {
-        assert!(is_barred_from_history(&[0, 0, 0, 0]));
-        assert!(!is_barred_from_history(&[1, 0, 0, 0]), "1 means it may be included");
-        assert!(!is_barred_from_history(&[0, 0]), "too short to be a flag");
-        assert!(!is_barred_from_history(&[]));
+    fn a_zero_flag_or_one_that_cannot_be_read_keeps_a_copy_out_of_the_history() {
+        assert!(is_barred_from_history(Some(&[0, 0, 0, 0])));
+        assert!(!is_barred_from_history(Some(&[1, 0, 0, 0])), "1 means it may be included");
+        assert!(!is_barred_from_history(Some(&[1, 0, 0, 0, 0, 0, 0, 0])), "only the first four bytes are the number");
+        assert!(is_barred_from_history(Some(&[0, 0])), "too short to be a flag: stays out");
+        assert!(is_barred_from_history(Some(&[])), "empty: stays out");
+        assert!(is_barred_from_history(None), "there, but could not be read: stays out");
     }
 }

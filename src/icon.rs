@@ -50,6 +50,11 @@ pub fn spawn_loader(proxy: EventLoopProxy<UserEvent>) -> Sender<PathBuf> {
 
 /// The shell icon for `path` as a premultiplied RGBA pixmap, or `None` if the shell has none.
 pub fn load(path: &Path) -> Option<Pixmap> {
+    // A file on another computer is never asked about on its own (see `shelf::is_remote`): asking makes Windows sign
+    // in to that server, and waits for it if it is gone. Its tile shows the plain look with the file's extension.
+    if crate::shelf::is_remote(path) {
+        return None;
+    }
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
     unsafe {
         let factory: IShellItemImageFactory = SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None).ok()?;
@@ -115,5 +120,15 @@ mod tests {
         // The old sum in i32: 32768 x 32768 x 4 wraps to 0 and (46341 x 46341 x 4) to a negative number.
         assert_eq!((32768i32).wrapping_mul(32768).wrapping_mul(4), 0);
         assert_eq!(buffer_len(32768, 32768), None);
+    }
+
+    /// A file on another computer gets no icon and is never asked about (so Windows does not sign in to the server).
+    #[test]
+    fn a_file_on_another_computer_is_not_asked_about() {
+        let started = std::time::Instant::now();
+        for path in [r"\\sky-island-no-such-host.invalid\share\a.txt", "//sky-island-no-such-host.invalid/share/a.txt", r"\/sky-island-no-such-host.invalid\share\a.txt"] {
+            assert!(load(Path::new(path)).is_none(), "{path}");
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "it did not wait for a server: {:?}", started.elapsed());
     }
 }

@@ -6,3 +6,10 @@
 skills-lock.json
 Sky Memory/
 /dist
+
+# Keys, tokens and certificates never belong in the repository.
+.env*
+*.pem
+*.key
+*.pfx
+*.p12

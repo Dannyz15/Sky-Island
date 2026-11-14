@@ -20,7 +20,10 @@ pub fn is_remote(path: &Path) -> bool {
         // A long path: `\\?\C:\...` is on this PC, `\\?\UNC\server\...` is a share.
         return rest.get(..4).is_some_and(|p| p.eq_ignore_ascii_case(r"UNC\")) || is_remote(Path::new(rest));
     }
-    if text.starts_with(r"\\") || text.starts_with("//") {
+    // Two slashes of either kind at the start are a share: Windows reads `\\server`, `//server`, `\/server` and
+    // `/\server` all the same.
+    let mut start = text.chars();
+    if matches!((start.next(), start.next()), (Some('\\' | '/'), Some('\\' | '/'))) {
         return true;
     }
     // 0 cannot be told, 1 no such root, 4 network.
@@ -56,9 +59,14 @@ pub struct Shelf {
 
 impl Shelf {
     pub fn new() -> Self {
-        let items =
-            Self::path().and_then(|p| store::read_json(&p)).and_then(|v| v.as_array().map(|a| a.iter().filter_map(Value::as_str).map(PathBuf::from).collect())).unwrap_or_default();
+        let items = Self::path().and_then(|p| store::read_json(&p)).map(|v| Self::parse(&v)).unwrap_or_default();
         Self { items, scroll: 0, dirty: false }
+    }
+
+    /// The paths of a saved shelf: strings only, and no more than the shelf holds (`add` keeps that limit, so a file
+    /// with more was not written by this app, and each entry costs an icon and a check on every start).
+    fn parse(saved: &Value) -> Vec<PathBuf> {
+        saved.as_array().map(|a| a.iter().filter_map(Value::as_str).map(PathBuf::from).take(MAX_ITEMS).collect()).unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -290,9 +298,20 @@ mod tests {
         assert!(is_remote(&p(r"\\server\share\a.txt")));
         assert!(is_remote(&p("//server/share/a.txt")));
         assert!(is_remote(&p(r"\\?\UNC\server\share\a.txt")));
+        assert!(is_remote(&p(r"\/server\share\a.txt")), "a mix of slashes is a share too");
+        assert!(is_remote(&p(r"/\server/share/a.txt")));
+        assert!(!is_remote(&p("C:/Users/a.txt")), "forward slashes after a drive letter are this PC");
         assert!(!is_remote(&p(r"\\?\C:\Users\a.txt")));
         assert!(!is_remote(&p(r"C:\Windows\notepad.exe")));
         assert!(!is_remote(&p("relative.txt")));
+    }
+
+    #[test]
+    fn a_saved_shelf_is_cut_to_the_limit_and_keeps_only_paths() {
+        let many: Vec<String> = (0..500).map(|i| format!(r"C:\files\{i}.txt")).collect();
+        assert_eq!(Shelf::parse(&json!(many)).len(), MAX_ITEMS);
+        assert_eq!(Shelf::parse(&json!(["a.txt", 5, null, "b.txt"])), vec![p("a.txt"), p("b.txt")]);
+        assert!(Shelf::parse(&json!("not a list")).is_empty());
     }
 
     #[test]

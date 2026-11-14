@@ -126,9 +126,16 @@ fn report(ok: bool) {
     }
 }
 
+/// Whether a `WM_HOTKEY` is the one this app asked Windows for: its id is ours and a combination is wanted. Any
+/// program of the user can post the message to the window by hand, and it must not toggle the notch after the user
+/// switched the hotkey off.
+fn is_ours(id: usize, want: u64) -> bool {
+    id == ID as usize && want != 0
+}
+
 unsafe extern "system" fn window_proc(window: HWND, message: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match message {
-        WM_HOTKEY => {
+        WM_HOTKEY if is_ours(w.0, WANT.load(Ordering::Relaxed)) => {
             if let Some(proxy) = PROXY.get() {
                 let _ = proxy.send_event(UserEvent::Hotkey);
             }
@@ -153,6 +160,14 @@ mod tests {
         assert_eq!(name(CTRL, 0x20), "Ctrl + Space");
         assert_eq!(name(ALT, 0x35), "Alt + 5");
         assert_eq!(name(DEFAULT_MODS, DEFAULT_VK), "Ctrl + Alt + N");
+    }
+
+    #[test]
+    fn only_the_registered_hotkey_message_counts() {
+        let on = pack(CTRL | ALT, 0x4E);
+        assert!(is_ours(ID as usize, on));
+        assert!(!is_ours(ID as usize + 1, on), "another id");
+        assert!(!is_ours(ID as usize, 0), "the hotkey is switched off");
     }
 
     #[test]

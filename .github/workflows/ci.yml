@@ -19,10 +19,17 @@ jobs:
     steps:
       # Pinned to an exact commit (version 7.0.1) like the action below: a tag can be moved to other code, a commit cannot.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the workflow's token is not left in the checkout's git settings for the cargo steps.
+          persist-credentials: false
       # rust-toolchain.toml makes rustup install the exact compiler named there, with clippy and rustfmt, on the first cargo call.
       # Not one of GitHub's own actions, so it is pinned to an exact commit (version 2.9.3): a tag can be moved
       # to other code, a commit cannot. Dependabot proposes newer ones.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          # A pull request reads the cache but only a push to main writes it, so a pull request cannot leave built
+          # programs for later runs.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The installer script has its own copy of the version. If it is not the one in Cargo.toml, the setup that is
       # built has the wrong name and the app's update check refuses the release.
       - name: Installer version matches Cargo.toml

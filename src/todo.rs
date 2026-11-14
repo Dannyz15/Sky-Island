@@ -10,6 +10,10 @@ use crate::store;
 
 const MAX_TASKS: usize = 100;
 const MAX_LEN: usize = 80;
+/// The latest reminder kept from the file: 1 January 2100, in unix seconds. A later number was not made by the editor.
+const MAX_DUE: u64 = 4_102_444_800;
+/// The furthest day kept from the file, in days either side of 1 January 1970 (about 547 years).
+const MAX_DAY: i64 = 200_000;
 
 /// Tasks visible at once in the list.
 pub const VISIBLE: usize = 4;
@@ -38,25 +42,27 @@ pub fn unix_now() -> u64 {
 
 impl Todo {
     pub fn new() -> Self {
-        let tasks = Self::path()
-            .and_then(|p| store::read_json(&p))
-            .and_then(|v| {
-                v.as_array().map(|a| {
-                    a.iter()
-                        .filter_map(|t| {
-                            Some(Task {
-                                text: t.get("text")?.as_str()?.to_string(),
-                                done: t.get("done").and_then(Value::as_bool).unwrap_or(false),
-                                due: t.get("due").and_then(Value::as_u64),
-                                notified: t.get("notified").and_then(Value::as_bool).unwrap_or(false),
-                                date: t.get("date").and_then(Value::as_i64),
-                            })
-                        })
-                        .collect()
+        let tasks = Self::path().and_then(|p| store::read_json(&p)).map(|v| Self::parse(&v)).unwrap_or_default();
+        Self { tasks, scroll: 0 }
+    }
+
+    /// The tasks of a saved list, held to the same limits `add` and `update` keep (the number of tasks, the length of
+    /// a text) and to times and days a calendar can show. A file with more or other was not written by this app, and a
+    /// text of a hundred thousand characters would freeze the editor.
+    fn parse(saved: &Value) -> Vec<Task> {
+        let Some(list) = saved.as_array() else { return Vec::new() };
+        list.iter()
+            .filter_map(|t| {
+                Some(Task {
+                    text: t.get("text")?.as_str()?.chars().take(MAX_LEN).collect(),
+                    done: t.get("done").and_then(Value::as_bool).unwrap_or(false),
+                    due: t.get("due").and_then(Value::as_u64).filter(|&d| d <= MAX_DUE),
+                    notified: t.get("notified").and_then(Value::as_bool).unwrap_or(false),
+                    date: t.get("date").and_then(Value::as_i64).filter(|d| (-MAX_DAY..=MAX_DAY).contains(d)),
                 })
             })
-            .unwrap_or_default();
-        Self { tasks, scroll: 0 }
+            .take(MAX_TASKS)
+            .collect()
     }
 
     #[cfg(test)]
@@ -196,6 +202,19 @@ mod tests {
     use super::*;
 
     const NOW: u64 = 1_800_000_000;
+
+    #[test]
+    fn a_saved_list_is_held_to_the_limits_of_the_editor() {
+        let mut saved: Vec<Value> = (0..250).map(|i| json!({ "text": format!("task {i}"), "due": NOW, "date": 20_000 })).collect();
+        saved[0] = json!({ "text": "x".repeat(200_000), "due": u64::MAX, "date": i64::MIN, "done": true });
+        let tasks = Todo::parse(&json!(saved));
+        assert_eq!(tasks.len(), MAX_TASKS, "no more tasks than can be added");
+        assert_eq!(tasks[0].text.chars().count(), MAX_LEN, "a huge text is cut");
+        assert_eq!((tasks[0].due, tasks[0].date, tasks[0].done), (None, None, true), "a time or day no calendar shows is dropped");
+        assert_eq!((tasks[1].text.as_str(), tasks[1].due, tasks[1].date), ("task 1", Some(NOW), Some(20_000)), "a normal task is untouched");
+        assert!(Todo::parse(&json!("not a list")).is_empty());
+        assert_eq!(Todo::parse(&json!([{ "done": true }, { "text": "ok" }])).len(), 1, "an entry with no text is not a task");
+    }
 
     #[test]
     fn add_trims_rejects_blank_and_puts_newest_first() {

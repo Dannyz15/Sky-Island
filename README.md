@@ -157,7 +157,7 @@ Network requests, and why:
 
 **Sound:** while a song plays and the closed notch shows its bars, Sky Island listens to the sound your PC sends to the speakers or headphones (Windows calls it loopback) to make the bars follow the music. It only measures how loud each pitch is, about 45 times a second. Nothing is recorded, saved or sent, the microphone is not used, and it stops a moment after the bars go away. Switch it off with **Bars follow the sound** in Settings > Closed notch. It hears everything the PC plays, not only the song.
 
-**Glass:** with Clear or Smoky glass, Sky Island copies the part of the screen right around the notch a few times a second, to show it blurred through the glass. The copy is kept in memory only; it is never saved or sent. Nothing is copied with Black glass or no glass.
+**Glass:** with Clear or Smoky glass, Sky Island copies the part of the screen right around the notch a few times a second (up to about fifteen while the notch is moving), to show it blurred through the glass. The copy is kept in memory only; it is never saved or sent. Nothing is copied with Black glass or no glass.
 
 To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whether one of those two keys was pressed. It never records or sends what you type. **Start with Windows** adds one startup entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 </details>

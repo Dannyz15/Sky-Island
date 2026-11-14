@@ -422,6 +422,13 @@ impl App {
     pub(super) fn reset_settings(&mut self) {
         settings::set_autostart(false);
         self.autostart = false;
+        // What the old settings left behind goes too, as when the city is cleared: a sound still playing from its own
+        // file, and the forecast and prayer times fetched for the city.
+        for slot in crate::sound::Slot::ALL {
+            crate::sound::stop_file(slot);
+        }
+        crate::weather::clear_cache();
+        crate::prayer::clear_cache();
         self.settings = Settings::default();
         crate::update::set_auto(self.settings.hud_update, &self.proxy);
         self.end_timer_edit(false);
