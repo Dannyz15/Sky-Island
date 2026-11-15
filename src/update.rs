@@ -178,6 +178,9 @@ pub fn notes_of(body: &str) -> Vec<Note> {
 
 /// Ask GitHub on a background thread; the answer arrives as `UserEvent::Update`.
 pub fn spawn_check(proxy: EventLoopProxy<UserEvent>) {
+    if crate::package::is_store() {
+        return;
+    }
     thread::spawn(move || {
         let _ = proxy.send_event(UserEvent::Update(check()));
     });
@@ -192,6 +195,10 @@ const AUTO_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// Start looking for a new version by itself: once soon after start, then every few hours, while `on`. The
 /// answers arrive as `UserEvent::AutoUpdate`. (Call once.)
 pub fn spawn_auto(on: bool, proxy: EventLoopProxy<UserEvent>) {
+    // The Store build is updated by the Store: it never looks on GitHub for a new version.
+    if crate::package::is_store() {
+        return;
+    }
     AUTO.store(on, Ordering::Relaxed);
     thread::spawn(move || {
         thread::sleep(AUTO_FIRST);
@@ -206,6 +213,9 @@ pub fn spawn_auto(on: bool, proxy: EventLoopProxy<UserEvent>) {
 
 /// The notice was switched on or off. Switching it off stops the checks; switching it on looks at once.
 pub fn set_auto(on: bool, proxy: &EventLoopProxy<UserEvent>) {
+    if crate::package::is_store() {
+        return;
+    }
     if AUTO.swap(on, Ordering::Relaxed) == on || !on {
         return;
     }

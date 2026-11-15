@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The package manifest of the Microsoft Store build. scripts\package-store.ps1 fills in __VERSION__ (the version from
+  Cargo.toml with a fourth number 0, which the Store requires) and packs this file with sky-island.exe and the logos.
+  The Name and Publisher below come from Partner Center (Product management, Product identity); they are public.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap desktop rescap">
+
+  <Identity Name="Dannyz15.SkyIsland" Publisher="CN=DC1B6860-235F-493E-90E8-8AE3C7064780" Version="__VERSION__" ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Sky Island</DisplayName>
+    <PublisherDisplayName>Dannyz15</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="SkyIsland" Executable="sky-island.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Sky Island"
+        Description="A notch for the top of your Windows screen: music with lyrics, timer, water, weather, prayer times, system stats, file shelf, to-do, calendar, clipboard and system notices."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" Square71x71Logo="Assets\Square71x71Logo.png" Square310x310Logo="Assets\Square310x310Logo.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- "Start with Windows" in the app: off until the user turns it on (see src/package.rs). -->
+        <desktop:Extension Category="windows.startupTask" Executable="sky-island.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="SkyIslandStartup" Enabled="false" DisplayName="Sky Island" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Sky Island is a normal desktop program (hooks, the clipboard, the audio meter, window placement), so it runs with full trust. -->
+    <rescap:Capability Name="runFullTrust" />
+    <!-- The weather and prayer times can use the location of this PC. -->
+    <DeviceCapability Name="location" />
+  </Capabilities>
+</Package>

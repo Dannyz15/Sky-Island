@@ -21,6 +21,7 @@ mod motion;
 mod msgwin;
 mod net;
 mod open;
+mod package;
 mod panel;
 mod prayer;
 mod presence;

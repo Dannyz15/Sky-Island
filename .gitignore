@@ -13,3 +13,6 @@ Sky Memory/
 *.key
 *.pfx
 *.p12
+
+# Text for the Microsoft Store submission: kept on this PC, not part of the project
+packaging/store/listing.md

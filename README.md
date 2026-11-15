@@ -145,7 +145,7 @@ Found a bug or have an idea? [Open an issue](https://github.com/Dannyz15/Sky-Isl
 
 ## Privacy
 
-Your data stays on your computer. There are no accounts and no tracking.
+Your data stays on your computer. There are no accounts and no tracking. The full policy is in [PRIVACY.md](PRIVACY.md).
 
 <details>
 <summary>What is stored and what is sent</summary>

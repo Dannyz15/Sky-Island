@@ -289,6 +289,19 @@ pub(super) type RowSpec = (&'static str, &'static str, Kind, &'static str);
 
 /// The groups (title and rows) on a page.
 pub(super) fn page_spec(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
+    let mut groups = page_rows(page);
+    if crate::package::is_store() {
+        // The Store updates the app, so the controls that look for a new version on GitHub are not shown.
+        let own_update = |kind: &Kind| matches!(kind, Kind::Button(Act::CheckUpdate) | Kind::Toggle(Toggle::HudUpdate));
+        for (_, rows) in &mut groups {
+            rows.retain(|(_, _, kind, _)| !own_update(kind));
+        }
+        groups.retain(|(_, rows)| !rows.is_empty());
+    }
+    groups
+}
+
+fn page_rows(page: Page) -> Vec<(&'static str, Vec<RowSpec>)> {
     use Kind::{Button, Cycle, EyeGrid, Link, Pick, ScreenMap, Seg as S, Slider, TabGrid, Text, Toggle as T};
     let own = |slot, what: &'static str| ("Volume", what, Slider(Slide::Own(slot)), "");
     let file = |slot| ("Sound", "Use a sound file of your own", Pick(slot), "");
