@@ -1,0 +1,29 @@
+# Whoever is listed here is asked to review a pull request that changes these files, and GitHub can refuse the
+# merge without that review (the "Require review from Code Owners" rule of the main ruleset).
+#
+# They are the files that decide what gets built, shipped and installed, or what the app downloads and opens.
+# Everything else (the notch, the panels, the looks) is reviewed like any other change.
+
+# The build and the checks
+/.github/            @Dannyz15
+/scripts/            @Dannyz15
+/build.rs            @Dannyz15
+/Cargo.toml          @Dannyz15
+/Cargo.lock          @Dannyz15
+/rust-toolchain.toml @Dannyz15
+/deny.toml           @Dannyz15
+
+# The installer and the Microsoft Store package
+/installer/          @Dannyz15
+/packaging/          @Dannyz15
+/src/package.rs      @Dannyz15
+
+# What the app downloads, installs, opens and sends
+/src/update.rs       @Dannyz15
+/src/net.rs          @Dannyz15
+/src/open.rs         @Dannyz15
+
+# The promises to users and to the Store
+/LICENSE             @Dannyz15
+/PRIVACY.md          @Dannyz15
+/SECURITY.md         @Dannyz15
