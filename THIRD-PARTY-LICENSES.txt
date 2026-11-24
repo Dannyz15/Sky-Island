@@ -19,12 +19,12 @@ bitflags 2.13.2  [MIT OR Apache-2.0]  https://github.com/bitflags/bitflags
 block-buffer 0.12.1  [MIT OR Apache-2.0]  https://github.com/RustCrypto/utils
 bytemuck 1.25.2  [Zlib OR Apache-2.0 OR MIT]  https://github.com/Lokathor/bytemuck
 byteorder-lite 0.1.0  [Unlicense OR MIT]  https://github.com/image-rs/byteorder-lite
-bytes 1.12.1  [MIT]  https://github.com/tokio-rs/bytes
+bytes 1.12.2  [MIT]  https://github.com/tokio-rs/bytes
 cfg-if 1.0.5  [MIT OR Apache-2.0]  https://github.com/rust-lang/cfg-if
 const-oid 0.10.3  [Apache-2.0 OR MIT]  https://github.com/RustCrypto/formats
 core_maths 0.1.1  [MIT]  https://github.com/robertbastian/core_maths
 cpufeatures 0.3.1  [MIT OR Apache-2.0]  https://github.com/RustCrypto/utils
-crc32fast 1.5.5  [MIT OR Apache-2.0]  https://github.com/srijs/rust-crc32fast
+crc32fast 1.5.6  [MIT OR Apache-2.0]  https://github.com/srijs/rust-crc32fast
 crossbeam-channel 0.5.17  [MIT OR Apache-2.0]  https://github.com/crossbeam-rs/crossbeam
 crossbeam-utils 0.8.23  [MIT OR Apache-2.0]  https://github.com/crossbeam-rs/crossbeam
 crypto-common 0.2.2  [MIT OR Apache-2.0]  https://github.com/RustCrypto/traits
@@ -54,7 +54,7 @@ muda 0.21.2  [Apache-2.0 OR MIT]  https://github.com/tauri-apps/muda
 num-traits 0.2.19  [MIT OR Apache-2.0]  https://github.com/rust-num/num-traits
 once_cell 1.21.4  [MIT OR Apache-2.0]  https://github.com/matklad/once_cell
 percent-encoding 2.3.2  [MIT OR Apache-2.0]  https://github.com/servo/rust-url/
-pin-project-lite 0.2.17  [Apache-2.0 OR MIT]  https://github.com/taiki-e/pin-project-lite
+pin-project-lite 0.2.18  [Apache-2.0 OR MIT]  https://github.com/taiki-e/pin-project-lite
 png 0.18.1  [MIT OR Apache-2.0]  https://github.com/image-rs/image-png
 proc-macro2 1.0.107  [MIT OR Apache-2.0]  https://github.com/dtolnay/proc-macro2
 pxfm 0.1.30  [BSD-3-Clause OR Apache-2.0]  https://github.com/awxkee/pxfm
@@ -108,7 +108,7 @@ windows-targets 0.52.6  [MIT OR Apache-2.0]  https://github.com/microsoft/window
 windows-threading 0.2.1  [MIT OR Apache-2.0]  https://github.com/microsoft/windows-rs
 winit 0.30.13  [Apache-2.0]  https://github.com/rust-windowing/winit
 winreg 0.56.0  [MIT]  https://github.com/gentoo90/winreg-rs
-zeroize 1.9.1  [Apache-2.0 OR MIT]  https://github.com/RustCrypto/utils
+zeroize 1.9.2  [Apache-2.0 OR MIT]  https://github.com/RustCrypto/utils
 zmij 1.0.23  [MIT]  https://github.com/dtolnay/zmij
 zune-core 0.5.3  [MIT OR Apache-2.0 OR Zlib]  https://github.com/etemesi254/zune-image
 zune-jpeg 0.5.15  [MIT OR Apache-2.0 OR Zlib]  https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
@@ -340,7 +340,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ================================================================================
-Used by: adler2 2.0.1, allocator-api2 0.2.21, itoa 1.0.19, once_cell 1.21.4, pin-project-lite 0.2.17, proc-macro2 1.0.107, quote 1.0.47, serde 1.0.229, serde_core 1.0.229, serde_json 1.0.154, smol_str 0.2.2, syn 2.0.119, syn 3.0.10, thiserror 2.0.21, thiserror-impl 2.0.21, unicode-ident 1.0.27, utf8-zero 0.8.1, zmij 1.0.23
+Used by: adler2 2.0.1, allocator-api2 0.2.21, itoa 1.0.19, once_cell 1.21.4, pin-project-lite 0.2.18, proc-macro2 1.0.107, quote 1.0.47, serde 1.0.229, serde_core 1.0.229, serde_json 1.0.154, smol_str 0.2.2, syn 2.0.119, syn 3.0.10, thiserror 2.0.21, thiserror-impl 2.0.21, unicode-ident 1.0.27, utf8-zero 0.8.1, zmij 1.0.23
 ================================================================================
 
 Permission is hereby granted, free of charge, to any
@@ -1259,7 +1259,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 For more information, please refer to <http://unlicense.org/>
 
 ================================================================================
-Used by: bytes 1.12.1
+Used by: bytes 1.12.2
 ================================================================================
 
 Copyright (c) 2018 Carl Lerche
@@ -1375,7 +1375,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-Used by: crc32fast 1.5.5, dpi 0.1.2, winit 0.30.13
+Used by: crc32fast 1.5.6, dpi 0.1.2, winit 0.30.13
 ================================================================================
 
 Apache License
@@ -1581,7 +1581,7 @@ Apache License
    limitations under the License.
 
 ================================================================================
-Used by: crc32fast 1.5.5
+Used by: crc32fast 1.5.6
 ================================================================================
 
 MIT License
@@ -2630,7 +2630,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ================================================================================
-Used by: fdeflate 0.3.7, fontdue 0.9.5, image 0.25.10, miniz_oxide 0.8.9, miniz_oxide 0.9.1, pin-project-lite 0.2.17, raw-window-handle 0.6.2
+Used by: fdeflate 0.3.7, fontdue 0.9.5, image 0.25.10, miniz_oxide 0.8.9, miniz_oxide 0.9.1, pin-project-lite 0.2.18, raw-window-handle 0.6.2
 ================================================================================
 
 Apache License
@@ -5674,7 +5674,7 @@ Used by: untrusted 0.9.0
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ================================================================================
-Used by: ureq 3.5.2, ureq-proto 0.7.1, zeroize 1.9.1, zune-core 0.5.3, zune-jpeg 0.5.15
+Used by: ureq 3.5.2, ureq-proto 0.7.1, zeroize 1.9.2, zune-core 0.5.3, zune-jpeg 0.5.15
 ================================================================================
 
 Apache License
@@ -6240,7 +6240,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ================================================================================
-Used by: zeroize 1.9.1
+Used by: zeroize 1.9.2
 ================================================================================
 
 Copyright (c) 2018-2026 The RustCrypto Project Developers

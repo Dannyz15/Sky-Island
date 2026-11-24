@@ -44,7 +44,7 @@ jobs:
       # exact version, with the crate versions in its own lock file. The cache above keeps the built program, so only the
       # first run pays for the build.
       - name: Install cargo-deny
-        run: cargo install cargo-deny --version 0.20.2 --locked
+        run: cargo install cargo-deny --version 0.22.0 --locked
       - name: Crates (known problems, licences, sources)
         run: cargo deny check
       - name: Formatting
