@@ -16,3 +16,16 @@ Sky Memory/
 
 # Text for the Microsoft Store submission: kept on this PC, not part of the project
 packaging/store/listing.md
+
+# Editor settings folders: they can hold local paths and personal preferences
+.vscode/
+.idea/
+
+# Files Windows creates by itself in folders with pictures
+Thumbs.db
+desktop.ini
+
+# Microsoft Store packages belong in dist\ only (already ignored); never push one by accident
+*.msix
+*.msixupload
+*.appx

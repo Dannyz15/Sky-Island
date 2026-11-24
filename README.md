@@ -141,7 +141,7 @@ In `%APPDATA%\Sky-Island`. Settings > About has **Open data folder** and **Reset
 When the app hits an error it cannot recover from, it writes a report to `crash.log` in the data folder (Settings > About > **Open data folder**): the version, the time, what went wrong and where. If you open an issue, please attach that file. A new report is added at the end of the file; the oldest are dropped when the file passes 64 KB.
 </details>
 
-Found a bug or have an idea? [Open an issue](https://github.com/Dannyz15/Sky-Island/issues).
+Found a bug or have an idea? [Open an issue](https://github.com/Dannyz15/Sky-Island/issues). For a security problem, please report it privately instead (see [SECURITY.md](SECURITY.md)).
 
 ## Privacy
 
@@ -201,6 +201,7 @@ cargo run --release
 | Format the code (one style for everything, set in `rustfmt.toml`) | `cargo fmt` |
 | Check the crates for known problems, licences and sources | `cargo install cargo-deny --locked`, then `cargo deny check` (settings in `deny.toml`) |
 | Make the setup program, `dist\Sky-Island-Setup-<version>.exe` | `powershell -ExecutionPolicy Bypass -File scripts\package.ps1` |
+| Make the Microsoft Store package, `dist\Sky-Island-<version>.0.msix` (unsigned; the Store signs it) | `powershell -ExecutionPolicy Bypass -File scripts\package-store.ps1` |
 
 To try a build without touching your own settings, shelf and to-do list, start it with another data folder: in a terminal run `set APPDATA=C:\temp\sky-test` and then the program. Its data goes in `C:\temp\sky-test\Sky-Island`, and it can run next to the copy you normally use.
 
