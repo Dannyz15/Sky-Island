@@ -288,9 +288,7 @@ impl App {
         self.refresh_edges();
         self.apply_visibility();
         self.last_tick = Instant::now();
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
         if let Some(p) = &self.panel {
             p.redraw();
         }

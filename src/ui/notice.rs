@@ -53,9 +53,7 @@ impl App {
         self.notices.current = Some(notice);
         self.notices.until = Some(now + if matches!(self.notices.current, Some(Notice::Update { .. } | Notice::Prayer { .. })) { LONG_NOTICE_TIME } else { NOTICE_TIME });
         self.last_tick = now;
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     pub(crate) fn draw_notice(&self, pm: &mut Pixmap, notice: &sys::Notice, real_s: f32, alpha: f32, fw: f32) {

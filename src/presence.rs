@@ -5,9 +5,11 @@
 use std::sync::OnceLock;
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(any(windows, target_os = "linux"))]
+use std::thread;
 #[cfg(windows)]
-use std::thread::{self, Thread};
-#[cfg(any(windows, test))]
+use std::thread::Thread;
+#[cfg(any(windows, target_os = "linux", test))]
 use std::time::Duration;
 
 #[cfg(windows)]
@@ -124,8 +126,148 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>, island: isize) {
             thread::park_timeout(POLL);
         }
     });
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = island;
+        spawn_hyprland(proxy);
+    }
+    #[cfg(all(not(windows), not(target_os = "linux")))]
     let _ = (proxy, island);
+}
+
+/// Watches Hyprland IPC events for fullscreen apps and monitor changes (silent no-op outside Hyprland).
+#[cfg(target_os = "linux")]
+fn spawn_hyprland(proxy: EventLoopProxy<UserEvent>) {
+    let Some((req_sock, evt_sock)) = hyprland_sockets() else { return };
+    thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::net::UnixStream;
+
+        let mut last = query_hyprland_fullscreen(&req_sock);
+        if last != Fullscreen::No {
+            let _ = proxy.send_event(UserEvent::Presence { presence: Presence::Active, fullscreen: last });
+        }
+
+        let Ok(stream) = UnixStream::connect(&evt_sock) else { return };
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        while reader.read_line(&mut line).is_ok_and(|n| n > 0) {
+            let ev = line.trim_end();
+            let check_fs = ev.starts_with("fullscreen>>")
+                || ev.starts_with("workspace>>")
+                || ev.starts_with("workspacev2>>")
+                || ev.starts_with("focusedmon>>")
+                || ev.starts_with("focusedmonv2>>")
+                || ev.starts_with("activewindow>>")
+                || ev.starts_with("activewindowv2>>")
+                || ev.starts_with("openwindow>>")
+                || ev.starts_with("closewindow>>")
+                || ev.starts_with("movewindow>>")
+                || ev.starts_with("movewindowv2>>")
+                || ev.starts_with("monitoradded>>")
+                || ev.starts_with("monitorremoved>>");
+            let screens_changed = ev.starts_with("monitoradded>>") || ev.starts_with("monitorremoved>>");
+            line.clear();
+
+            if screens_changed {
+                let _ = proxy.send_event(UserEvent::Screens);
+            }
+            if check_fs {
+                let now = query_hyprland_fullscreen(&req_sock);
+                if now != last {
+                    last = now;
+                    let _ = proxy.send_event(UserEvent::Presence { presence: Presence::Active, fullscreen: now });
+                }
+            }
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn hyprland_sockets() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let sig = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")?;
+    let dir = std::path::PathBuf::from(runtime).join("hypr").join(sig);
+    let req = dir.join(".socket.sock");
+    let evt = dir.join(".socket2.sock");
+    (req.exists() && evt.exists()).then_some((req, evt))
+}
+
+#[cfg(target_os = "linux")]
+fn query_hyprland(sock: &std::path::Path, cmd: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    let mut s = UnixStream::connect(sock).ok()?;
+    let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
+    s.write_all(cmd.as_bytes()).ok()?;
+    let mut out = String::new();
+    s.read_to_string(&mut out).ok()?;
+    Some(out)
+}
+
+#[cfg(target_os = "linux")]
+fn query_hyprland_fullscreen(sock: &std::path::Path) -> Fullscreen {
+    let (Some(monitors), Some(clients)) = (query_hyprland(sock, "j/monitors"), query_hyprland(sock, "j/clients")) else {
+        return Fullscreen::No;
+    };
+    hyprland_fullscreen(&monitors, &clients)
+}
+
+/// Extract `(monitor_id, active_workspace_id, logical_area)` from a `hyprctl monitors -j` element.
+#[cfg(any(target_os = "linux", test))]
+fn hyprland_monitor_area(m: &serde_json::Value) -> Option<(i64, i64, Area)> {
+    if m.get("disabled").and_then(serde_json::Value::as_bool).unwrap_or(false) {
+        return None;
+    }
+    let id = m.get("id")?.as_i64()?;
+    let ws_id = m.pointer("/activeWorkspace/id").and_then(serde_json::Value::as_i64)?;
+    let x = m.get("x")?.as_i64()? as i32;
+    let y = m.get("y")?.as_i64()? as i32;
+    let mut w = m.get("width")?.as_f64()?;
+    let mut h = m.get("height")?.as_f64()?;
+    let scale = m.get("scale").and_then(serde_json::Value::as_f64).unwrap_or(1.0).max(0.1);
+    let transform = m.get("transform").and_then(serde_json::Value::as_i64).unwrap_or(0);
+    if transform % 2 != 0 {
+        std::mem::swap(&mut w, &mut h);
+    }
+    let lw = (w / scale).round() as i32;
+    let lh = (h / scale).round() as i32;
+    Some((id, ws_id, (x, y, x + lw, y + lh)))
+}
+
+/// Compute notch fullscreen state from `hyprctl monitors -j` and `hyprctl clients -j` JSON.
+/// Hyprland `fullscreen` bitmask: bit 0 (1) = maximized, bit 1 (2) = true fullscreen.
+#[cfg(any(target_os = "linux", test))]
+fn hyprland_fullscreen(monitors_json: &str, clients_json: &str) -> Fullscreen {
+    let Ok(serde_json::Value::Array(monitors)) = serde_json::from_str::<serde_json::Value>(monitors_json) else {
+        return Fullscreen::No;
+    };
+    let Ok(serde_json::Value::Array(clients)) = serde_json::from_str::<serde_json::Value>(clients_json) else {
+        return Fullscreen::No;
+    };
+    let active_monitors: Vec<_> = monitors.iter().filter_map(hyprland_monitor_area).collect();
+    let mut matched: Vec<Area> = Vec::new();
+    for c in &clients {
+        let mapped = c.get("mapped").and_then(serde_json::Value::as_bool).unwrap_or(false);
+        let hidden = c.get("hidden").and_then(serde_json::Value::as_bool).unwrap_or(false);
+        let fs_bits = c.get("fullscreen").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        if !mapped || hidden || (fs_bits & 2) == 0 {
+            continue;
+        }
+        let ws_id = c.pointer("/workspace/id").and_then(serde_json::Value::as_i64);
+        let mon_id = c.get("monitor").and_then(serde_json::Value::as_i64);
+        if let Some((_, _, area)) = active_monitors.iter().find(|&&(id, active_ws, _)| Some(id) == mon_id && Some(active_ws) == ws_id)
+            && !matched.contains(area)
+        {
+            matched.push(*area);
+        }
+    }
+    match matched.len() {
+        0 => Fullscreen::No,
+        1 => Fullscreen::On(matched[0]),
+        _ => Fullscreen::Somewhere,
+    }
 }
 
 /// Windows says when another window comes to the front; that wakes the thread above at once, so a full-screen
@@ -360,5 +502,27 @@ mod tests {
         assert_eq!(classify(IDLE_AFTER), Presence::Idle);
         assert_eq!(classify(DOZE_AFTER - Duration::from_secs(1)), Presence::Idle);
         assert_eq!(classify(DOZE_AFTER), Presence::Dozing);
+    }
+
+    #[test]
+    fn hyprland_fullscreen_ignores_maximized_and_inactive_workspaces() {
+        let monitors = r#"[
+            {"id": 0, "x": 320, "y": 1080, "width": 1920, "height": 1080, "scale": 1.5, "transform": 0, "activeWorkspace": {"id": 1}},
+            {"id": 1, "x": 0, "y": 0, "width": 1080, "height": 1920, "scale": 1.0, "transform": 1, "activeWorkspace": {"id": 3}}
+        ]"#;
+        // Maximized window (fullscreen: 1) + true fullscreen on inactive workspace 2 -> No
+        let clients_non_fs = r#"[
+            {"mapped": true, "hidden": false, "fullscreen": 1, "monitor": 0, "workspace": {"id": 1}},
+            {"mapped": true, "hidden": false, "fullscreen": 2, "monitor": 0, "workspace": {"id": 2}}
+        ]"#;
+        assert_eq!(hyprland_fullscreen(monitors, clients_non_fs), Fullscreen::No);
+
+        // True fullscreen on fractional-scale monitor 0 -> On((320, 1080, 1600, 1800))
+        let clients_fs0 = r#"[{"mapped": true, "hidden": false, "fullscreen": 2, "monitor": 0, "workspace": {"id": 1}}]"#;
+        assert_eq!(hyprland_fullscreen(monitors, clients_fs0), Fullscreen::On((320, 1080, 1600, 1800)));
+
+        // Rotated monitor 1 swaps 1080x1920 to 1920x1080
+        let clients_fs1 = r#"[{"mapped": true, "hidden": false, "fullscreen": 2, "monitor": 1, "workspace": {"id": 3}}]"#;
+        assert_eq!(hyprland_fullscreen(monitors, clients_fs1), Fullscreen::On((0, 0, 1920, 1080)));
     }
 }

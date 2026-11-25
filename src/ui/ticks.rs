@@ -73,9 +73,7 @@ impl App {
             self.view = View::Timer;
             self.last_tick = now;
             self.play_alarm();
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.request_redraw();
         }
         if let Some(text) = self.todo.take_due(todo::unix_now()) {
             let short: String = text.chars().take(40).collect();
@@ -90,9 +88,8 @@ impl App {
             && self.clip.history.expire(now, keep)
             && self.view == View::Clipboard
             && self.spring.progress > 0.0
-            && let Some(w) = &self.window
         {
-            w.request_redraw();
+            self.request_redraw();
         }
         self.check_prayer();
         self.water.roll(today());
@@ -124,9 +121,7 @@ impl App {
         }
         if self.clip.flash.as_ref().is_some_and(|(_, t)| now >= *t) {
             self.clip.flash = None;
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.request_redraw();
         }
     }
 
@@ -170,9 +165,7 @@ impl App {
             let due = self.last_ui_tick + tick;
             if now >= due {
                 self.last_ui_tick = now;
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.request_redraw();
                 at(now + tick);
             } else {
                 at(due);
@@ -183,9 +176,7 @@ impl App {
             let (tick, due) = (self.music_tick(), self.music.bars_at + self.music_tick());
             if now >= due {
                 self.music.bars_at = now;
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.request_redraw();
                 at(now + tick);
             } else {
                 at(due);

@@ -61,28 +61,49 @@ impl Default for Pointer {
 
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if self.has_notch() {
             return;
         }
         // A setup downloaded by "Check for updates" has done its job once this version is running.
         update::clean_up_downloads();
-        #[allow(unused_mut)]
-        let mut attrs = Window::default_attributes()
-            .with_title("Sky Island")
-            .with_decorations(false)
-            .with_transparent(true)
-            .with_resizable(false)
-            .with_window_level(WindowLevel::AlwaysOnTop)
-            .with_inner_size(LogicalSize::new(COLLAPSED.0 + 2.0 * EAR, COLLAPSED.1));
-        #[cfg(windows)]
-        {
-            attrs = attrs.with_skip_taskbar(true);
+        #[cfg(target_os = "linux")]
+        let using_wayland = match crate::wayland::Handle::spawn(self.proxy.clone()) {
+            Ok(wl) => {
+                self.wayland_scale = wl.outputs().first().map_or(1.0, |o| o.scale);
+                self.wayland = Some(wl);
+                true
+            }
+            Err(_) => false,
+        };
+        #[cfg(not(target_os = "linux"))]
+        let using_wayland = false;
+
+        if !using_wayland {
+            #[allow(unused_mut)]
+            let mut attrs = Window::default_attributes()
+                .with_title("Sky Island")
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_resizable(false)
+                .with_window_level(WindowLevel::AlwaysOnTop)
+                .with_inner_size(LogicalSize::new(COLLAPSED.0 + 2.0 * EAR, COLLAPSED.1));
+            #[cfg(windows)]
+            {
+                attrs = attrs.with_skip_taskbar(true);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                use winit::platform::x11::{ActiveEventLoopExtX11, WindowAttributesExtX11, WindowType};
+                if event_loop.is_x11() {
+                    attrs = attrs.with_x11_window_type(vec![WindowType::Dock]).with_name("sky-island", "sky-island");
+                }
+            }
+            let window = Rc::new(event_loop.create_window(attrs).expect("create window"));
+            let context = Context::new(window.clone()).expect("softbuffer context");
+            self.surface = Some(Surface::new(&context, window.clone()).expect("softbuffer surface"));
+            self.system_light = window.theme() == Some(Theme::Light);
+            self.window = Some(window);
         }
-        let window = Rc::new(event_loop.create_window(attrs).expect("create window"));
-        let context = Context::new(window.clone()).expect("softbuffer context");
-        self.surface = Some(Surface::new(&context, window.clone()).expect("softbuffer surface"));
-        self.system_light = window.theme() == Some(Theme::Light);
-        self.window = Some(window);
         self.play.handle = Some(media::spawn(self.proxy.clone()));
         sys::spawn_all(self.proxy.clone());
         self.backdrop = Some(crate::glass::Watcher::spawn(self.proxy.clone()));
@@ -101,9 +122,10 @@ impl ApplicationHandler<UserEvent> for App {
         self.refresh_edges();
         hotkey::start(self.proxy.clone(), self.settings.hotkey.then_some((self.settings.hotkey_mods, self.settings.hotkey_vk)));
         self.step();
+        self.flush_wayland_draw();
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Notice(notice) => self.on_notice(notice),
             UserEvent::Hotkey => self.toggle_by_key(),
@@ -115,18 +137,14 @@ impl ApplicationHandler<UserEvent> for App {
             }
             UserEvent::SysVolume { percent, muted } => {
                 self.volume.level = Some((percent, muted));
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.request_redraw();
             }
             UserEvent::Clip(content) => self.on_clip(content),
             UserEvent::Menu(id) => self.on_menu(id),
             UserEvent::Presence { presence, fullscreen } => self.on_presence(presence, fullscreen),
             UserEvent::ShelfMissing(missing) => {
                 self.shelf.forget(&missing);
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.request_redraw();
             }
             UserEvent::Screens => self.on_screens(),
             UserEvent::FollowTo(screen) => self.follow_to(screen),
@@ -160,7 +178,11 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Lyrics { key, fetched, online } => self.on_lyrics(key, fetched, online),
             UserEvent::Media(state) => self.on_media(state),
             UserEvent::Backdrop => self.on_backdrop(),
+            #[cfg(target_os = "linux")]
+            UserEvent::Wayland(ev) => self.on_wayland_event(event_loop, ev),
         }
+        #[cfg(not(target_os = "linux"))]
+        let _ = event_loop;
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
@@ -247,6 +269,10 @@ impl ApplicationHandler<UserEvent> for App {
         // Files dropped on the shelf are saved once, after all of the drop's events were handled (and before quitting).
         self.shelf.flush();
         if self.quit {
+            #[cfg(target_os = "linux")]
+            if let Some(wl) = &self.wayland {
+                wl.shutdown();
+            }
             event_loop.exit();
             return;
         }
@@ -256,9 +282,7 @@ impl ApplicationHandler<UserEvent> for App {
         if self.shelf_ui.selecting && (self.view != View::Shelf || !self.pointer.hovered) {
             self.shelf_ui.selected.clear();
             self.sync_selection_focus();
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.request_redraw();
         }
 
         if self.mirrors.wanted {
@@ -282,20 +306,106 @@ impl ApplicationHandler<UserEvent> for App {
         // A step draws a frame, and drawing wakes the loop again at once: stepping at every wake-up made the notch
         // redraw thousands of times a second while a switch of view settled, and the settings window, on the same
         // thread, waited for it. So a step is taken only when it is due, one for each frame of the screen.
-        if self.animating() {
+        let wake = if self.animating() {
             if now >= self.pacing.due {
                 self.step();
                 self.pacing.due = self.next_frame(now);
             }
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.pacing.due));
-            return;
-        }
+            Some(self.pacing.due)
+        } else {
+            self.next_wake(now, panel_wake)
+        };
 
-        let wake = self.next_wake(now, panel_wake);
+        self.flush_wayland_draw();
 
         event_loop.set_control_flow(match wake {
             Some(t) => ControlFlow::WaitUntil(t),
             None => ControlFlow::Wait,
         });
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl App {
+    fn on_wayland_event(&mut self, event_loop: &ActiveEventLoop, event: wayland::Event) {
+        match event {
+            wayland::Event::Closed => event_loop.exit(),
+            wayland::Event::OutputsChanged => self.on_screens(),
+            wayland::Event::ScaleChanged(factor) => {
+                self.wayland_preferred_scale = Some(factor);
+                self.wayland_scale = factor;
+                self.last_tick = Instant::now();
+                self.step();
+            }
+            wayland::Event::CursorEntered { output_id, mirror, x, y } => {
+                if mirror {
+                    if let Some(id) = output_id {
+                        self.follow_to(id);
+                    }
+                } else {
+                    self.on_cursor_entered(event_loop);
+                    let pos = PhysicalPosition::new(x * self.wayland_scale, (y + self.wayland_tuck_logical) * self.wayland_scale);
+                    self.on_cursor_moved(pos);
+                }
+            }
+            wayland::Event::CursorLeft { mirror, .. } => {
+                if !mirror {
+                    self.on_cursor_left(event_loop);
+                }
+            }
+            wayland::Event::CursorMoved { output_id, mirror, x, y } => {
+                if mirror {
+                    if let Some(id) = output_id {
+                        self.follow_to(id);
+                    }
+                } else {
+                    let pos = PhysicalPosition::new(x * self.wayland_scale, (y + self.wayland_tuck_logical) * self.wayland_scale);
+                    self.on_cursor_moved(pos);
+                }
+            }
+            wayland::Event::MouseInput { pressed } => {
+                if pressed {
+                    self.on_left_pressed();
+                } else {
+                    self.on_left_released();
+                }
+            }
+            wayland::Event::MouseWheel { delta } => {
+                if self.spring.progress >= 0.9 && self.over_volume() {
+                    self.wheel_volume(delta);
+                } else if self.spring.progress >= 0.9 && !self.edit.on && self.timer_entry.field.is_none() && self.wheel_changes_tab() {
+                    self.wheel_tabs(delta);
+                } else if self.view == View::Timer && !self.edit.on && self.spring.progress >= 0.9 {
+                    self.wheel_timer(delta);
+                } else if self.view == View::Lyrics && !self.edit.on && self.spring.progress >= 0.9 {
+                    self.wheel_lyrics(delta);
+                } else if self.edit.on && self.spring.progress >= 0.9 {
+                    self.wheel_editor(delta);
+                } else if matches!(self.view, View::Shelf | View::Todo | View::Clipboard) && self.spring.progress >= 0.9 {
+                    self.wheel_list(delta);
+                }
+            }
+            wayland::Event::KeyPressed { key, text } => {
+                if self.view == View::Shelf {
+                    self.on_shelf_key_parts(&key);
+                } else if self.timer_entry.field.is_some() {
+                    self.on_timer_key_parts(&key, text.as_deref());
+                } else if self.edit.on {
+                    self.on_edit_key_parts(&key, text.as_deref());
+                }
+            }
+            wayland::Event::Focused(false) => {
+                if self.shelf_ui.selecting {
+                    self.on_shelf_focus_lost();
+                } else if self.timer_entry.field.is_some() {
+                    self.edit.prev_foreground = None;
+                    self.end_timer_edit(true);
+                } else if self.edit.on {
+                    self.edit.prev_foreground = None;
+                    self.stop_editing();
+                }
+            }
+            wayland::Event::Focused(true) => {}
+        }
     }
 }

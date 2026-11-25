@@ -139,7 +139,7 @@ impl App {
     }
 
     /// A click in the Clipboard view. (`cx`, `cy`) is the spot in the view's own coordinates.
-    pub(crate) fn click_clipboard(&mut self, cx: f32, cy: f32, window: &Window) {
+    pub(crate) fn click_clipboard(&mut self, cx: f32, cy: f32) {
         let inside = |r: (f32, f32, f32, f32)| cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3;
         if inside(CLIP_CLEAR) {
             // Clears the history here (not the pinned items) and the Windows clipboard itself.
@@ -167,6 +167,6 @@ impl App {
                 return;
             }
         }
-        window.request_redraw();
+        self.request_redraw();
     }
 }

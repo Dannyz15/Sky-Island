@@ -101,7 +101,7 @@ impl App {
     }
 
     /// A click in the Water view. (`cx`, `cy`) is the spot in the view's own coordinates.
-    pub(crate) fn click_water(&mut self, cx: f32, cy: f32, window: &Window) {
+    pub(crate) fn click_water(&mut self, cx: f32, cy: f32) {
         let now = Instant::now();
         let in_label = |x: f32| (cx - x).abs() <= 26.0 && (cy - WATER_CTRL_Y).abs() <= 14.0;
         let chip = (0..water::INTERVALS.len()).find(|&i| {
@@ -124,6 +124,6 @@ impl App {
             return;
         }
         self.notices.alert_until = None;
-        window.request_redraw();
+        self.request_redraw();
     }
 }

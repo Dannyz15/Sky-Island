@@ -9,9 +9,7 @@ impl App {
             self.volume.level = Some((*percent, *muted));
             // The open notch has its own volume slider: no popup for a change made there.
             if self.spring.progress > 0.5 {
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                self.request_redraw();
                 return;
             }
         }
@@ -20,13 +18,8 @@ impl App {
 
     /// Text or a picture was copied.
     pub(super) fn on_clip(&mut self, content: clipboard::Content) {
-        if self.settings.clipboard
-            && self.clip.history.add(content)
-            && self.view == View::Clipboard
-            && self.spring.progress > 0.0
-            && let Some(w) = &self.window
-        {
-            w.request_redraw();
+        if self.settings.clipboard && self.clip.history.add(content) && self.view == View::Clipboard && self.spring.progress > 0.0 {
+            self.request_redraw();
         }
     }
 
@@ -61,9 +54,7 @@ impl App {
         self.vis.presence = presence;
         self.vis.fullscreen = fullscreen;
         self.apply_visibility();
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// A screen was plugged in or out or changed.
@@ -84,11 +75,8 @@ impl App {
     pub(super) fn on_icon(&mut self, path: PathBuf, icon: Option<Pixmap>) {
         if let Some(slot) = self.shelf_ui.icons.get_mut(&path) {
             *slot = icon;
-            if self.view == View::Shelf
-                && self.spring.progress > 0.0
-                && let Some(w) = &self.window
-            {
-                w.request_redraw();
+            if self.view == View::Shelf && self.spring.progress > 0.0 {
+                self.request_redraw();
             }
         }
     }
@@ -127,10 +115,8 @@ impl App {
             };
             self.lyric.manual = None;
             self.snap_lyrics();
-            if self.spring.progress > 0.0
-                && let Some(w) = &self.window
-            {
-                w.request_redraw();
+            if self.spring.progress > 0.0 {
+                self.request_redraw();
             }
         }
     }
@@ -180,19 +166,15 @@ impl App {
         self.media = state;
         self.play.at = Instant::now();
         // Only worth repainting if the player is visible.
-        if self.spring.progress > 0.0
-            && let Some(w) = &self.window
-        {
-            w.request_redraw();
+        if self.spring.progress > 0.0 {
+            self.request_redraw();
         }
     }
 
     /// A new copy of what is behind the notch: the glass is drawn again with it.
     pub(super) fn on_backdrop(&mut self) {
-        if crate::glass::wants_backdrop(self.settings.look)
-            && let Some(w) = &self.window
-        {
-            w.request_redraw();
+        if crate::glass::wants_backdrop(self.settings.look) {
+            self.request_redraw();
         }
     }
 }

@@ -56,9 +56,7 @@ impl App {
         }
         self.edit.on = true;
         self.edit.started = Instant::now();
-        if let Some(w) = &self.window {
-            w.focus_window();
-        }
+        self.focus_notch();
     }
 
     /// Stop typing and give focus back to the app the user was in.
@@ -69,9 +67,7 @@ impl App {
         self.edit.on = false;
         self.last_tick = Instant::now();
         self.restore_foreground();
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// Save the task in the editor. Blank text is refused and the editor stays open.
@@ -370,10 +366,10 @@ impl App {
     }
 
     /// A click in the To-do view. (`cx`, `cy`) is the spot in the view's own coordinates.
-    pub(crate) fn click_todo(&mut self, cx: f32, cy: f32, window: &Window) {
+    pub(crate) fn click_todo(&mut self, cx: f32, cy: f32) {
         let inside = |r: (f32, f32, f32, f32)| cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3;
         if inside(TODO_FIELD) {
-            window.request_redraw();
+            self.request_redraw();
             self.start_editing(None);
             return;
         }
@@ -387,11 +383,11 @@ impl App {
             // Anywhere else on a task opens it for editing.
             self.start_editing(Some(idx));
         }
-        window.request_redraw();
+        self.request_redraw();
     }
 
     /// The editor panel covers the whole notch while a task is being added or changed. True when it took the click.
-    pub(crate) fn click_editor(&mut self, cx: f32, cy: f32, window: &Window) -> bool {
+    pub(crate) fn click_editor(&mut self, cx: f32, cy: f32) -> bool {
         if !self.edit.on {
             return false;
         }
@@ -402,7 +398,7 @@ impl App {
                 editor::Outcome::Continue => {}
             }
         }
-        window.request_redraw();
+        self.request_redraw();
         true
     }
 }

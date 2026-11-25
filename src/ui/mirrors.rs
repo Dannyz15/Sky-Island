@@ -110,6 +110,21 @@ impl App {
     /// Make or take away the copies so there is one on every screen but the one the real notch is on while the Show
     /// on setting is Every, and none otherwise. Run when the loop is free (windows are made from it).
     pub(crate) fn sync_mirrors(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "linux")]
+        if let Some(wl) = &self.wayland {
+            let outputs = wl.outputs();
+            let current = crate::wayland::select_output(&outputs, self.settings.screen, self.vis.follow).map(|o| o.id);
+            let wanted = match self.settings.screen {
+                settings::Screen::Every => outputs.iter().filter(|o| Some(o.id) != current).map(|o| (o.id, crate::wayland::MirrorRole::ClosedNotch)).collect(),
+                settings::Screen::All => outputs.iter().filter(|o| Some(o.id) != current).map(|o| (o.id, crate::wayland::MirrorRole::EdgeTrigger)).collect(),
+                _ => Vec::new(),
+            };
+            wl.sync_mirrors(wanted);
+            if self.settings.screen == settings::Screen::Every {
+                self.draw_mirrors(true);
+            }
+            return;
+        }
         let Some(window) = self.window.clone() else { return };
         let at_of = |m: &winit::monitor::MonitorHandle| (m.position().x, m.position().y);
         let here = self.island_monitor(&window).map(|m| at_of(&m));
@@ -129,6 +144,48 @@ impl App {
     /// Draw the copies. Not more often than they need: about 30 times a second while the notch is closed and now and
     /// again while it is open, unless `force` says it must be now.
     pub(crate) fn draw_mirrors(&mut self, force: bool) {
+        #[cfg(target_os = "linux")]
+        if self.wayland.is_some() {
+            if self.settings.screen != settings::Screen::Every {
+                return;
+            }
+            let every = if self.spring.progress <= 0.001 { CLOSED_EVERY } else { OPEN_EVERY };
+            if !force && self.mirrors.drawn.elapsed() < every {
+                return;
+            }
+            self.mirrors.drawn = Instant::now();
+            let outputs = self.wayland.as_ref().map(|wl| wl.outputs()).unwrap_or_default();
+            if outputs.len() <= 1 {
+                return;
+            }
+            let current = crate::wayland::select_output(&outputs, self.settings.screen, self.vis.follow).map(|o| o.id);
+            let tucked = self.spring.tuck_t > 0.5;
+            let mut pictures: Vec<(u32, Option<Pixmap>)> = Vec::new();
+            for out in &outputs {
+                if Some(out.id) == current {
+                    continue;
+                }
+                let area = (out.logical_pos.0, out.logical_pos.1, out.logical_pos.0 + out.logical_size.0, out.logical_pos.1 + out.logical_size.1);
+                if tucked || (self.settings.hide_fullscreen && self.vis.fullscreen.hides(Some(area))) {
+                    if let Some(wl) = &self.wayland {
+                        wl.hide_mirror(out.id);
+                    }
+                    continue;
+                }
+                let s = (out.scale * self.k_for(out.logical_size.0 as f64)) as f32;
+                if !pictures.iter().any(|(key, _)| *key == s.to_bits()) {
+                    pictures.push((s.to_bits(), self.closed_picture(s)));
+                }
+                let Some(picture) = pictures.iter().find(|(key, _)| *key == s.to_bits()).and_then(|(_, picture)| picture.as_ref()) else { continue };
+                let lw = (picture.width() as f64 / out.scale).round().max(1.0) as u32;
+                let lh = (picture.height() as f64 / out.scale).round().max(1.0) as u32;
+                let (bw, bh, pixels) = crate::wayland::pack_shm_pixels(picture, 0);
+                if let Some(wl) = &self.wayland {
+                    wl.present_mirror(out.id, crate::wayland::Frame { logical_size: (lw, lh), buffer_size: (bw, bh), pixels });
+                }
+            }
+            return;
+        }
         if self.mirrors.list.is_empty() {
             return;
         }

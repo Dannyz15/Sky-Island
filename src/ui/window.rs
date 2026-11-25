@@ -149,6 +149,68 @@ impl Default for Visibility {
 }
 
 impl App {
+    pub(crate) fn has_notch(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        if self.wayland.is_some() {
+            return true;
+        }
+        self.window.is_some()
+    }
+
+    pub(crate) fn request_redraw(&mut self) {
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+        #[cfg(target_os = "linux")]
+        if self.wayland.is_some() {
+            self.wayland_dirty = true;
+        }
+    }
+
+    pub(crate) fn flush_wayland_draw(&mut self) {
+        #[cfg(target_os = "linux")]
+        if self.wayland.is_some() && self.wayland_dirty {
+            self.wayland_dirty = false;
+            self.draw();
+        }
+    }
+
+    pub(crate) fn notch_pixel_size(&self) -> Option<(u32, u32)> {
+        #[cfg(target_os = "linux")]
+        if self.wayland.is_some() {
+            return (self.wayland_size.0 > 0 && self.wayland_size.1 > 0).then_some(self.wayland_size);
+        }
+        let s = self.window.as_ref()?.inner_size();
+        Some((s.width, s.height))
+    }
+
+    pub(crate) fn focus_notch(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Some(wl) = &self.wayland {
+            wl.set_keyboard_focus(true);
+            return;
+        }
+        if let Some(w) = &self.window {
+            w.focus_window();
+        }
+    }
+
+    pub(crate) fn unfocus_notch(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Some(wl) = &self.wayland {
+            wl.set_keyboard_focus(false);
+        }
+    }
+
+    pub(crate) fn current_monitor_pos(&self) -> Option<(i32, i32)> {
+        #[cfg(target_os = "linux")]
+        if let Some(wl) = &self.wayland {
+            let outputs = wl.outputs();
+            return crate::wayland::select_output(&outputs, self.settings.screen, self.vis.follow).map(|o| o.logical_pos);
+        }
+        self.window.as_ref().and_then(|w| self.island_monitor(w)).map(|m| (m.position().x, m.position().y))
+    }
+
     pub(crate) fn target(&self) -> f64 {
         if self.pointer.hovered || self.shelf_ui.drag_hover || self.edit.on || self.timer_entry.field.is_some() || self.notices.alert_until.is_some() { 1.0 } else { 0.0 }
     }
@@ -279,7 +341,7 @@ impl App {
     /// The hotkey: open the notch, or close it if it is open. (Opened this way it stays open until the key is pressed
     /// again or the mouse has been over it and left.) Nothing happens while a full-screen app hides the notch.
     pub(crate) fn toggle_by_key(&mut self) {
-        if self.vis.hidden || self.window.is_none() {
+        if self.vis.hidden || !self.has_notch() {
             return;
         }
         let open = self.pointer.hovered || self.spring.progress > 0.5;
@@ -287,9 +349,7 @@ impl App {
         self.pointer.enter_at = None;
         self.pointer.leave_at = None;
         self.last_tick = Instant::now();
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// Tell the hotkey thread what combination the settings want.
@@ -303,6 +363,13 @@ impl App {
     pub(crate) fn refresh_edges(&mut self) {
         // The closed notches on the other screens (for Every) are made or taken away to match, when the loop is next free.
         self.mirrors.wanted = true;
+        #[cfg(target_os = "linux")]
+        if self.wayland.is_some() {
+            if !self.settings.screen.follows() {
+                self.vis.follow = None;
+            }
+            return;
+        }
         let Some(window) = self.window.clone() else { return };
         if !self.settings.screen.follows() {
             self.vis.follow = None;
@@ -499,7 +566,6 @@ impl App {
     fn place_window(&mut self) {
         let k = self.ui_k;
 
-        let Some(window) = self.window.clone() else { return };
         let wide = self.spring.view_t.clamp(0.0, 1.0);
         let (full_w, full_h) = self.open_size();
         // The closed notch grows to the compact notice size while a notice is showing.
@@ -518,6 +584,60 @@ impl App {
         let gap = crate::glass::gap(self.settings.look);
         let room = self.room_below();
 
+        #[cfg(target_os = "linux")]
+        if let Some(wl) = &self.wayland {
+            let outputs = wl.outputs();
+            let target = crate::wayland::select_output(&outputs, self.settings.screen, self.vis.follow).cloned();
+            if let Some(out) = &target {
+                if self.wayland_output != Some(out.id) {
+                    self.wayland_output = Some(out.id);
+                    self.wayland_preferred_scale = None;
+                    wl.set_output(Some(out.id));
+                }
+            } else if self.wayland_output.is_some() {
+                self.wayland_output = None;
+                self.wayland_preferred_scale = None;
+                wl.set_output(None);
+            }
+            let display_scale = self.wayland_preferred_scale.unwrap_or_else(|| target.as_ref().map_or(self.wayland_scale, |o| o.scale));
+            if let Some(out) = &target {
+                self.screen_w = out.logical_size.0 as f64;
+                if self.pacing.rate_read.is_none_or(|at| at.elapsed() > RATE_RECHECK) {
+                    self.pacing.rate_read = Some(Instant::now());
+                    self.pacing.frame = frame_length(out.refresh_millihertz);
+                }
+                let area = (out.logical_pos.0, out.logical_pos.1, out.logical_pos.0 + out.logical_size.0, out.logical_pos.1 + out.logical_size.1);
+                if self.vis.monitor_area != Some(area) {
+                    self.vis.monitor_area = Some(area);
+                    self.apply_visibility();
+                }
+            }
+            let scale = display_scale * k;
+            let lw = ((w + 2.0 * EAR) * k).round().max(1.0) as u32;
+            let full_lh = ((h + gap + room) * k).round().max(1.0) as u32;
+            let mut pw = ((w + 2.0 * EAR) * scale).round().max(1.0) as i32;
+            if let Some(out) = &target {
+                let phys_w = (out.logical_size.0 as f64 * display_scale).round() as i32;
+                if (phys_w - pw) % 2 != 0 {
+                    pw += 1;
+                }
+            }
+            let ph = ((h + gap + room) * scale).round().max(1.0) as u32;
+            let tuck_frac = self.spring.tuck_t.clamp(0.0, 1.0);
+            let tuck_raw = tuck_frac * (h + gap - TUCK_STRIP).max(0.0);
+            let tuck_log = (tuck_raw * k).round() as u32;
+            let vis_lh = full_lh.saturating_sub(tuck_log).max(1);
+            let tuck_px = ((tuck_raw * scale).round() as u32).min(ph.saturating_sub(1));
+            self.wayland_scale = display_scale;
+            self.wayland_size = (pw as u32, ph);
+            self.wayland_logical = (lw, vis_lh);
+            self.wayland_tuck_px = tuck_px;
+            self.wayland_tuck_logical = tuck_log as f64 / k.max(0.1);
+            self.request_redraw();
+            return;
+        }
+
+        let Some(window) = self.window.clone() else { return };
         let Some(monitor) = self.island_monitor(&window) else {
             let _ = window.request_inner_size(LogicalSize::new((w + 2.0 * EAR) * k, (h + gap + room) * k));
             window.request_redraw();
@@ -711,6 +831,10 @@ impl App {
 
     /// The scale of everything drawn on the notch: the screen's scale times the Size setting.
     pub(crate) fn ui_scale(&self) -> f64 {
+        #[cfg(target_os = "linux")]
+        if self.wayland.is_some() {
+            return self.wayland_scale * self.ui_k;
+        }
         self.window.as_ref().map_or(1.0, |w| w.scale_factor()) * self.ui_k
     }
 
@@ -755,6 +879,11 @@ impl App {
         let gap = crate::glass::gap(self.settings.look) as f32;
         // So is the room below it.
         let below = self.room_below() as f32;
+        #[cfg(target_os = "linux")]
+        if self.wayland.is_some() {
+            let h = self.wayland_size.1;
+            return if h > 0 { h as f32 / s - gap - below } else { EXPANDED.1 as f32 };
+        }
         self.window.as_ref().map_or(EXPANDED.1 as f32, |w| w.inner_size().height as f32 / s - gap - below)
     }
 
@@ -806,6 +935,7 @@ impl App {
         #[cfg(not(windows))]
         {
             self.edit.prev_foreground = None;
+            self.unfocus_notch();
         }
     }
 
@@ -838,6 +968,13 @@ impl App {
             }
             if let Some(w) = &self.window {
                 w.set_visible(!hide);
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(wl) = &self.wayland {
+                wl.set_visible(!hide);
+                if !hide {
+                    self.request_redraw();
+                }
             }
         }
     }

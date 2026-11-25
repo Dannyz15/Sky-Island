@@ -129,9 +129,7 @@ impl App {
         self.eyes.next_blink = now + Duration::from_millis(1400);
         self.eyes.next_glance = now + Duration::from_millis(900);
         self.last_tick = now;
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// What the eyes are doing right now: how open they are, where they look and how far a blink has got.
@@ -207,8 +205,8 @@ impl App {
                 // nothing) back.
                 self.blink_step(now, wake, &mut redraw);
                 earliest(wake, until);
-                if redraw && let Some(w) = &self.window {
-                    w.request_redraw();
+                if redraw {
+                    self.request_redraw();
                 }
                 return;
             }
@@ -247,8 +245,8 @@ impl App {
             _ => {}
         }
 
-        if redraw && let Some(w) = &self.window {
-            w.request_redraw();
+        if redraw {
+            self.request_redraw();
         }
     }
 
