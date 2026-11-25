@@ -288,11 +288,6 @@ impl App {
     }
 
     /// A key pressed while a timer number is being typed.
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub(crate) fn timer_key(&mut self, event: &winit::event::KeyEvent) {
-        self.timer_key_parts(&event.logical_key, event.text.as_deref());
-    }
-
     pub(crate) fn timer_key_parts(&mut self, logical_key: &Key, text: Option<&str>) {
         let Some(field) = self.timer_entry.field else { return };
         match logical_key {

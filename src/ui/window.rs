@@ -195,6 +195,7 @@ impl App {
         }
     }
 
+    #[cfg(not(windows))]
     pub(crate) fn unfocus_notch(&mut self) {
         #[cfg(target_os = "linux")]
         if let Some(wl) = &self.wayland {
