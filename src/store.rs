@@ -22,7 +22,7 @@ pub fn data_dir() -> Option<PathBuf> {
     }
 }
 
-#[cfg(any(not(windows), test))]
+#[cfg(not(windows))]
 fn xdg_data_dir(xdg: Option<&std::ffi::OsStr>, home: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     if let Some(dir) = xdg.filter(|v| !v.is_empty()).map(Path::new).filter(|p| p.is_absolute()) {
         return Some(dir.join("sky-island"));
@@ -359,6 +359,7 @@ mod tests {
         panic!("the newest text was never written: {}", fs::read_to_string(&file).unwrap());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn xdg_data_dir_prefers_absolute_xdg_config_home_and_falls_back_to_home() {
         use std::ffi::OsStr;
