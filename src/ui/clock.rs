@@ -5,9 +5,18 @@ use localtime::Zone;
 
 /// Today's local date as yyyymmdd.
 pub(crate) fn today() -> u32 {
-    use windows::Win32::System::SystemInformation::GetLocalTime;
-    let t = unsafe { GetLocalTime() };
-    t.wYear as u32 * 10000 + t.wMonth as u32 * 100 + t.wDay as u32
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::GetLocalTime;
+        let t = unsafe { GetLocalTime() };
+        t.wYear as u32 * 10000 + t.wMonth as u32 * 100 + t.wDay as u32
+    }
+    #[cfg(not(windows))]
+    {
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
+        let (year, month, day) = calendar::civil_from_days(secs.div_euclid(86_400));
+        year as u32 * 10000 + month * 100 + day
+    }
 }
 
 /// Today's day number, for the calendar.
@@ -18,9 +27,18 @@ pub(crate) fn today_day() -> i64 {
 
 /// Local time of day as (hour, minute, second, millisecond).
 pub(crate) fn local_time() -> (u32, u32, u32, u32) {
-    use windows::Win32::System::SystemInformation::GetLocalTime;
-    let t = unsafe { GetLocalTime() };
-    (t.wHour as u32, t.wMinute as u32, t.wSecond as u32, t.wMilliseconds as u32)
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::GetLocalTime;
+        let t = unsafe { GetLocalTime() };
+        (t.wHour as u32, t.wMinute as u32, t.wSecond as u32, t.wMilliseconds as u32)
+    }
+    #[cfg(not(windows))]
+    {
+        let dur = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        let rest = (dur.as_secs() % 86_400) as u32;
+        (rest / 3600, rest % 3600 / 60, rest % 60, dur.subsec_millis())
+    }
 }
 
 pub(crate) fn fmt_clock(hour: u32, minute: u32, clock_24h: bool) -> String {

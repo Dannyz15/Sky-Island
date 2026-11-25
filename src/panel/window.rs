@@ -3,6 +3,7 @@
 use super::*;
 
 /// Ask for a sound file with the standard Windows Open dialog.
+#[cfg(windows)]
 pub(super) fn pick_sound(owner: &Window) -> Option<std::path::PathBuf> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree};
@@ -25,6 +26,11 @@ pub(super) fn pick_sound(owner: &Window) -> Option<std::path::PathBuf> {
         CoTaskMemFree(Some(name.0 as *const _));
         path
     }
+}
+
+#[cfg(not(windows))]
+pub(super) fn pick_sound(_owner: &Window) -> Option<std::path::PathBuf> {
+    None
 }
 
 impl App {

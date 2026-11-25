@@ -8,10 +8,14 @@ use crate::store;
 use crate::weather::Place;
 use crate::{hotkey, prayer};
 use serde_json::{Map, Value, json};
+#[cfg(windows)]
 use winreg::RegKey;
+#[cfg(windows)]
 use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
 
+#[cfg(windows)]
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(windows)]
 const RUN_NAME: &str = "Sky Island";
 
 /// Which look the notch has.
@@ -792,13 +796,21 @@ impl Settings {
 
 /// Whether the app is registered to start when the user signs in.
 pub fn autostart_enabled() -> bool {
-    if crate::package::is_store() {
-        return crate::package::startup_enabled();
+    #[cfg(windows)]
+    {
+        if crate::package::is_store() {
+            return crate::package::startup_enabled();
+        }
+        RegKey::predef(HKEY_CURRENT_USER).open_subkey(RUN_KEY).and_then(|k| k.get_value::<String, _>(RUN_NAME)).is_ok()
     }
-    RegKey::predef(HKEY_CURRENT_USER).open_subkey(RUN_KEY).and_then(|k| k.get_value::<String, _>(RUN_NAME)).is_ok()
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 /// The program a startup value runs, when the value is quoted the way this app writes it.
+#[cfg(any(windows, test))]
 fn quoted_target(value: &str) -> Option<&str> {
     value.trim().strip_prefix('"')?.split('"').next().filter(|path| !path.is_empty())
 }
@@ -806,6 +818,7 @@ fn quoted_target(value: &str) -> Option<&str> {
 /// Whether `path` is surely gone: it would be on a hard disk or SSD of this PC, and is not there. A program on a
 /// USB stick or a network drive is never taken as gone (the drive may not be ready yet when Windows starts, and
 /// asking a network drive can wait long and makes Windows sign in to it).
+#[cfg(windows)]
 fn surely_gone(path: &std::path::Path) -> bool {
     const DRIVE_FIXED: u32 = 3;
     crate::sys::drive_type(path) == Some(DRIVE_FIXED) && !path.exists()
@@ -814,34 +827,46 @@ fn surely_gone(path: &std::path::Path) -> bool {
 /// Whether the app is registered to start with Windows, after removing an entry that points to a program that
 /// is gone (a portable copy that was started with Windows and then deleted). Run when the app starts.
 pub fn repair_autostart() -> bool {
-    if crate::package::is_store() {
-        // The Store build has no Run value that could point to a program that is gone: Windows keeps the task.
-        return crate::package::startup_enabled();
+    #[cfg(windows)]
+    {
+        if crate::package::is_store() {
+            // The Store build has no Run value that could point to a program that is gone: Windows keeps the task.
+            return crate::package::startup_enabled();
+        }
+        let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(RUN_KEY, KEY_READ | KEY_SET_VALUE);
+        let Ok(key) = key else { return false };
+        let Ok(value) = key.get_value::<String, _>(RUN_NAME) else { return false };
+        if quoted_target(&value).is_some_and(|path| surely_gone(std::path::Path::new(path))) {
+            let _ = key.delete_value(RUN_NAME);
+            return false;
+        }
+        true
     }
-    let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(RUN_KEY, KEY_READ | KEY_SET_VALUE);
-    let Ok(key) = key else { return false };
-    let Ok(value) = key.get_value::<String, _>(RUN_NAME) else { return false };
-    if quoted_target(&value).is_some_and(|path| surely_gone(std::path::Path::new(path))) {
-        let _ = key.delete_value(RUN_NAME);
-        return false;
+    #[cfg(not(windows))]
+    {
+        false
     }
-    true
 }
 
 /// Add or remove the per-user startup entry. Only touches this app's own value.
 pub fn set_autostart(on: bool) {
-    if crate::package::is_store() {
-        crate::package::set_startup(on);
-        return;
-    }
-    let Ok((key, _)) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(RUN_KEY) else { return };
-    if on {
-        if let Ok(exe) = std::env::current_exe() {
-            let _ = key.set_value(RUN_NAME, &format!("\"{}\"", exe.display()));
+    #[cfg(windows)]
+    {
+        if crate::package::is_store() {
+            crate::package::set_startup(on);
+            return;
         }
-    } else {
-        let _ = key.delete_value(RUN_NAME);
+        let Ok((key, _)) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(RUN_KEY) else { return };
+        if on {
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = key.set_value(RUN_NAME, &format!("\"{}\"", exe.display()));
+            }
+        } else {
+            let _ = key.delete_value(RUN_NAME);
+        }
     }
+    #[cfg(not(windows))]
+    let _ = on;
 }
 
 #[cfg(test)]

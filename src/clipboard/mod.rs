@@ -3,11 +3,28 @@
 //! `pinned.json`. Also holds the Windows clipboard calls the app needs.
 
 mod history;
+#[cfg(any(windows, test))]
 mod pictures;
+#[cfg(windows)]
 mod win;
 
 pub use history::{History, VISIBLE, preview, read_pinned, save_pinned};
+#[cfg(windows)]
 pub use win::{empty, set_content, set_enabled, spawn_watcher};
+
+#[cfg(not(windows))]
+pub fn spawn_watcher(_proxy: winit::event_loop::EventLoopProxy<crate::UserEvent>) {}
+
+#[cfg(not(windows))]
+pub fn set_enabled(_on: bool) {}
+
+#[cfg(not(windows))]
+pub fn set_content(_content: &Content) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn empty() {}
 
 /// Longer text is cut to this many characters.
 const MAX_CHARS: usize = 5000;

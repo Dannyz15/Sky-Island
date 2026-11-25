@@ -7,8 +7,11 @@ use std::thread;
 use std::time::Duration;
 
 use serde_json::{Value, json};
+#[cfg(windows)]
 use windows::Devices::Geolocation::Geolocator;
+#[cfg(windows)]
 use windows::Foundation::TimeSpan;
+#[cfg(windows)]
 use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
 use winit::event_loop::EventLoopProxy;
 
@@ -18,8 +21,10 @@ use crate::weather::{self, Place, SearchError};
 
 const REVERSE: &str = "https://nominatim.openstreetmap.org/reverse";
 /// A position this old is as good as a new one.
+#[cfg(windows)]
 const MAX_AGE: Duration = Duration::from_secs(5 * 60);
 /// How long Windows may take to find the position.
+#[cfg(windows)]
 const FIND_TIME: Duration = Duration::from_secs(12);
 
 /// How well a place was found.
@@ -31,6 +36,7 @@ pub enum How {
     Approximate,
 }
 
+#[cfg(windows)]
 fn span(d: Duration) -> TimeSpan {
     // A TimeSpan counts in units of 100 nanoseconds.
     TimeSpan { Duration: (d.as_nanos() / 100) as i64 }
@@ -38,6 +44,7 @@ fn span(d: Duration) -> TimeSpan {
 
 /// The position Windows Location gives, as (latitude, longitude). `None` when the Location setting is off for desktop
 /// apps, or no position could be found in time.
+#[cfg(windows)]
 fn windows_position() -> Option<(f64, f64)> {
     // SAFETY: plain COM initialisation for this thread; an error only means it was already done.
     unsafe {
@@ -49,6 +56,11 @@ fn windows_position() -> Option<(f64, f64)> {
     let on_earth = (-90.0..=90.0).contains(&p.Latitude) && (-180.0..=180.0).contains(&p.Longitude);
     // Only to about a kilometre: the city is all that is needed, not the house.
     on_earth.then_some((weather::coarse(p.Latitude), weather::coarse(p.Longitude)))
+}
+
+#[cfg(not(windows))]
+fn windows_position() -> Option<(f64, f64)> {
+    None
 }
 
 /// The place Nominatim names for coordinates, to the city. `None` when it could not be asked.
@@ -127,6 +139,7 @@ mod tests {
         assert_eq!(place_at(1.0, 2.0, Some(&json!({ "error": "Unable to geocode" }))).name, "1.00, 2.00");
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_time_span_counts_in_hundreds_of_nanoseconds() {
         assert_eq!(span(Duration::from_secs(1)).Duration, 10_000_000);

@@ -6,17 +6,23 @@
 //! a few hundred bytes a character. Text that the main font can draw never gets here. Emoji are drawn in one colour
 //! (the text colour), and bold text asks for the bold weight of these fonts.
 
+#[cfg(windows)]
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
+#[cfg(windows)]
+use std::sync::{Mutex, PoisonError};
+#[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
     ANTIALIASED_QUALITY, CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateFontW, DEFAULT_CHARSET, DeleteObject, FIXED, GCP_GLYPHSHAPE, GCP_RESULTSW, GET_GLYPH_OUTLINE_FORMAT,
     GGO_GLYPH_INDEX, GGO_GRAY8_BITMAP, GLYPHMETRICS, GetCharacterPlacementW, GetGlyphIndicesW, GetGlyphOutlineW, GetTextFaceW, HDC, HFONT, HGDIOBJ, MAT2, OUT_DEFAULT_PRECIS,
     SelectObject,
 };
+#[cfg(windows)]
 use windows::core::{HSTRING, PWSTR};
 
 /// A writing system with a Windows font of its own.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) enum Script {
     Korean,
     Japanese,
@@ -31,6 +37,7 @@ pub(crate) enum Script {
     HanExt,
 }
 
+#[cfg(windows)]
 impl Script {
     /// The Windows font names to try, best first.
     fn faces(self) -> &'static [&'static str] {
@@ -69,6 +76,7 @@ pub(crate) fn han_for(text: &str) -> Script {
 }
 
 /// The fonts to try, in order, for a character the main font lacks.
+#[cfg(windows)]
 fn chain(c: char, han: Script) -> &'static [Script] {
     use Script::*;
     match c as u32 {
@@ -103,6 +111,7 @@ pub(crate) struct Glyph {
 
 /// The device context and everything made with it. GDI handles are plain numbers that belong to the process, not
 /// to a thread, and every use is behind the one lock below.
+#[cfg(windows)]
 struct Gdi {
     dc: HDC,
     /// Per script, pixel size and weight (bold or not): the font Windows made, or `None` when the machine has none of
@@ -115,15 +124,19 @@ struct Gdi {
 
 // SAFETY: `HDC` and `HFONT` are handles (numbers) that are valid on any thread, and `Gdi` is only ever used while
 // holding the `STATE` lock, so no two threads touch the device context at once.
+#[cfg(windows)]
 unsafe impl Send for Gdi {}
 
+#[cfg(windows)]
 static STATE: Mutex<Option<Gdi>> = Mutex::new(None);
 
 /// Enough for any lyric in any language, a few hundred bytes each; past it the saved answers are dropped and
 /// built again as needed.
+#[cfg(windows)]
 const MAX_GLYPHS: usize = 30_000;
 
 /// The font of `script` at `px` pixels, selected into the device context.
+#[cfg(windows)]
 fn font_for(gdi: &mut Gdi, script: Script, px: i32, bold: bool) -> Option<HFONT> {
     let dc = gdi.dc;
     let weight = if bold { 700 } else { 400 };
@@ -158,6 +171,7 @@ fn font_for(gdi: &mut Gdi, script: Script, px: i32, bold: bool) -> Option<HFONT>
 
 /// The glyph number of `c` in the font selected into `dc`, for a character beyond U+FFFF (which `GetGlyphIndicesW`
 /// cannot take, as it reads one UTF-16 unit at a time); `None` when the font has no glyph for it.
+#[cfg(windows)]
 fn wide_index(dc: HDC, c: char) -> Option<u32> {
     let mut units = [0u16; 2];
     let units = c.encode_utf16(&mut units);
@@ -170,6 +184,7 @@ fn wide_index(dc: HDC, c: char) -> Option<u32> {
 }
 
 /// Whether the font of `script` has a glyph for `c`.
+#[cfg(windows)]
 fn has_glyph(gdi: &mut Gdi, script: Script, c: char) -> bool {
     if font_for(gdi, script, 16, false).is_none() {
         return false;
@@ -184,6 +199,7 @@ fn has_glyph(gdi: &mut Gdi, script: Script, c: char) -> bool {
     got == 1 && index[0] != 0xFFFF
 }
 
+#[cfg(windows)]
 fn render(gdi: &mut Gdi, script: Script, c: char, px: i32, bold: bool) -> Option<Glyph> {
     font_for(gdi, script, px, bold)?;
     // A character beyond U+FFFF is asked for by its glyph number.
@@ -218,6 +234,7 @@ fn render(gdi: &mut Gdi, script: Script, c: char, px: i32, bold: bool) -> Option
     }
 }
 
+#[cfg(windows)]
 fn with_gdi<T>(f: impl FnOnce(&mut Gdi) -> Option<T>) -> Option<T> {
     let mut state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
     if state.is_none() {
@@ -234,28 +251,44 @@ fn with_gdi<T>(f: impl FnOnce(&mut Gdi) -> Option<T>) -> Option<T> {
 /// The script whose Windows font draws `c`, or `None` when none has it (the caller then shows the main font's box).
 /// `han` is the country chosen for the string (see `han_for`).
 pub(crate) fn owner(c: char, han: Script) -> Option<Script> {
-    with_gdi(|gdi| {
-        if let Some(known) = gdi.owners.get(&(han, c)) {
-            return *known;
-        }
-        let found = chain(c, han).iter().copied().find(|&script| has_glyph(gdi, script, c));
-        gdi.owners.insert((han, c), found);
-        found
-    })
+    #[cfg(windows)]
+    {
+        with_gdi(|gdi| {
+            if let Some(known) = gdi.owners.get(&(han, c)) {
+                return *known;
+            }
+            let found = chain(c, han).iter().copied().find(|&script| has_glyph(gdi, script, c));
+            gdi.owners.insert((han, c), found);
+            found
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (c, han);
+        None
+    }
 }
 
 /// `c` drawn by the font of `script` at about `px` pixels, in bold when `bold`.
 pub(crate) fn glyph(script: Script, c: char, px: f32, bold: bool) -> Option<Arc<Glyph>> {
-    let px = (px.round() as i32).clamp(4, 400);
-    with_gdi(|gdi| {
-        if let Some(known) = gdi.glyphs.get(&(script, c, px, bold)) {
-            return known.clone();
-        }
-        if gdi.glyphs.len() >= MAX_GLYPHS {
-            gdi.glyphs.clear();
-        }
-        let made = render(gdi, script, c, px, bold).map(Arc::new);
-        gdi.glyphs.insert((script, c, px, bold), made.clone());
-        made
-    })
+    #[cfg(windows)]
+    {
+        let px = (px.round() as i32).clamp(4, 400);
+        with_gdi(|gdi| {
+            if let Some(known) = gdi.glyphs.get(&(script, c, px, bold)) {
+                return known.clone();
+            }
+            if gdi.glyphs.len() >= MAX_GLYPHS {
+                gdi.glyphs.clear();
+            }
+            let made = render(gdi, script, c, px, bold).map(Arc::new);
+            gdi.glyphs.insert((script, c, px, bold), made.clone());
+            made
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (script, c, px, bold);
+        None
+    }
 }

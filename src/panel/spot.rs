@@ -67,6 +67,7 @@ pub(super) fn fit_to_screen(width: f64, height: f64, sf: f64) -> f64 {
 }
 
 /// The Windows handle of a window.
+#[cfg(windows)]
 pub(super) fn hwnd_of(window: &Window) -> Option<windows::Win32::Foundation::HWND> {
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     match window.window_handle().ok()?.as_raw() {

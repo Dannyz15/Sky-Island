@@ -2,17 +2,25 @@
 //! so it has a hidden message window on its own thread (`msgwin.rs`); the thread sleeps until the key is pressed or the
 //! combination is changed. Nothing is recorded: only the one registered combination is ever reported.
 
+#[cfg(windows)]
 use std::sync::OnceLock;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicIsize, AtomicU64, Ordering};
 
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{HOT_KEY_MODIFIERS, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{DefWindowProcW, PostMessageW, WM_APP, WM_HOTKEY};
+#[cfg(windows)]
 use windows::core::w;
 use winit::event_loop::EventLoopProxy;
 use winit::keyboard::KeyCode;
 
-use crate::{UserEvent, msgwin};
+use crate::UserEvent;
+#[cfg(windows)]
+use crate::msgwin;
 
 /// Windows' modifier bits.
 pub const ALT: u32 = 1;
@@ -24,15 +32,21 @@ pub const WIN: u32 = 8;
 pub const DEFAULT_MODS: u32 = CTRL | ALT;
 pub const DEFAULT_VK: u32 = 0x4E;
 
+#[cfg(any(windows, test))]
 const ID: i32 = 1;
+#[cfg(windows)]
 const APPLY: u32 = WM_APP + 1;
 
+#[cfg(windows)]
 static PROXY: OnceLock<EventLoopProxy<UserEvent>> = OnceLock::new();
 /// The window the hotkey is registered on.
+#[cfg(windows)]
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 /// The combination wanted: modifiers in the high half, the key in the low half; 0 for none.
+#[cfg(windows)]
 static WANT: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(any(windows, test))]
 fn pack(mods: u32, vk: u32) -> u64 {
     (u64::from(mods) << 32) | u64::from(vk)
 }
@@ -83,31 +97,45 @@ pub fn vk_of(code: KeyCode) -> Option<u32> {
 /// Start the hotkey thread with the combination wanted (`None`: not wanted). Its answers come as
 /// `UserEvent::Hotkey` (the key was pressed) and `UserEvent::HotkeyStatus` (the combination could be taken or not).
 pub fn start(proxy: EventLoopProxy<UserEvent>, wanted: Option<(u32, u32)>) {
-    let _ = PROXY.set(proxy);
-    WANT.store(wanted.map_or(0, |(m, v)| pack(m, v)), Ordering::Relaxed);
-    // SAFETY: the class name is a `w!` literal, which lives for the whole run.
-    unsafe {
-        msgwin::spawn(w!("SkyIslandHotkey"), Some(window_proc), |window| {
-            WINDOW.store(window.0 as isize, Ordering::Relaxed);
-            report(apply(window));
-            true
-        })
-    };
+    #[cfg(windows)]
+    {
+        let _ = PROXY.set(proxy);
+        WANT.store(wanted.map_or(0, |(m, v)| pack(m, v)), Ordering::Relaxed);
+        // SAFETY: the class name is a `w!` literal, which lives for the whole run.
+        unsafe {
+            msgwin::spawn(w!("SkyIslandHotkey"), Some(window_proc), |window| {
+                WINDOW.store(window.0 as isize, Ordering::Relaxed);
+                report(apply(window));
+                true
+            })
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = wanted;
+        let _ = proxy.send_event(UserEvent::HotkeyStatus(true));
+    }
 }
 
 /// Use another combination, or none.
 pub fn set(wanted: Option<(u32, u32)>) {
-    WANT.store(wanted.map_or(0, |(m, v)| pack(m, v)), Ordering::Relaxed);
-    let window = WINDOW.load(Ordering::Relaxed);
-    if window != 0 {
-        // SAFETY: only posts a message to the hotkey thread's own window.
-        unsafe {
-            let _ = PostMessageW(Some(HWND(window as *mut _)), APPLY, WPARAM(0), LPARAM(0));
+    #[cfg(windows)]
+    {
+        WANT.store(wanted.map_or(0, |(m, v)| pack(m, v)), Ordering::Relaxed);
+        let window = WINDOW.load(Ordering::Relaxed);
+        if window != 0 {
+            // SAFETY: only posts a message to the hotkey thread's own window.
+            unsafe {
+                let _ = PostMessageW(Some(HWND(window as *mut _)), APPLY, WPARAM(0), LPARAM(0));
+            }
         }
     }
+    #[cfg(not(windows))]
+    let _ = wanted;
 }
 
 /// Register the combination wanted (taking the old one away first). True when it is registered, or none is wanted.
+#[cfg(windows)]
 fn apply(window: HWND) -> bool {
     // SAFETY: plain calls on this thread's own window.
     unsafe {
@@ -120,6 +148,7 @@ fn apply(window: HWND) -> bool {
     }
 }
 
+#[cfg(windows)]
 fn report(ok: bool) {
     if let Some(proxy) = PROXY.get() {
         let _ = proxy.send_event(UserEvent::HotkeyStatus(ok));
@@ -129,10 +158,12 @@ fn report(ok: bool) {
 /// Whether a `WM_HOTKEY` is the one this app asked Windows for: its id is ours and a combination is wanted. Any
 /// program of the user can post the message to the window by hand, and it must not toggle the notch after the user
 /// switched the hotkey off.
+#[cfg(any(windows, test))]
 fn is_ours(id: usize, want: u64) -> bool {
     id == ID as usize && want != 0
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn window_proc(window: HWND, message: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match message {
         WM_HOTKEY if is_ours(w.0, WANT.load(Ordering::Relaxed)) => {

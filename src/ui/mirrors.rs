@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
+#[cfg(windows)]
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::WindowId;
 
@@ -56,18 +57,23 @@ impl Mirror {
 
 /// A hidden, borderless, always-on-top window that is never given the focus.
 fn make_mirror(event_loop: &ActiveEventLoop, at: (i32, i32)) -> Option<Mirror> {
-    let attrs = Window::default_attributes()
+    #[allow(unused_mut)]
+    let mut attrs = Window::default_attributes()
         .with_title("Sky Island")
         .with_decorations(false)
         .with_transparent(true)
         .with_resizable(false)
         .with_visible(false)
         .with_window_level(WindowLevel::AlwaysOnTop)
-        .with_skip_taskbar(true)
         .with_inner_size(LogicalSize::new(COLLAPSED.0 + 2.0 * EAR, COLLAPSED.1));
+    #[cfg(windows)]
+    {
+        attrs = attrs.with_skip_taskbar(true);
+    }
     let window = Rc::new(event_loop.create_window(attrs).ok()?);
     // (Not made click-through: that makes a window "layered", and a layered window does not show what is drawn on it
     // this way.)
+    #[cfg(windows)]
     if let Ok(handle) = window.window_handle()
         && let RawWindowHandle::Win32(h) = handle.as_raw()
     {
@@ -180,6 +186,7 @@ impl App {
                 *dst = (src.alpha() as u32) << 24 | (src.red() as u32) << 16 | (src.green() as u32) << 8 | src.blue() as u32;
             }
             buffer.present().ok();
+            #[cfg(windows)]
             if raise
                 && let Ok(handle) = mirror.window.window_handle()
                 && let RawWindowHandle::Win32(h) = handle.as_raw()
@@ -191,6 +198,8 @@ impl App {
                     let _ = SetWindowPos(HWND(h.hwnd.get() as *mut _), Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
                 }
             }
+            #[cfg(not(windows))]
+            let _ = raise;
         }
         self.mirrors.list = mirrors;
     }

@@ -1,5 +1,5 @@
 // A GUI program: without this Windows opens a console window next to it.
-#![windows_subsystem = "windows"]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 #![allow(clippy::too_many_arguments)]
 
 mod appicon;
@@ -18,6 +18,7 @@ mod loopback;
 mod lyrics;
 mod media;
 mod motion;
+#[cfg(windows)]
 mod msgwin;
 mod net;
 mod open;
@@ -54,6 +55,7 @@ use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
+#[cfg(windows)]
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Theme, Window, WindowId, WindowLevel};
 
@@ -67,7 +69,9 @@ use settings::{EyeStyle, NotchLook, Settings, ThemeMode};
 use shelf::{COLS, ROWS, Shelf};
 use timer::{Timer, Unit};
 use todo::Todo;
+#[cfg(windows)]
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+#[cfg(windows)]
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use ui::*;
 use water::Water;
@@ -363,23 +367,25 @@ fn record_crash(dir: &std::path::Path, entry: &str) -> std::io::Result<()> {
 /// limit, so a second crash does not wipe out the first.
 fn install_crash_log() {
     std::panic::set_hook(Box::new(|info| {
-        let Some(appdata) = std::env::var_os("APPDATA") else { return };
+        let Some(dir) = store::data_dir() else { return };
         let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let thread = std::thread::current();
         let backtrace = std::backtrace::Backtrace::force_capture().to_string();
         let entry = crash_entry(env!("CARGO_PKG_VERSION"), unix, thread.name().unwrap_or("unnamed"), &info.to_string(), &backtrace);
-        let _ = record_crash(&PathBuf::from(appdata).join("Sky-Island"), &entry);
+        let _ = record_crash(&dir, &entry);
     }));
 }
 
 /// The name of the lock that says "a copy is running": one per data folder, so two copies never write the
 /// same files, while a copy pointed at another folder (for testing) is its own.
+#[cfg(any(windows, test))]
 fn instance_name(data_dir: &str) -> String {
     let hash = data_dir.to_lowercase().bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
     format!("Local\\SkyIsland-{hash:016x}")
 }
 
 /// Takes the "a copy is running" lock; false when another copy of Sky Island already holds it.
+#[cfg(windows)]
 fn first_instance() -> bool {
     use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
     use windows::Win32::System::Threading::CreateMutexW;
@@ -392,6 +398,27 @@ fn first_instance() -> bool {
             Ok(_) => GetLastError() != ERROR_ALREADY_EXISTS,
             Err(_) => true, // cannot tell: better two copies than none
         }
+    }
+}
+
+/// Takes the "a copy is running" lock; false when another copy of Sky Island already holds it.
+#[cfg(not(windows))]
+fn first_instance() -> bool {
+    static LOCK: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+    let Some(dir) = store::data_dir() else { return true };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return true;
+    }
+    let Ok(file) = std::fs::OpenOptions::new().create(true).read(true).write(true).truncate(false).open(dir.join("sky-island.lock")) else {
+        return true;
+    };
+    match file.try_lock() {
+        Ok(()) => {
+            let _ = LOCK.set(file);
+            true
+        }
+        Err(std::fs::TryLockError::WouldBlock) => false,
+        Err(_) => true,
     }
 }
 

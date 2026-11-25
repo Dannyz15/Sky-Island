@@ -2,23 +2,36 @@
 //! used, and how fast data moves over the network. Looked at only while the tab is open (once a second), with a few
 //! cheap Windows calls; nothing runs while it is closed.
 
-use std::collections::{HashMap, VecDeque};
+#[cfg(any(windows, test))]
+use std::collections::HashMap;
+use std::collections::VecDeque;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, channel};
+#[cfg(windows)]
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use windows::Win32::Foundation::FILETIME;
+#[cfg(windows)]
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
+#[cfg(windows)]
 use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
+#[cfg(windows)]
 use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives};
+#[cfg(windows)]
 use windows::Win32::System::Diagnostics::Debug::{SEM_FAILCRITICALERRORS, SetThreadErrorMode};
+#[cfg(windows)]
 use windows::Win32::System::Performance::{
     PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA, PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
     PdhOpenQueryW,
 };
+#[cfg(windows)]
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+#[cfg(windows)]
 use windows::Win32::System::Threading::GetSystemTimes;
+#[cfg(windows)]
 use windows::core::PCWSTR;
 
 /// How often the numbers are looked at while the tab is open.
@@ -35,7 +48,9 @@ pub const QUIET_LINK: f32 = 64.0 * 1024.0;
 pub const MAX_DRIVES: usize = 6;
 
 /// What `GetDriveTypeW` says for a hard disk or SSD and for a USB stick or card reader.
+#[cfg(windows)]
 const DRIVE_REMOVABLE: u32 = 2;
+#[cfg(windows)]
 const DRIVE_FIXED: u32 = 3;
 
 /// One drive: its letter, and the space in use and in all, in bytes.
@@ -189,15 +204,18 @@ impl Stats {
 
 /// What the look at the graphics chips has found: nothing yet (`None`), or the chips (none at all when Windows has no
 /// load to report for any chip of this PC).
+#[cfg(windows)]
 type GpuReport = Arc<Mutex<Option<Vec<Chip>>>>;
 
 /// How long the look at the graphics chips carries on after it was last asked for. The Stats view asks once a second.
+#[cfg(any(windows, test))]
 const GPU_GRACE_MS: u64 = 3_000;
 
 /// The look at the graphics chips. Naming them and opening their counters takes a couple of seconds, and reading
 /// them a few milliseconds, so it is done on a thread of its own that is started the first time the Stats view
 /// asks and then stays: it sleeps (without waking up) while nobody asks, and starts reading within a second of
 /// the next ask. It leaves the answer in `report`.
+#[cfg(windows)]
 struct GpuWatch {
     report: GpuReport,
     /// When it was last asked, in milliseconds since the program began.
@@ -205,20 +223,25 @@ struct GpuWatch {
     thread: std::thread::Thread,
 }
 
+#[cfg(windows)]
 static GPU_WATCH: OnceLock<GpuWatch> = OnceLock::new();
+#[cfg(windows)]
 static CLOCK: OnceLock<Instant> = OnceLock::new();
 
 /// Milliseconds since the program began (the first time anyone asks).
+#[cfg(windows)]
 fn now_ms() -> u64 {
     CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 /// Whether the look is still wanted: it was asked for in the last few seconds.
+#[cfg(any(windows, test))]
 fn gpu_wanted(asked_ms: u64, now_ms: u64) -> bool {
     now_ms.saturating_sub(asked_ms) <= GPU_GRACE_MS
 }
 
 /// Ask for the look at the graphics chips (which starts it, or wakes it) and say what it has found so far.
+#[cfg(windows)]
 fn gpu_look() -> Option<Vec<Chip>> {
     let watch = GPU_WATCH.get_or_init(|| {
         let (report, asked) = (GpuReport::default(), Arc::new(AtomicU64::new(0)));
@@ -242,11 +265,18 @@ fn gpu_look() -> Option<Vec<Chip>> {
     watch.report.lock().ok().and_then(|report| report.clone())
 }
 
+#[cfg(not(windows))]
+fn gpu_look() -> Option<Vec<Chip>> {
+    None
+}
+
 /// The identity Windows gives a graphics chip: the two halves of its LUID. In the counters it is written into the
 /// name of each instance, such as `pid_4568_luid_0x00000000_0x0000D2A9_phys_0_eng_0_engtype_3D`.
+#[cfg(any(windows, test))]
 type Luid = (u32, u32);
 
 /// The LUID in the name of an instance of the "GPU Engine" counter.
+#[cfg(any(windows, test))]
 fn luid_of(instance: &str) -> Option<Luid> {
     let (_, rest) = instance.split_once("luid_")?;
     let mut halves = rest.split('_').map(|h| u32::from_str_radix(h.trim_start_matches("0x"), 16).ok());
@@ -256,6 +286,7 @@ fn luid_of(instance: &str) -> Option<Luid> {
 /// How busy each chip is: its busiest engine, from the counter "GPU Engine, Utilization Percentage" (the one Task
 /// Manager uses). `readings` are the instances of the counter, each with its name and its percentage. The programs that
 /// use the same engine of the same chip add up, and the engine with the most is how busy the chip is.
+#[cfg(any(windows, test))]
 fn loads_by_chip(readings: impl IntoIterator<Item = (String, f64)>) -> HashMap<Luid, f32> {
     let mut engines: HashMap<(Luid, String), f64> = HashMap::new();
     for (name, percent) in readings {
@@ -273,6 +304,7 @@ fn loads_by_chip(readings: impl IntoIterator<Item = (String, f64)>) -> HashMap<L
 }
 
 /// The name of an adapter from the text Windows gives (ends at the first nul).
+#[cfg(any(windows, test))]
 fn adapter_name(wide: &[u16]) -> String {
     let end = wide.iter().position(|c| *c == 0).unwrap_or(wide.len());
     String::from_utf16_lossy(&wide[..end]).trim().to_string()
@@ -280,6 +312,7 @@ fn adapter_name(wide: &[u16]) -> String {
 
 /// The graphics chips of this PC with their names, as Windows lists them. The software one that Windows draws with
 /// when there is no chip ("Microsoft Basic Render Driver") is left out.
+#[cfg(windows)]
 fn adapters() -> Vec<(Luid, String)> {
     const SOFTWARE: u32 = 2; // DXGI_ADAPTER_FLAG_SOFTWARE
     let mut found = Vec::new();
@@ -304,6 +337,7 @@ fn adapters() -> Vec<(Luid, String)> {
 
 /// Names the chips at once, then reads their counters once a second while the look is wanted (`asked`), and sleeps
 /// while it is not, for the rest of the run.
+#[cfg(windows)]
 fn watch_gpus(report: &Mutex<Option<Vec<Chip>>>, asked: &AtomicU64) {
     let chips = adapters();
     let say = |chips: Vec<Chip>| {
@@ -365,6 +399,7 @@ fn watch_gpus(report: &Mutex<Option<Vec<Chip>>>, asked: &AtomicU64) {
 ///
 /// # Safety
 /// `counter` must be a counter of an open query on which data has been collected.
+#[cfg(windows)]
 unsafe fn engine_readings(counter: PDH_HCOUNTER) -> Option<Vec<(String, f64)>> {
     // The buffer is `u64`s so that it is lined up for the items that Windows writes into it.
     let mut buffer: Vec<u64> = Vec::new();
@@ -397,11 +432,13 @@ unsafe fn engine_readings(counter: PDH_HCOUNTER) -> Option<Vec<(String, f64)>> {
     None
 }
 
+#[cfg(windows)]
 fn filetime(t: FILETIME) -> u64 {
     (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)
 }
 
 /// Idle time and total (kernel and user) time of all the processors, in 100 ns units.
+#[cfg(windows)]
 fn system_times() -> Option<(u64, u64)> {
     let (mut idle, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default());
     // SAFETY: three valid pointers to FILETIMEs.
@@ -410,7 +447,13 @@ fn system_times() -> Option<(u64, u64)> {
     Some((filetime(idle), filetime(kernel) + filetime(user)))
 }
 
+#[cfg(not(windows))]
+fn system_times() -> Option<(u64, u64)> {
+    None
+}
+
 /// Memory in use and in all, in bytes.
+#[cfg(windows)]
 fn memory() -> Option<(u64, u64)> {
     let mut info = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
     // SAFETY: `info` is a valid MEMORYSTATUSEX with its length set.
@@ -418,8 +461,14 @@ fn memory() -> Option<(u64, u64)> {
     (info.ullTotalPhys > 0).then(|| (info.ullTotalPhys.saturating_sub(info.ullAvailPhys), info.ullTotalPhys))
 }
 
+#[cfg(not(windows))]
+fn memory() -> Option<(u64, u64)> {
+    None
+}
+
 /// The drives with a disk in: fixed ones and removable ones (USB sticks, card readers), not network drives or
 /// CD drives. An empty card reader is skipped, without Windows asking anyone to insert a disk.
+#[cfg(windows)]
 fn drives() -> Vec<Drive> {
     let mut found = Vec::new();
     let mut before = Default::default();
@@ -450,8 +499,14 @@ fn drives() -> Vec<Drive> {
     found
 }
 
+#[cfg(not(windows))]
+fn drives() -> Vec<Drive> {
+    Vec::new()
+}
+
 /// Bytes received and sent so far by the network adapters that are really there and up (not the loopback, and not
 /// the virtual ones that only repeat what a real one carries).
+#[cfg(windows)]
 fn network_totals() -> Option<(u64, u64)> {
     let mut table: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
     // SAFETY: Windows fills in a table that is freed below; the rows are only read inside its stated length.
@@ -472,6 +527,11 @@ fn network_totals() -> Option<(u64, u64)> {
         FreeMibTable(table as *const _);
         Some((received, sent))
     }
+}
+
+#[cfg(not(windows))]
+fn network_totals() -> Option<(u64, u64)> {
+    None
 }
 
 /// What the network graph is scaled by: the fastest second in `history`, in either direction, but never less than a
@@ -613,6 +673,7 @@ mod tests {
         assert!(gpu_wanted(10_000, 9_000), "a clock that went back is not a reason to stop");
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_graphics_chips_are_named_on_their_own_thread() {
         let mut tries = 0;
@@ -677,6 +738,7 @@ mod tests {
         assert_eq!(speed(-5.0), "0 B/s");
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_drives_arrive_from_their_own_thread_without_the_look_waiting() {
         let mut s = Stats::default();
@@ -693,6 +755,7 @@ mod tests {
         assert!(s.disks_known && !s.last.disks.is_empty(), "the drives were found");
     }
 
+    #[cfg(windows)]
     #[test]
     fn this_pc_answers_the_questions() {
         // Real calls, so only what is true on any Windows PC: memory and disk exist, and the processor times grow.

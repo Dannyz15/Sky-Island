@@ -1,35 +1,56 @@
 //! System watchers (volume, audio device, brightness, lock keys, battery, network).
 //! Each pushes a `Notice` to the UI only when something actually changes.
 
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
 use std::sync::mpsc::{self, Sender};
+#[cfg(windows)]
 use std::sync::{Mutex, OnceLock};
+#[cfg(windows)]
 use std::thread;
+#[cfg(any(windows, test))]
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use windows::Networking::Connectivity::{NetworkInformation, NetworkStatusChangedEventHandler};
+#[cfg(windows)]
 use windows::Win32::Devices::Display::{DISPLAY_BRIGHTNESS, IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS};
+#[cfg(windows)]
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+#[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, LRESULT, WPARAM};
+#[cfg(windows)]
 use windows::Win32::Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioEndpointVolumeCallback, IAudioEndpointVolumeCallback_Impl};
+#[cfg(windows)]
 use windows::Win32::Media::Audio::{
     AUDIO_VOLUME_NOTIFICATION_DATA, DEVICE_STATE, EDataFlow, ERole, IMMDevice, IMMDeviceEnumerator, IMMNotificationClient, IMMNotificationClient_Impl, MMDeviceEnumerator,
     PKEY_AudioEndpoint_FormFactor, eConsole, eRender,
 };
+#[cfg(windows)]
 use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, GetDriveTypeW, OPEN_EXISTING};
+#[cfg(windows)]
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, STGM_READ};
+#[cfg(windows)]
 use windows::Win32::System::IO::DeviceIoControl;
+#[cfg(windows)]
 use windows::Win32::System::Power::{GetSystemPowerStatus, RegisterPowerSettingNotification, SYSTEM_POWER_STATUS};
+#[cfg(windows)]
 use windows::Win32::System::SystemServices::{GUID_ACDC_POWER_SOURCE, GUID_BATTERY_PERCENTAGE_REMAINING, GUID_VIDEO_CURRENT_MONITOR_BRIGHTNESS};
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL, VK_NUMLOCK};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DispatchMessageW, GetMessageW, KBDLLHOOKSTRUCT, MSG, PBT_POWERSETTINGCHANGE, SetTimer, SetWindowsHookExW,
     TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_POWERBROADCAST, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
 };
+#[cfg(windows)]
 use windows::core::{PCWSTR, Result, implement, w};
 use winit::event_loop::EventLoopProxy;
 
-use crate::{UserEvent, msgwin};
+use crate::UserEvent;
+#[cfg(windows)]
+use crate::msgwin;
 
 /// Something worth showing briefly in the notch.
 #[derive(Clone)]
@@ -78,23 +99,30 @@ pub enum BatteryKind {
 
 type Proxy = EventLoopProxy<UserEvent>;
 
+#[cfg(windows)]
 fn send(proxy: &Proxy, notice: Notice) {
     let _ = proxy.send_event(UserEvent::Notice(notice));
 }
 
 /// Start every watcher except the keyboard hook, which has its own start (`install_lock_hook`).
 pub fn spawn_all(proxy: Proxy) {
-    let p = proxy.clone();
-    thread::spawn(move || audio(p));
-    let p = proxy.clone();
-    thread::spawn(move || battery(p));
-    let p = proxy.clone();
-    thread::spawn(move || brightness(p));
-    thread::spawn(move || network(proxy));
+    #[cfg(windows)]
+    {
+        let p = proxy.clone();
+        thread::spawn(move || audio(p));
+        let p = proxy.clone();
+        thread::spawn(move || battery(p));
+        let p = proxy.clone();
+        thread::spawn(move || brightness(p));
+        thread::spawn(move || network(proxy));
+    }
+    #[cfg(not(windows))]
+    let _ = proxy;
 }
 
 // ---- Audio: volume, mute and default output device ----
 
+#[cfg(windows)]
 enum AudioMsg {
     DefaultChanged,
     /// The user moved the volume slider in the notch: 0.0 to 1.0.
@@ -103,27 +131,34 @@ enum AudioMsg {
 }
 
 /// How the notch's volume slider reaches the audio thread.
+#[cfg(windows)]
 static AUDIO_TX: OnceLock<Sender<AudioMsg>> = OnceLock::new();
 
 /// Set the volume of the default output device (0 to 100 percent). Any volume above zero also unmutes it.
 pub fn set_volume(percent: u32) {
+    #[cfg(windows)]
     if let Some(tx) = AUDIO_TX.get() {
         let _ = tx.send(AudioMsg::SetVolume(percent.min(100) as f32 / 100.0));
     }
+    #[cfg(not(windows))]
+    let _ = percent;
 }
 
 /// Mute the default output device, or unmute it.
 pub fn toggle_mute() {
+    #[cfg(windows)]
     if let Some(tx) = AUDIO_TX.get() {
         let _ = tx.send(AudioMsg::ToggleMute);
     }
 }
 
+#[cfg(windows)]
 #[implement(IAudioEndpointVolumeCallback)]
 struct VolumeWatch {
     proxy: Mutex<Proxy>,
 }
 
+#[cfg(windows)]
 impl IAudioEndpointVolumeCallback_Impl for VolumeWatch_Impl {
     fn OnNotify(&self, pnotify: *mut AUDIO_VOLUME_NOTIFICATION_DATA) -> Result<()> {
         if let Some(data) = unsafe { pnotify.as_ref() } {
@@ -136,11 +171,13 @@ impl IAudioEndpointVolumeCallback_Impl for VolumeWatch_Impl {
     }
 }
 
+#[cfg(windows)]
 #[implement(IMMNotificationClient)]
 struct DeviceWatch {
     tx: Mutex<Sender<AudioMsg>>,
 }
 
+#[cfg(windows)]
 impl IMMNotificationClient_Impl for DeviceWatch_Impl {
     fn OnDeviceStateChanged(&self, _: &PCWSTR, _: DEVICE_STATE) -> Result<()> {
         Ok(())
@@ -166,6 +203,7 @@ impl IMMNotificationClient_Impl for DeviceWatch_Impl {
 }
 
 /// An output device's friendly name and whether it is headphones or a headset.
+#[cfg(windows)]
 fn describe(device: &IMMDevice) -> Option<(String, bool)> {
     unsafe {
         let store = device.OpenPropertyStore(STGM_READ).ok()?;
@@ -176,6 +214,7 @@ fn describe(device: &IMMDevice) -> Option<(String, bool)> {
     }
 }
 
+#[cfg(windows)]
 fn audio(proxy: Proxy) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -243,14 +282,17 @@ fn audio(proxy: Proxy) {
 // ---- Battery ----
 
 /// How often the battery is looked at if Windows cannot tell the app when its state changes.
+#[cfg(windows)]
 const BATTERY_POLL: Duration = Duration::from_secs(3);
 
 /// What the battery looked like at the last look, to tell what changed.
+#[cfg(any(windows, test))]
 struct BatteryWatch {
     ac: Option<u8>,
     percent: Option<u32>,
 }
 
+#[cfg(any(windows, test))]
 impl BatteryWatch {
     /// The notices that a new look calls for: one when the charger is plugged in or pulled out, and one as
     /// the charge falls through 20, 10 and 5 percent while unplugged. `ac` and `percent` are Windows' own
@@ -277,16 +319,20 @@ impl BatteryWatch {
     }
 }
 
+#[cfg(windows)]
 static BATTERY: Mutex<BatteryWatch> = Mutex::new(BatteryWatch { ac: None, percent: None });
+#[cfg(windows)]
 static BATTERY_PROXY: OnceLock<Proxy> = OnceLock::new();
 
 /// Whether this PC has a battery to watch.
+#[cfg(windows)]
 fn has_battery() -> bool {
     let mut st = SYSTEM_POWER_STATUS::default();
     unsafe { GetSystemPowerStatus(&mut st) }.is_ok() && st.BatteryFlag & 128 == 0
 }
 
 /// Look at the power status now and tell the UI what changed since the last look.
+#[cfg(windows)]
 fn look_at_battery() {
     let mut st = SYSTEM_POWER_STATUS::default();
     if unsafe { GetSystemPowerStatus(&mut st) }.is_err() {
@@ -300,6 +346,7 @@ fn look_at_battery() {
 
 /// Windows says when the power source or the charge changes (to a hidden window), so nothing runs in
 /// between. If that cannot be set up, the battery is looked at every few seconds instead.
+#[cfg(windows)]
 fn battery(proxy: Proxy) {
     if !has_battery() || BATTERY_PROXY.set(proxy).is_err() {
         return; // no battery (desktop), nothing to watch
@@ -322,6 +369,7 @@ fn battery(proxy: Proxy) {
     }
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn power_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if message == WM_POWERBROADCAST && wparam.0 as u32 == PBT_POWERSETTINGCHANGE {
         look_at_battery();
@@ -334,21 +382,28 @@ unsafe extern "system" fn power_proc(window: HWND, message: u32, wparam: WPARAM,
 
 /// How often the brightness is read: quickly for a few seconds after a change so a dragged slider is followed,
 /// slowly otherwise (only when Windows cannot tell the app about changes; see `brightness`).
+#[cfg(any(windows, test))]
 const BRIGHTNESS_IDLE: Duration = Duration::from_millis(300);
+#[cfg(any(windows, test))]
 const BRIGHTNESS_QUICK: Duration = Duration::from_millis(50);
+#[cfg(windows)]
 const BRIGHTNESS_QUICK_FOR: Duration = Duration::from_secs(3);
 /// While a slider is dragged, Windows can report the previous step again for a moment (up to about 0.2 s once
 /// the drag ends). A reading that goes against the way the brightness was just moving is only believed after it
 /// has stayed this long. A change after the brightness has been still for `BRIGHTNESS_STILL` is believed at once.
+#[cfg(any(windows, test))]
 const BRIGHTNESS_TURN_HOLD: Duration = Duration::from_millis(250);
+#[cfg(any(windows, test))]
 const BRIGHTNESS_STILL: Duration = Duration::from_secs(1);
 
 /// How long to wait before reading the brightness again, given how much of the "quick" period is left.
+#[cfg(any(windows, test))]
 fn brightness_interval(quick_left: Duration) -> Duration {
     if quick_left.is_zero() { BRIGHTNESS_IDLE } else { BRIGHTNESS_QUICK }
 }
 
 /// What the brightness has been doing, to tell a real change from a step-old reading.
+#[cfg(any(windows, test))]
 struct Seen {
     last: u32,
     /// 1 when the last change went up, -1 when it went down, 0 before any.
@@ -358,6 +413,7 @@ struct Seen {
     held: Option<(u32, Instant)>,
 }
 
+#[cfg(any(windows, test))]
 impl Seen {
     fn new(first: u32, at: Instant) -> Self {
         Seen { last: first, heading: 0, moved: at, held: None }
@@ -392,17 +448,22 @@ impl Seen {
 }
 
 /// The built-in panel (its handle as a number, so it can live in a static) and what its brightness has done.
+#[cfg(windows)]
 struct Panel {
     lcd: usize,
     seen: Seen,
 }
 
+#[cfg(windows)]
 static PANEL: Mutex<Option<Panel>> = Mutex::new(None);
+#[cfg(windows)]
 static BRIGHTNESS_PROXY: OnceLock<Proxy> = OnceLock::new();
 /// The thread that reads the brightness; Windows' notifications wake it.
+#[cfg(windows)]
 static BRIGHTNESS_READER: OnceLock<thread::Thread> = OnceLock::new();
 
 /// The panel's brightness in percent for the power source in use, or `None` if the driver does not answer.
+#[cfg(windows)]
 fn read_brightness(lcd: HANDLE) -> Option<u32> {
     let mut out = DISPLAY_BRIGHTNESS::default();
     let mut returned = 0u32;
@@ -426,6 +487,7 @@ fn read_brightness(lcd: HANDLE) -> Option<u32> {
 
 /// Read the brightness now and tell the UI if it changed. `Some(true)` while the brightness is on the move
 /// (changed, or a reading that turned back is being checked), `None` when the panel cannot be read.
+#[cfg(windows)]
 fn look_at_brightness() -> Option<bool> {
     let mut guard = PANEL.lock().ok()?;
     let panel = guard.as_mut()?;
@@ -442,6 +504,7 @@ fn look_at_brightness() -> Option<bool> {
 /// dragged, with a value that can be a step old, so the brightness is read directly, every 100 ms until it
 /// has been still for a few seconds. The power source is watched too, because the brightness can differ
 /// between the charger and the battery. If that cannot be set up, the brightness is read on a timer instead.
+#[cfg(windows)]
 fn brightness(proxy: Proxy) {
     let lcd = unsafe {
         let Ok(lcd) = CreateFileW(w!("\\\\.\\LCD"), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, Default::default(), None) else {
@@ -490,6 +553,7 @@ fn brightness(proxy: Proxy) {
     let _ = unsafe { CloseHandle(lcd) };
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn brightness_proc(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if message == WM_POWERBROADCAST && wparam.0 as u32 == PBT_POWERSETTINGCHANGE {
         if let Some(reader) = BRIGHTNESS_READER.get() {
@@ -502,6 +566,7 @@ unsafe extern "system" fn brightness_proc(window: HWND, message: u32, wparam: WP
 
 // ---- Network ----
 
+#[cfg(windows)]
 fn network(proxy: Proxy) {
     use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
     unsafe {
@@ -541,9 +606,11 @@ fn network(proxy: Proxy) {
 
 // ---- Caps Lock / Num Lock ----
 
+#[cfg(windows)]
 static PROXY: OnceLock<Proxy> = OnceLock::new();
 
 /// How often the keyboard hook is put in again, in milliseconds.
+#[cfg(windows)]
 const HOOK_RENEWED_EVERY_MS: u32 = 60_000;
 
 /// Install the low-level keyboard hook. Windows calls the hook on the thread that installed it and waits for
@@ -553,42 +620,57 @@ const HOOK_RENEWED_EVERY_MS: u32 = 60_000;
 /// the UI thread, because at hook time the key hasn't taken effect yet, and counting presses
 /// drifts out of sync if a key-up is ever missed.
 pub fn install_lock_hook(proxy: Proxy) {
-    if PROXY.set(proxy).is_err() {
-        return;
-    }
-    thread::spawn(|| unsafe {
-        let mut hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0).ok();
-        // Windows takes away a hook that once answered too slowly, and says nothing about it: the lock notices would
-        // stop for good. A timer on this thread puts the hook in again now and then.
-        let _ = SetTimer(None, 0, HOOK_RENEWED_EVERY_MS, None);
-        // A hook needs its thread to keep taking messages.
-        let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
-            if msg.message == WM_TIMER {
-                // The new hook is in before the old one goes, so no key falls between the two (a key seen by both
-                // is one press: see `LOCK_HELD`).
-                if let Ok(new) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0)
-                    && let Some(old) = hook.replace(new)
-                {
-                    let _ = UnhookWindowsHookEx(old);
-                }
-                continue;
-            }
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+    #[cfg(windows)]
+    {
+        if PROXY.set(proxy).is_err() {
+            return;
         }
-    });
+        thread::spawn(|| unsafe {
+            let mut hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0).ok();
+            // Windows takes away a hook that once answered too slowly, and says nothing about it: the lock notices would
+            // stop for good. A timer on this thread puts the hook in again now and then.
+            let _ = SetTimer(None, 0, HOOK_RENEWED_EVERY_MS, None);
+            // A hook needs its thread to keep taking messages.
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
+                if msg.message == WM_TIMER {
+                    // The new hook is in before the old one goes, so no key falls between the two (a key seen by both
+                    // is one press: see `LOCK_HELD`).
+                    if let Ok(new) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0)
+                        && let Some(old) = hook.replace(new)
+                    {
+                        let _ = UnhookWindowsHookEx(old);
+                    }
+                    continue;
+                }
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = proxy;
 }
 
 /// Whether a toggle key (Caps Lock, Num Lock) is currently on.
 pub fn key_toggled(vk: i32) -> bool {
-    unsafe { GetKeyState(vk) & 1 != 0 }
+    #[cfg(windows)]
+    unsafe {
+        GetKeyState(vk) & 1 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = vk;
+        false
+    }
 }
 
 /// Whether Caps Lock and Num Lock are held down at the moment (set on the key going down, cleared on the key coming
 /// up). A key that is held sends its down message again and again; only the first one is a press.
+#[cfg(windows)]
 static LOCK_HELD: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
 
+#[cfg(windows)]
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let message = wparam.0 as u32;
     if code >= 0 && matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP) {
@@ -618,14 +700,22 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
 /// path with no drive letter (a share such as `\\server\share`, or a relative path). Answered by this PC, so it
 /// never waits for a server.
 pub fn drive_type(path: &std::path::Path) -> Option<u32> {
-    let text = path.as_os_str().to_string_lossy();
-    let bytes = text.as_bytes();
-    if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
-        return None;
+    #[cfg(windows)]
+    {
+        let text = path.as_os_str().to_string_lossy();
+        let bytes = text.as_bytes();
+        if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
+            return None;
+        }
+        let root: Vec<u16> = format!(r"{}:\", bytes[0] as char).encode_utf16().chain([0]).collect();
+        // SAFETY: a NUL-terminated root such as "C:\"; the call only reads it.
+        Some(unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) })
     }
-    let root: Vec<u16> = format!(r"{}:\", bytes[0] as char).encode_utf16().chain([0]).collect();
-    // SAFETY: a NUL-terminated root such as "C:\"; the call only reads it.
-    Some(unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) })
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 #[cfg(test)]

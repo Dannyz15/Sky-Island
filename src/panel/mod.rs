@@ -25,6 +25,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Fullscreen, Icon, Window, WindowButtons};
 
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsZoomed};
 
 use crate::motion::Glows;
@@ -235,7 +236,10 @@ impl Panel {
         let w = &self.window;
         // Windows is asked itself: the window's own record of being maximised comes a moment after the first
         // "moved" event of the change, which would note the maximised rectangle as the ordinary one.
+        #[cfg(windows)]
         let (zoomed, iconic) = hwnd_of(w).map_or((false, false), |h| unsafe { (IsZoomed(h).as_bool(), IsIconic(h).as_bool()) });
+        #[cfg(not(windows))]
+        let (zoomed, iconic) = (false, false);
         if w.fullscreen().is_some() || zoomed || iconic || w.is_maximized() || w.is_minimized().unwrap_or(false) {
             return;
         }

@@ -1,29 +1,42 @@
 //! File icons for shelf tiles, from the same shell source Explorer uses.
 
+#[cfg(windows)]
 use std::ffi::c_void;
+#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
+#[cfg(not(windows))]
+use tiny_skia::Pixmap;
+#[cfg(windows)]
 use tiny_skia::{Pixmap, PremultipliedColorU8};
+#[cfg(windows)]
 use windows::Win32::Foundation::SIZE;
+#[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject, GetDC, GetDIBits, GetObjectW, HGDIOBJ, ReleaseDC};
+#[cfg(windows)]
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+#[cfg(windows)]
 use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY};
+#[cfg(windows)]
 use windows::core::PCWSTR;
 use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
 
 /// Requested icon size in pixels; drawn scaled down on screen so it stays sharp on high-DPI displays.
+#[cfg(windows)]
 const SIZE_PX: i32 = 64;
 /// The largest icon, across or down, that is read. The shell may return a bigger one than asked for
 /// (`SIIGBF_BIGGERSIZEOK`), and the picture size comes from it, so it is checked before any memory is taken for it.
+#[cfg(any(windows, test))]
 const MAX_SIDE: i32 = 1024;
 
 /// The bytes of a 32-bit picture of `w` x `h` pixels: `None` for an empty one, one bigger than any icon, or a size
 /// that does not fit (the sum used to be `w * h * 4` in `i32`, which wraps for a huge size reported by the shell).
+#[cfg(any(windows, test))]
 fn buffer_len(w: i32, h: i32) -> Option<usize> {
     if w <= 0 || h <= 0 || w > MAX_SIDE || h > MAX_SIDE {
         return None;
@@ -37,6 +50,7 @@ pub fn spawn_loader(proxy: EventLoopProxy<UserEvent>) -> Sender<PathBuf> {
     let (tx, rx) = mpsc::channel::<PathBuf>();
     thread::spawn(move || {
         // The shell wants COM on the thread that asks it for an icon.
+        #[cfg(windows)]
         unsafe {
             let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         }
@@ -49,6 +63,7 @@ pub fn spawn_loader(proxy: EventLoopProxy<UserEvent>) -> Sender<PathBuf> {
 }
 
 /// The shell icon for `path` as a premultiplied RGBA pixmap, or `None` if the shell has none.
+#[cfg(windows)]
 pub fn load(path: &Path) -> Option<Pixmap> {
     // A file on another computer is never asked about on its own (see `shelf::is_remote`): asking makes Windows sign
     // in to that server, and waits for it if it is gone. Its tile shows the plain look with the file's extension.
@@ -99,6 +114,11 @@ pub fn load(path: &Path) -> Option<Pixmap> {
         }
         Some(pixmap)
     }
+}
+
+#[cfg(not(windows))]
+pub fn load(_path: &Path) -> Option<Pixmap> {
+    None
 }
 
 #[cfg(test)]

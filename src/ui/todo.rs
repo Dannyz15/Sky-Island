@@ -11,6 +11,11 @@ const TODO_ROW_H: f32 = 24.0;
 
 pub(crate) const TODO_AMBER: [u8; 3] = [255, 190, 70];
 
+#[cfg(windows)]
+pub(crate) type ForegroundWindow = windows::Win32::Foundation::HWND;
+#[cfg(not(windows))]
+pub(crate) type ForegroundWindow = ();
+
 /// Typing a task: whether the notch is taking keys for it, the text so far, and the window to give the keyboard back to.
 pub(crate) struct Editing {
     /// Typing a new task. While true the notch stays open and keys go to `text`.
@@ -22,7 +27,7 @@ pub(crate) struct Editing {
     /// The day and reminder time of the task being added or edited.
     pub(crate) editor: editor::Editor,
     /// The window that had focus before we took it for typing, so it can be given back.
-    pub(crate) prev_foreground: Option<windows::Win32::Foundation::HWND>,
+    pub(crate) prev_foreground: Option<ForegroundWindow>,
 }
 
 impl Default for Editing {

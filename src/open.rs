@@ -6,23 +6,35 @@
 //! It also never looks for a program named `explorer` next to the app first.
 
 use std::ffi::OsStr;
+#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
 use std::thread;
 
+#[cfg(windows)]
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize};
+#[cfg(windows)]
 use windows::Win32::UI::Shell::{SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+#[cfg(windows)]
 use windows::core::PCWSTR;
 
 /// Open `target` (a file, a folder or an `https://` address) with whatever Windows opens it with: exactly that
 /// item, and nothing in it is read as a switch. It runs on its own thread, because the shell may wait on a slow or
 /// unreachable network drive, and the notch must not wait with it.
 pub fn open(target: impl AsRef<OsStr>) {
-    let wide: Vec<u16> = target.as_ref().encode_wide().chain(Some(0)).collect();
-    let _ = thread::Builder::new().name("open".into()).spawn(move || shell_open(&wide));
+    #[cfg(windows)]
+    {
+        let wide: Vec<u16> = target.as_ref().encode_wide().chain(Some(0)).collect();
+        let _ = thread::Builder::new().name("open".into()).spawn(move || shell_open(&wide));
+    }
+    #[cfg(not(windows))]
+    let _ = target;
 }
 
 /// `wide` is the NUL-ended name to open.
+#[cfg(windows)]
 fn shell_open(wide: &[u16]) {
     unsafe {
         // The shell wants COM on the thread that calls it.
