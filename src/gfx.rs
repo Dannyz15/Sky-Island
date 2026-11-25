@@ -365,7 +365,7 @@ pub fn mask_of(w: u32, h: u32, path: &Path) -> Option<Mask> {
 /// not depend on the defaults of the image crate: no side longer than `max_side` pixels and at most `max_alloc` bytes
 /// of memory for the decoding. `None` for a picture that is too big, damaged, or not a picture. The limits are checked
 /// from the header on, before the pixels are made.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 pub fn decode_limited(bytes: &[u8], max_side: u32, max_alloc: u64) -> Option<image::DynamicImage> {
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(max_side);
