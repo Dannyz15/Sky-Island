@@ -10,6 +10,11 @@
 </p>
 
 <p align="center">
+  <a href="https://apps.microsoft.com/detail/9NB2G6D5MQPL"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="180" alt="Get it from Microsoft"></a>
+  <a href="https://github.com/Dannyz15/Sky-Island/releases/latest"><img src="assets/badge-github.svg" width="180" alt="Download from GitHub"></a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/github/v/release/Dannyz15/Sky-Island?label=release&color=3D5FE0" alt="Latest release">
   <img src="https://img.shields.io/github/downloads/Dannyz15/Sky-Island/total?color=3D5FE0" alt="Downloads">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6" alt="Windows 10 and 11">
@@ -25,11 +30,6 @@
   <a href="#privacy">Privacy</a> ·
   <a href="#known-limitations">Limitations</a> ·
   <a href="#building-from-source">Building</a>
-</p>
-
-<p align="center">
-  <a href="https://apps.microsoft.com/detail/9NB2G6D5MQPL"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="180" alt="Get it from Microsoft"></a>
-  <a href="https://github.com/Dannyz15/Sky-Island/releases/latest"><img src="assets/badge-github.svg" width="180" alt="Download from GitHub"></a>
 </p>
 
 ---
