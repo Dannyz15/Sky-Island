@@ -28,9 +28,8 @@
 </p>
 
 <p align="center">
-  <a href="https://apps.microsoft.com/detail/9NB2G6D5MQPL"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200" alt="Get it from Microsoft"></a>
-  <br>
-  <a href="https://github.com/Dannyz15/Sky-Island/releases/latest"><b>⬇ Or download the setup from GitHub</b></a>
+  <a href="https://apps.microsoft.com/detail/9NB2G6D5MQPL"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="180" alt="Get it from Microsoft"></a>
+  <a href="https://github.com/Dannyz15/Sky-Island/releases/latest"><img src="assets/badge-github.svg" width="180" alt="Download from GitHub"></a>
 </p>
 
 ---
