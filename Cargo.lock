@@ -2328,15 +2328,19 @@ checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 name = "sky-island"
 version = "1.6.1"
 dependencies = [
+ "calloop",
  "embed-resource",
  "fontdue",
  "image",
  "serde_json",
  "sha2",
+ "smithay-client-toolkit",
  "softbuffer",
  "tiny-skia 0.12.0",
  "tray-icon",
  "ureq",
+ "wayland-client",
+ "wayland-protocols",
  "windows",
  "windows-core",
  "winit",

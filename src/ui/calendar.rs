@@ -313,7 +313,7 @@ impl App {
     }
 
     /// A click in the Calendar view. (`cx`, `cy`) is the spot in the view's own coordinates.
-    pub(crate) fn click_calendar(&mut self, cx: f32, cy: f32, window: &Window) {
+    pub(crate) fn click_calendar(&mut self, cx: f32, cy: f32) {
         let inside = |r: (f32, f32, f32, f32)| cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3;
         let (monday, week) = (self.settings.week_monday, self.settings.calendar_week);
         if inside(CAL_PREV) {
@@ -333,7 +333,7 @@ impl App {
         } else if inside(CAL_TITLE) {
             self.cal = calendar::Calendar::new(today_day());
         } else if inside(CAL_ADD) {
-            window.request_redraw();
+            self.request_redraw();
             self.start_editing(None);
             return;
         } else if week && let Some(i) = (0..7).find(|&i| inside(cal_week_rect(i))) {
@@ -354,6 +354,6 @@ impl App {
                 self.start_editing(Some(idx));
             }
         }
-        window.request_redraw();
+        self.request_redraw();
     }
 }

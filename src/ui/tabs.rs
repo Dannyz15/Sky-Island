@@ -157,9 +157,7 @@ impl App {
             self.prayer_opened();
         }
         self.last_tick = Instant::now();
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// Whether the mouse wheel changes the tab where the mouse is: always over the tab bar, and over

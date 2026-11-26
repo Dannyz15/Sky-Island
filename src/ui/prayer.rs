@@ -57,9 +57,7 @@ impl App {
         if let Some(tx) = &self.prayer.tx {
             let _ = tx.send(request);
         }
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// Days (or the news that fetching them failed) arrived.
@@ -75,10 +73,8 @@ impl App {
             None => self.prayer.failed = true,
         }
         self.last_tick = Instant::now();
-        if self.view == View::Prayer
-            && let Some(w) = &self.window
-        {
-            w.request_redraw();
+        if self.view == View::Prayer {
+            self.request_redraw();
         }
     }
 
@@ -125,9 +121,7 @@ impl App {
         let minute = h * 60 + m;
         if minute != self.prayer.minute {
             self.prayer.minute = minute;
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.request_redraw();
         }
         Some(Duration::from_millis(u64::from(59 - s) * 1000 + u64::from(1000 - ms) + 20))
     }

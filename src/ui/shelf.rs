@@ -47,9 +47,7 @@ impl App {
         if !self.shelf_ui.selected.is_empty() && !self.shelf_ui.selecting && !self.edit.on && self.timer_entry.field.is_none() {
             self.remember_foreground();
             self.shelf_ui.selecting = true;
-            if let Some(w) = &self.window {
-                w.focus_window();
-            }
+            self.focus_notch();
         } else if self.shelf_ui.selected.is_empty() && self.shelf_ui.selecting {
             self.shelf_ui.selecting = false;
             self.restore_foreground();
@@ -88,9 +86,7 @@ impl App {
         self.pointer.enter_at = None;
         self.pointer.leave_at = None;
         self.last_tick = Instant::now();
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// Fetch icons for any shelf files that don't have one cached yet, and forget removed files.
@@ -212,7 +208,7 @@ impl App {
     }
 
     /// A click in the Shelf view. (`cx`, `cy`) is the spot in the view's own coordinates.
-    pub(crate) fn click_shelf(&mut self, cx: f32, cy: f32, window: &Window) {
+    pub(crate) fn click_shelf(&mut self, cx: f32, cy: f32) {
         let hit = (0..COLS * ROWS).find_map(|slot| {
             let r = tile_rect(slot);
             let inside = cx >= r.0 && cx <= r.0 + r.2 && cy >= r.1 && cy <= r.1 + r.3;
@@ -221,7 +217,7 @@ impl App {
         let Some((idx, r)) = hit else { return };
         if cx >= r.0 + r.2 - 16.0 && cy <= r.1 + 16.0 {
             self.shelf.remove(idx);
-            window.request_redraw();
+            self.request_redraw();
         } else if ctrl_down() {
             // Ctrl+click highlights or un-highlights one file without opening it.
             let path = self.shelf.items[idx].clone();
@@ -232,14 +228,14 @@ impl App {
                 None => self.shelf_ui.selected.push(path),
             }
             self.sync_selection_focus();
-            window.request_redraw();
+            self.request_redraw();
         } else {
             self.shelf_ui.press = Some((idx, self.pointer.cursor));
         }
     }
 
     /// The shelf's Clear button sits beside the tab bar. True when it was pressed.
-    pub(crate) fn click_shelf_clear(&mut self, cx: f32, ry: f32, bar_y: f32, window: &Window) -> bool {
+    pub(crate) fn click_shelf_clear(&mut self, cx: f32, ry: f32, bar_y: f32) -> bool {
         if self.view == View::Shelf && !self.shelf.items.is_empty() {
             let r = shelf_clear_rect(bar_y);
             if cx >= r.0 && cx <= r.0 + r.2 && ry >= r.1 && ry <= r.1 + r.3 {
@@ -247,7 +243,7 @@ impl App {
                 self.shelf.clear();
                 self.shelf_ui.selected.clear();
                 self.sync_selection_focus();
-                window.request_redraw();
+                self.request_redraw();
                 return true;
             }
         }

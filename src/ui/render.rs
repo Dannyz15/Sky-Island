@@ -152,9 +152,8 @@ impl App {
         if self.view == View::Shelf {
             self.load_icons();
         }
-        let Some(window) = self.window.clone() else { return };
-        let size = window.inner_size();
-        let (Some(full_w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
+        let Some((px_w, px_h)) = self.notch_pixel_size() else { return };
+        let (Some(full_w), Some(h)) = (NonZeroU32::new(px_w), NonZeroU32::new(px_h)) else {
             return;
         };
         // The notch itself is drawn in the middle; the flares on its sides are added at the end.
@@ -176,7 +175,7 @@ impl App {
         let open = self.spring.progress.clamp(0.0, 1.0) as f32;
         // The liquid parts of the outline: the drop while it opens, bubbles, the swelling towards the mouse.
         let liquid = self.liquid(s, fw, true);
-        let body = self.glass_body(&window, (full_w.get(), h.get()), s, ear, gap as f32, room as f32, open, liquid);
+        let body = self.glass_body((full_w.get(), h.get()), s, ear, gap as f32, room as f32, open, liquid);
         // The body ends above the drop running down below it.
         let body_h = (ch.get() as f32 - liquid.drip).max(1.0);
 
@@ -234,6 +233,16 @@ impl App {
             gfx::clip_to(&mut pixmap, &out, ear as i32, gap as i32);
         }
         gfx::blit_over(&mut out, &pixmap, ear as i32, gap as i32);
+
+        #[cfg(target_os = "linux")]
+        if let Some(wl) = &self.wayland {
+            if !self.vis.hidden {
+                let (bw, bh, pixels) = crate::wayland::pack_shm_pixels(&out, self.wayland_tuck_px);
+                wl.present(crate::wayland::Frame { logical_size: self.wayland_logical, buffer_size: (bw, bh), pixels });
+            }
+            self.draw_mirrors(false);
+            return;
+        }
 
         let Some(surface) = self.surface.as_mut() else { return };
         surface.resize(full_w, h).ok();
@@ -311,10 +320,10 @@ impl App {
     }
 
     /// The glass body of the notch for a window of `size` pixels (flares included), kept while nothing about it changes.
-    fn glass_body(&mut self, window: &Window, size: (u32, u32), s: f32, ear: f32, gap: f32, room: f32, open: f32, liquid: crate::glass::Liquid) -> Option<Pixmap> {
+    fn glass_body(&mut self, size: (u32, u32), s: f32, ear: f32, gap: f32, room: f32, open: f32, liquid: crate::glass::Liquid) -> Option<Pixmap> {
         let look = self.settings.look;
         let backdrop = if crate::glass::wants_backdrop(look) { self.backdrop.as_ref().and_then(|b| b.latest()) } else { None };
-        let origin = window.outer_position().map_or((0, 0), |p| (p.x, p.y));
+        let origin = self.window.as_ref().and_then(|w| w.outer_position().ok()).map_or((0, 0), |p| (p.x, p.y));
         let (sun, bucket) = self.sun();
         let accent = self.accent(self.view);
         // Kept at rest only: open or closed, no drop hanging, nothing running down or swelling.
@@ -378,7 +387,8 @@ impl App {
     fn sun(&self) -> ((f32, f32), i32) {
         let s = self.ui_scale();
         let goal = if self.pointer.hovered && self.spring.progress > 0.5 {
-            let w = self.window.as_ref().map_or(1.0, |w| w.inner_size().width as f64) - 2.0 * EAR * s;
+            let full_w = self.notch_pixel_size().map_or(1.0, |(pw, _)| pw as f64);
+            let w = full_w - 2.0 * EAR * s;
             let h = self.window_h() as f64 * s;
             (self.pointer.cursor.0 - w / 2.0, self.pointer.cursor.1 - h / 2.0)
         } else {

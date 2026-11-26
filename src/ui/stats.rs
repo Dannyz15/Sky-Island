@@ -278,9 +278,7 @@ impl App {
         let next_frame = self.stats.frame.map_or(now, |at| at + FRAME);
         if frame_due || (!glided && now >= next_frame) {
             self.stats.frame = Some(now);
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.request_redraw();
         }
         let glided = self.stats.frame.is_some_and(|at| at.saturating_duration_since(looked_at) >= GLIDE);
         if glided {

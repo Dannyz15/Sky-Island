@@ -42,9 +42,7 @@ impl App {
         if let Some(tx) = &self.weather.tx {
             let _ = tx.send(place);
         }
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// A forecast (or the news that fetching it failed) arrived.
@@ -61,10 +59,8 @@ impl App {
             None => self.weather.failed = true,
         }
         self.last_tick = Instant::now();
-        if self.view == View::Weather
-            && let Some(w) = &self.window
-        {
-            w.request_redraw();
+        if self.view == View::Weather {
+            self.request_redraw();
         }
     }
 

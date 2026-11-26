@@ -45,10 +45,8 @@ impl App {
             self.set_volume_at((position.x / s) as f32);
         }
         // Hover highlights follow the mouse.
-        if self.spring.progress >= 0.9
-            && let Some(w) = &self.window
-        {
-            w.request_redraw();
+        if self.spring.progress >= 0.9 {
+            self.request_redraw();
         }
         if let Some((idx, start)) = self.shelf_ui.press
             && (position.x - start.0).hypot(position.y - start.1) > DRAG_THRESHOLD
@@ -66,9 +64,7 @@ impl App {
             self.pointer.enter_at = None;
             self.pointer.leave_at = None;
             self.last_tick = Instant::now();
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.request_redraw();
         } else {
             self.click();
         }
@@ -85,9 +81,7 @@ impl App {
             // Show the jump immediately instead of waiting for the player to report it.
             self.media.position = at;
             self.play.at = Instant::now();
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.request_redraw();
         }
         // A press that never turned into a drag is a click: open the file.
         if let Some((idx, _)) = self.shelf_ui.press.take()
@@ -105,21 +99,21 @@ impl App {
         self.shelf_ui.selecting = false;
         self.edit.prev_foreground = None;
         self.shelf_ui.selected.clear();
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// A key pressed while shelf files are highlighted.
     pub(super) fn on_shelf_key(&mut self, event: winit::event::KeyEvent) {
-        match &event.logical_key {
+        self.on_shelf_key_parts(&event.logical_key);
+    }
+
+    pub(super) fn on_shelf_key_parts(&mut self, key: &Key) {
+        match key {
             Key::Named(NamedKey::Escape) => self.shelf_ui.selected.clear(),
             _ => return,
         }
         self.sync_selection_focus();
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// The wheel over the volume control.
@@ -131,9 +125,7 @@ impl App {
             let next = (now + if dy > 0.0 { 5 } else { -5 }).clamp(0, 100) as u32;
             self.volume.level = Some((next, false));
             sys::set_volume(next);
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.request_redraw();
         }
     }
 
@@ -162,9 +154,8 @@ impl App {
         let column = TIMER_COLS.iter().position(|x| (cx - x).abs() <= 28.0);
         if let Some(i) = column.filter(|_| dy != 0.0 && (TIMER_PLUS_Y - 12.0..=TIMER_MINUS_Y + 12.0).contains(&cy))
             && self.timer.adjust(Unit::ALL[i], if dy > 0.0 { 1 } else { -1 })
-            && let Some(w) = &self.window
         {
-            w.request_redraw();
+            self.request_redraw();
         }
     }
 
@@ -184,9 +175,7 @@ impl App {
             let sung = self.current_line();
             // Back on the line being sung: carry on following the music.
             self.lyric.manual = if sung.is_some_and(|c| c == to.round() as usize) { None } else { Some(to) };
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.request_redraw();
         }
     }
 
@@ -195,11 +184,8 @@ impl App {
         let dy = wheel(&delta, 1.0, 1.0);
         let s = self.ui_scale() as f32;
         let (cx, cy) = (self.pointer.cursor.0 as f32 / s, self.pointer.cursor.1 as f32 / s + TAB_SHIFT);
-        if dy != 0.0
-            && self.edit.editor.wheel(cx, cy, if dy > 0.0 { 1 } else { -1 }, clock_now())
-            && let Some(w) = &self.window
-        {
-            w.request_redraw();
+        if dy != 0.0 && self.edit.editor.wheel(cx, cy, if dy > 0.0 { 1 } else { -1 }, clock_now()) {
+            self.request_redraw();
         }
     }
 
@@ -214,30 +200,34 @@ impl App {
                 View::Clipboard => self.clip.history.scroll_by(rows),
                 _ => self.shelf.scroll_by(rows),
             }
-            if let Some(w) = &self.window {
-                w.request_redraw();
-            }
+            self.request_redraw();
         }
     }
 
     /// A key pressed while the timer is being typed.
     pub(super) fn on_timer_key(&mut self, event: winit::event::KeyEvent) {
-        self.timer_key(&event);
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.on_timer_key_parts(&event.logical_key, event.text.as_deref());
+    }
+
+    pub(super) fn on_timer_key_parts(&mut self, key: &Key, text: Option<&str>) {
+        self.timer_key_parts(key, text);
+        self.request_redraw();
     }
 
     /// A key pressed while a task is being typed.
     pub(super) fn on_edit_key(&mut self, event: winit::event::KeyEvent) {
-        match &event.logical_key {
+        self.on_edit_key_parts(&event.logical_key, event.text.as_deref());
+    }
+
+    pub(super) fn on_edit_key_parts(&mut self, key: &Key, text: Option<&str>) {
+        match key {
             Key::Named(NamedKey::Enter) => self.commit_task(),
             Key::Named(NamedKey::Escape) => self.stop_editing(),
             Key::Named(NamedKey::Backspace) => {
                 self.edit.text.pop();
             }
             _ => {
-                if let Some(text) = &event.text {
+                if let Some(text) = text {
                     for c in text.chars().filter(|c| !c.is_control()) {
                         if self.edit.text.chars().count() < 80 {
                             self.edit.text.push(c);
@@ -246,8 +236,6 @@ impl App {
                 }
             }
         }
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 }

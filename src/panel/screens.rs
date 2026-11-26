@@ -116,8 +116,20 @@ pub(super) fn pick_at(ctrl: Rect, screens: &[Detected], x: f32, y: f32) -> Optio
 }
 
 impl App {
-    /// The screens that are connected now, from the island's window (empty before there is one).
+    /// The screens that are connected now, from the island's window or Wayland outputs.
     pub(super) fn detected_screens(&self) -> Vec<Detected> {
+        #[cfg(target_os = "linux")]
+        if let Some(wl) = &self.wayland {
+            let outputs = wl.outputs();
+            let raw: Vec<_> = outputs
+                .iter()
+                .map(|o| {
+                    let main = o.logical_pos == (0, 0);
+                    (o.id, o.logical_pos.0, o.logical_pos.1, o.logical_size.0.max(1) as u32, o.logical_size.1.max(1) as u32, main)
+                })
+                .collect();
+            return arrange(&raw);
+        }
         let Some(window) = &self.window else { return Vec::new() };
         let main = window.primary_monitor().map(|m| (m.position().x, m.position().y));
         let raw: Vec<_> = window

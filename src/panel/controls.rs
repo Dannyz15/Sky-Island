@@ -197,7 +197,7 @@ impl App {
         let own = key + (1u64 << 40);
         let lights_all = self.settings.screen.follows();
         // The screen the notch is on right now (with All, the one the mouse last touched the top of).
-        let here = self.window.as_ref().and_then(|w| self.island_monitor(w)).map(|m| (m.position().x, m.position().y));
+        let here = self.current_monitor_pos();
         for (i, (d, t)) in screens.iter().zip(&rects).enumerate() {
             let (x, y, w, h) = (t.0 * s, t.1 * s, t.2 * s, t.3 * s);
             let over = panel.glows.fade(own + i as u64, inside(*t, cx, cy));

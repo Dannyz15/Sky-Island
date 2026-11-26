@@ -253,10 +253,8 @@ impl App {
         (self.lyric.duration, self.lyric.refetched) = (m.duration, false);
         crate::lyrics::spawn_fetch(key, m.title.clone(), m.artist.clone(), m.duration, self.settings.lyrics_online, self.proxy.clone());
         self.snap_lyrics();
-        if self.spring.progress > 0.0
-            && let Some(w) = &self.window
-        {
-            w.request_redraw();
+        if self.spring.progress > 0.0 {
+            self.request_redraw();
         }
     }
 
@@ -296,9 +294,7 @@ impl App {
         // The slider follows the mouse at once; Windows' own report comes after.
         self.volume.level = Some((percent, false));
         sys::set_volume(percent);
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     pub(crate) fn scrub_at(&self, cx: f32) -> Duration {
@@ -602,13 +598,13 @@ impl App {
     }
 
     /// A click in the Music view, with or without the lyrics. (`cx`, `cy`) is the spot in the view's own coordinates.
-    pub(crate) fn click_player(&mut self, cx: f32, cy: f32, window: &Window) {
+    pub(crate) fn click_player(&mut self, cx: f32, cy: f32) {
         let geo = self.geo();
         // Press on the bar (a taller target than the thin line) and drag to jump in the song.
         let (bx, by, bw) = geo.bar;
         if !self.media.duration.is_zero() && self.media.can_seek && self.play.handle.is_some() && cx >= bx - 6.0 && cx <= bx + bw + 6.0 && (by - 9.0..=by + 12.0).contains(&cy) {
             self.play.scrub = Some(self.scrub_at(cx));
-            window.request_redraw();
+            self.request_redraw();
             return;
         }
         // The volume: the speaker mutes, and the slider is pressed and dragged to set the level.
@@ -634,7 +630,7 @@ impl App {
             }
             self.lyric.settle = true;
             self.last_tick = Instant::now();
-            window.request_redraw();
+            self.request_redraw();
             return;
         }
         if let Some(handle) = &self.play.handle {
@@ -652,7 +648,7 @@ impl App {
         // Sync takes the lyrics back to the line being sung.
         if self.view == View::Lyrics && self.lyric_off_sync() && cx >= SYNC_RECT.0 && cx <= SYNC_RECT.0 + SYNC_RECT.2 && cy >= SYNC_RECT.1 && cy <= SYNC_RECT.1 + SYNC_RECT.3 {
             self.lyric.manual = None;
-            window.request_redraw();
+            self.request_redraw();
             return;
         }
         // Click a lyric line to jump to it.
@@ -675,7 +671,7 @@ impl App {
             self.play.at = Instant::now();
             // The lyrics follow the music again from the line that was picked.
             self.lyric.manual = None;
-            window.request_redraw();
+            self.request_redraw();
         }
     }
 }

@@ -38,6 +38,8 @@ mod todo;
 mod ui;
 mod update;
 mod water;
+#[cfg(target_os = "linux")]
+mod wayland;
 mod weather;
 mod zones;
 
@@ -134,6 +136,9 @@ pub enum UserEvent {
     Located(location::Found),
     /// A new copy of what is behind the notch, for the glass looks.
     Backdrop,
+    /// Events from the Wayland layer-shell notch thread on Linux.
+    #[cfg(target_os = "linux")]
+    Wayland(wayland::Event),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -244,6 +249,24 @@ struct App {
     hotkey_ok: bool,
     /// What the Stats tab keeps.
     stats: ui::StatsTab,
+    #[cfg(target_os = "linux")]
+    wayland: Option<wayland::Handle>,
+    #[cfg(target_os = "linux")]
+    wayland_dirty: bool,
+    #[cfg(target_os = "linux")]
+    wayland_size: (u32, u32),
+    #[cfg(target_os = "linux")]
+    wayland_logical: (u32, u32),
+    #[cfg(target_os = "linux")]
+    wayland_scale: f64,
+    #[cfg(target_os = "linux")]
+    wayland_preferred_scale: Option<f64>,
+    #[cfg(target_os = "linux")]
+    wayland_tuck_px: u32,
+    #[cfg(target_os = "linux")]
+    wayland_tuck_logical: f64,
+    #[cfg(target_os = "linux")]
+    wayland_output: Option<u32>,
     last_tick: Instant,
 }
 
@@ -309,6 +332,24 @@ impl App {
             volume: ui::Volume::default(),
             weather: ui::WeatherTab::default(),
             prayer: ui::PrayerTab::default(),
+            #[cfg(target_os = "linux")]
+            wayland: None,
+            #[cfg(target_os = "linux")]
+            wayland_dirty: false,
+            #[cfg(target_os = "linux")]
+            wayland_size: (0, 0),
+            #[cfg(target_os = "linux")]
+            wayland_logical: (0, 0),
+            #[cfg(target_os = "linux")]
+            wayland_scale: 1.0,
+            #[cfg(target_os = "linux")]
+            wayland_preferred_scale: None,
+            #[cfg(target_os = "linux")]
+            wayland_tuck_px: 0,
+            #[cfg(target_os = "linux")]
+            wayland_tuck_logical: 0.0,
+            #[cfg(target_os = "linux")]
+            wayland_output: None,
             last_tick: Instant::now(),
         }
     }

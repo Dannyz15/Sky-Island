@@ -255,10 +255,8 @@ impl App {
         self.timer_entry.field = Some(field);
         self.timer_entry.digits.clear();
         self.edit.started = Instant::now();
-        if let Some(w) = &self.window {
-            w.focus_window();
-            w.request_redraw();
-        }
+        self.focus_notch();
+        self.request_redraw();
     }
 
     /// Stop typing a timer number, keeping what was typed if `keep`, and give the keyboard back.
@@ -270,9 +268,7 @@ impl App {
         self.timer_entry.digits.clear();
         self.last_tick = Instant::now();
         self.restore_foreground();
-        if let Some(w) = &self.window {
-            w.request_redraw();
-        }
+        self.request_redraw();
     }
 
     /// Put the digits typed so far into the timer's length.
@@ -292,9 +288,9 @@ impl App {
     }
 
     /// A key pressed while a timer number is being typed.
-    pub(crate) fn timer_key(&mut self, event: &winit::event::KeyEvent) {
+    pub(crate) fn timer_key_parts(&mut self, logical_key: &Key, text: Option<&str>) {
         let Some(field) = self.timer_entry.field else { return };
-        match &event.logical_key {
+        match logical_key {
             Key::Named(NamedKey::Enter) => self.end_timer_edit(true),
             Key::Named(NamedKey::Escape) => self.end_timer_edit(false),
             Key::Named(NamedKey::Backspace) => {
@@ -308,7 +304,7 @@ impl App {
                 self.timer.adjust(Unit::ALL[field], if *key == NamedKey::ArrowUp { 1 } else { -1 });
             }
             _ => {
-                if let Some(text) = &event.text {
+                if let Some(text) = text {
                     for c in text.chars() {
                         if c.is_ascii_digit() {
                             if self.timer_entry.digits.len() < 2 {
@@ -346,7 +342,7 @@ impl App {
     }
 
     /// A click in the Timer view. (`cx`, `cy`) is the spot in the view's own coordinates.
-    pub(crate) fn click_timer(&mut self, cx: f32, cy: f32, window: &Window) {
+    pub(crate) fn click_timer(&mut self, cx: f32, cy: f32) {
         let now = Instant::now();
         let in_label = |x: f32| (cx - x).abs() <= 26.0 && (cy - TIMER_CTRL_Y).abs() <= 14.0;
         let chip = (0..timer::PRESETS.len()).find(|&i| {
@@ -387,17 +383,17 @@ impl App {
             return;
         }
         self.notices.alert_until = None;
-        window.request_redraw();
+        self.request_redraw();
     }
 
     /// While the timer's alarm rings, only its Stop button stops it. True when the click was dealt with here: the alarm was stopped, or the click fell on a control that stays dead for now (the tab bar still works).
-    pub(crate) fn click_alarm_guard(&mut self, cx: f32, cy: f32, ry: f32, bar_y: f32, window: &Window) -> bool {
+    pub(crate) fn click_alarm_guard(&mut self, cx: f32, cy: f32, ry: f32, bar_y: f32) -> bool {
         if self.notices.alert_until.is_some() && self.notices.alert_msg == TIMES_UP && self.view == View::Timer {
             if cx >= STOP_BUTTON.0 && cx <= STOP_BUTTON.0 + STOP_BUTTON.2 && cy >= STOP_BUTTON.1 && cy <= STOP_BUTTON.1 + STOP_BUTTON.3 {
                 self.notices.alert_until = None;
                 self.notices.next_chime = None;
                 sound::stop_file(sound::Slot::Timer);
-                window.request_redraw();
+                self.request_redraw();
                 return true;
             }
             // The hidden controls under the Stop button stay dead; only the tab bar still works.
