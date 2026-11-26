@@ -1,14 +1,16 @@
-//! Now-playing info and controls via Windows GSMTC. Runs on its own thread and
-//! pushes a fresh `MediaState` to the UI whenever something changes.
+//! Now-playing info and controls (Windows GSMTC, Linux MPRIS over D-Bus). Runs on its own thread
+//! and pushes a fresh `MediaState` to the UI whenever something changes.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::thread;
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 use std::time::Duration;
+#[cfg(any(windows, target_os = "linux"))]
+use std::time::{Duration, Instant};
 #[cfg(windows)]
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 use windows::Foundation::TypedEventHandler;
@@ -27,9 +29,9 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::UserEvent;
 
-/// The longest a call to a player or to Windows is waited for. A player that never answers must not freeze the
+/// The longest a call to a player or to the OS is waited for. A player that never answers must not freeze the
 /// media thread for good, and with it every now-playing update.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const CALL_LIMIT: Duration = Duration::from_secs(10);
 
 /// ERROR_TIMEOUT as an HRESULT.
@@ -73,20 +75,20 @@ macro_rules! join_within {
 
 const ART_SIZE: u32 = 96;
 
-/// How often the player is read again even if Windows said nothing, to catch a missed change and
+/// How often the player is read again even if the OS said nothing, to catch a missed change and
 /// to keep the position honest.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const RESYNC: Duration = Duration::from_secs(4);
-/// The same while nothing is playing: Windows still announces every change, and no position is running
+/// The same while nothing is playing: the OS still announces every change, and no position is running
 /// that needs to be kept honest, so the thread can sleep longer.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const RESYNC_IDLE: Duration = Duration::from_secs(15);
-/// How long to wait before asking Windows for the media sessions again when that failed.
-#[cfg(windows)]
+/// How long to wait before asking the OS for media sessions again when that failed.
+#[cfg(any(windows, target_os = "linux"))]
 const START_RETRY: Duration = Duration::from_secs(5);
 /// When a track changes, browsers (YouTube above all) fill in its title, length, picture and time one
 /// piece at a time. The player is read again after these delays so the settled values win.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const SETTLE: [Duration; 5] = [Duration::from_millis(500), Duration::from_millis(1500), Duration::from_millis(3500), Duration::from_millis(6000), Duration::from_millis(10000)];
 
 #[derive(Clone, Default)]
@@ -108,7 +110,7 @@ pub struct MediaState {
 /// Whether a click on the bar or on a lyric line can move the song. Apple Music says it cannot ("position can
 /// be set" is false) and ignores the jump, so the song would carry on where it was and the lyrics would go back
 /// to it. A player that has not given a length yet (Firefox, for a moment) is given the benefit of the doubt.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn seek_allowed(position_enabled: bool, duration: Duration) -> bool {
     position_enabled || duration.is_zero()
 }
@@ -131,7 +133,7 @@ impl MediaState {
     }
 
     /// Nothing the UI shows differs between the two.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     fn same_as(&self, o: &MediaState) -> bool {
         (&self.title, &self.artist, &self.album, self.playing, self.position, self.duration) == (&o.title, &o.artist, &o.album, o.playing, o.position, o.duration)
             && (self.has_session, self.next_enabled, self.can_seek, &self.art) == (o.has_session, o.next_enabled, o.can_seek, &o.art)
@@ -142,38 +144,43 @@ pub enum Command {
     TogglePlay,
     Next,
     Previous,
-    Seek(#[cfg_attr(not(windows), allow(dead_code))] Duration),
+    Seek(#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))] Duration),
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 enum Msg {
     Refresh,
     Command(Command),
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 #[derive(Clone)]
 pub struct MediaHandle(Sender<Msg>);
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 impl MediaHandle {
     pub fn send(&self, cmd: Command) {
         let _ = self.0.send(Msg::Command(cmd));
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 #[derive(Clone)]
 pub struct MediaHandle;
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 impl MediaHandle {
     pub fn send(&self, _cmd: Command) {}
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub fn spawn(_proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
     MediaHandle
+}
+
+#[cfg(target_os = "linux")]
+pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
+    mpris::spawn(proxy)
 }
 
 #[cfg(windows)]
@@ -319,10 +326,10 @@ impl Drop for Subscription {
 }
 
 /// The most characters of a title, artist or album that are kept.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const MAX_META_CHARS: usize = 256;
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn clip_meta(s: &str) -> String {
     crate::lyrics::clip(s, MAX_META_CHARS).to_string()
 }
@@ -405,16 +412,16 @@ fn ticks(t: i64) -> Duration {
 
 /// The most bytes of album art that are read. Real covers are well under 1 MB; a player (or a web page,
 /// through the browser's media session) can hand over anything, and a bigger one is left out.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", test))]
 const ART_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// The largest cover that is decoded, across and down, and the most memory the decoding may take.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const ART_MAX_SIDE: u32 = 4096;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const ART_MAX_ALLOC: u64 = 96 * 1024 * 1024;
 
 /// Decode a cover within the limits above (`None` for one that is too big or not a picture).
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn decode_art(bytes: &[u8]) -> Option<image::DynamicImage> {
     crate::gfx::decode_limited(bytes, ART_MAX_SIDE, ART_MAX_ALLOC)
 }
@@ -422,7 +429,7 @@ fn decode_art(bytes: &[u8]) -> Option<image::DynamicImage> {
 /// The cover as a square picture of `ART_SIZE`: the middle square is cut out FIRST, and only that is scaled.
 /// (`resize_to_fill` scales the whole picture to fill the square and cuts afterwards, so a cover of 4096 x 1 pixels
 /// was first made 393216 x 96 pixels.)
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn cover_square(img: image::DynamicImage) -> image::DynamicImage {
     let (w, h) = (img.width(), img.height());
     let side = w.min(h);
@@ -454,6 +461,476 @@ fn read_art(r: &IRandomAccessStreamReference) -> Result<Option<Vec<u8>>> {
 
 pub const fn art_size() -> u32 {
     ART_SIZE
+}
+
+#[cfg(target_os = "linux")]
+mod mpris {
+    use std::collections::HashMap;
+    use std::fs::File;
+    use std::io::Read;
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::{Path, PathBuf};
+
+    use zbus::MatchRule;
+    use zbus::blocking::fdo::DBusProxy;
+    use zbus::blocking::{Connection, MessageIterator, connection::Builder};
+    use zbus::zvariant::{ObjectPath, OwnedValue, Value};
+
+    use super::*;
+
+    const MPRIS_PREFIX: &str = "org.mpris.MediaPlayer2.";
+    const MPRIS_PATH: &str = "/org/mpris/MediaPlayer2";
+    const PLAYER_IFACE: &str = "org.mpris.MediaPlayer2.Player";
+    const PROPS_IFACE: &str = "org.freedesktop.DBus.Properties";
+    const NO_TRACK: &str = "/org/mpris/MediaPlayer2/TrackList/NoTrack";
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub(super) enum Status {
+        Playing,
+        Paused,
+        Stopped,
+    }
+
+    pub(super) struct Snapshot {
+        pub bus: String,
+        pub status: Status,
+        pub title: String,
+        pub artist: String,
+        pub album: String,
+        pub duration: Duration,
+        pub position: Duration,
+        pub art_url: Option<String>,
+        pub track_id: Option<String>,
+        pub can_next: bool,
+        pub can_prev: bool,
+        pub can_seek: bool,
+    }
+
+    struct Active {
+        bus: String,
+        track_id: Option<String>,
+        can_prev: bool,
+        position: Duration,
+    }
+
+    pub(super) fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
+        let (tx, rx) = mpsc::channel::<Msg>();
+        let handle = MediaHandle(tx.clone());
+        let _ = thread::Builder::new().name("mpris-media".into()).spawn(move || {
+            let conn = loop {
+                match Builder::session().and_then(|b| b.method_timeout(CALL_LIMIT).build()) {
+                    Ok(c) => break c,
+                    Err(_) => match rx.recv_timeout(START_RETRY) {
+                        Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    },
+                }
+            };
+
+            spawn_watcher(tx.clone());
+
+            let mut active: Option<Active> = None;
+            let mut art_cache: Option<(String, Option<Vec<u8>>)> = None;
+            let mut last: Option<(String, String, Duration)> = None;
+            let mut sent: Option<MediaState> = None;
+            let mut settle: Vec<Instant> = Vec::new();
+            let _ = tx.send(Msg::Refresh);
+
+            loop {
+                let now = Instant::now();
+                let resync_only = settle.is_empty();
+                let resync = if sent.as_ref().is_some_and(|s| s.playing) { RESYNC } else { RESYNC_IDLE };
+                let wait = settle.iter().map(|t| t.saturating_duration_since(now)).min().unwrap_or(resync).min(resync);
+                let (msg, _quiet) = match rx.recv_timeout(wait) {
+                    Ok(msg) => (msg, false),
+                    Err(RecvTimeoutError::Timeout) => (Msg::Refresh, resync_only),
+                    Err(RecvTimeoutError::Disconnected) => break,
+                };
+                match msg {
+                    Msg::Command(cmd) => {
+                        if let Some(a) = &active {
+                            send_command(&conn, a, cmd);
+                        }
+                        settle = SETTLE.iter().map(|d| Instant::now() + *d).collect();
+                    }
+                    Msg::Refresh => {
+                        let now = Instant::now();
+                        settle.retain(|t| *t > now);
+                        let (state, next_active) = read_active(&conn, active.as_ref().map(|a| a.bus.as_str()), &mut art_cache);
+                        active = next_active;
+                        let seen = (state.title.clone(), state.artist.clone(), state.duration);
+                        if last.as_ref() != Some(&seen) {
+                            settle = SETTLE.iter().map(|d| now + *d).collect();
+                            last = Some(seen);
+                        }
+                        if !state.playing && sent.as_ref().is_some_and(|old| old.same_as(&state)) {
+                            continue;
+                        }
+                        sent = Some(state.clone());
+                        let _ = proxy.send_event(UserEvent::Media(state));
+                    }
+                }
+            }
+        });
+        handle
+    }
+
+    fn spawn_watcher(tx: Sender<Msg>) {
+        let _ = thread::Builder::new().name("mpris-watch".into()).spawn(move || {
+            loop {
+                let Ok(conn) = Connection::session() else {
+                    if wait_or_stop(&tx, START_RETRY) {
+                        return;
+                    }
+                    continue;
+                };
+                if let Ok(dbus) = DBusProxy::new(&conn) {
+                    let rules = [
+                        "type='signal',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0namespace='org.mpris.MediaPlayer2'",
+                        "type='signal',path='/org/mpris/MediaPlayer2',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',arg0='org.mpris.MediaPlayer2.Player'",
+                        "type='signal',path='/org/mpris/MediaPlayer2',interface='org.mpris.MediaPlayer2.Player',member='Seeked'",
+                    ];
+                    for r in rules {
+                        if let Ok(rule) = MatchRule::try_from(r) {
+                            let _ = dbus.add_match_rule(rule);
+                        }
+                    }
+                }
+                for item in MessageIterator::from(&conn) {
+                    let Ok(msg) = item else { break };
+                    if msg.header().message_type() == zbus::message::Type::Signal && tx.send(Msg::Refresh).is_err() {
+                        return;
+                    }
+                }
+                if wait_or_stop(&tx, START_RETRY) {
+                    return;
+                }
+            }
+        });
+    }
+
+    fn wait_or_stop(tx: &Sender<Msg>, d: Duration) -> bool {
+        thread::sleep(d);
+        tx.send(Msg::Refresh).is_err()
+    }
+
+    fn read_active(conn: &Connection, prev_bus: Option<&str>, art_cache: &mut Option<(String, Option<Vec<u8>>)>) -> (MediaState, Option<Active>) {
+        let Ok(dbus) = DBusProxy::new(conn) else {
+            return (MediaState::default(), None);
+        };
+        let Ok(names) = dbus.list_names() else {
+            return (MediaState::default(), None);
+        };
+        let snapshots: Vec<Snapshot> = names.into_iter().map(|n| n.to_string()).filter(|n| n.starts_with(MPRIS_PREFIX)).filter_map(|bus| read_snapshot(conn, &bus)).collect();
+
+        let Some(idx) = pick_player_index(&snapshots, prev_bus) else {
+            return (MediaState::default(), None);
+        };
+        let mut s = snapshots.into_iter().nth(idx).unwrap();
+        // Refresh Position directly from org.freedesktop.DBus.Properties.Get since some players only compute live
+        // Position on property Get rather than GetAll.
+        if let Some(pos) = get_position(conn, &s.bus) {
+            s.position = if !s.duration.is_zero() { pos.min(s.duration) } else { pos };
+        }
+        let art = match &s.art_url {
+            Some(url) => match art_cache {
+                Some((cached_url, cached_art)) if cached_url == url => cached_art.clone(),
+                _ => {
+                    let decoded = read_mpris_art(url);
+                    *art_cache = Some((url.clone(), decoded.clone()));
+                    decoded
+                }
+            },
+            None => None,
+        };
+        let playing = s.status == Status::Playing;
+        let state = MediaState {
+            title: s.title,
+            artist: s.artist,
+            album: s.album,
+            playing,
+            position: s.position,
+            duration: s.duration,
+            art,
+            has_session: true,
+            next_enabled: s.can_next,
+            can_seek: seek_allowed(s.can_seek, s.duration),
+        };
+        let active = Active { bus: s.bus, track_id: s.track_id, can_prev: s.can_prev, position: s.position };
+        (state, Some(active))
+    }
+
+    fn read_snapshot(conn: &Connection, bus: &str) -> Option<Snapshot> {
+        let msg = conn.call_method(Some(bus), MPRIS_PATH, Some(PROPS_IFACE), "GetAll", &(PLAYER_IFACE)).ok()?;
+        let props: HashMap<String, OwnedValue> = msg.body().deserialize().ok()?;
+        let status = match value_str(props.get("PlaybackStatus").map(|v| &**v)).as_deref() {
+            Some("Playing") => Status::Playing,
+            Some("Paused") => Status::Paused,
+            _ => Status::Stopped,
+        };
+        let meta = props.get("Metadata").and_then(|v| match &**v {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        });
+        let title = meta.and_then(|m| dict_str(m, "xesam:title")).map(|s| clip_meta(&s)).unwrap_or_default();
+        let artist = meta.and_then(dict_artist).map(|s| clip_meta(&s)).unwrap_or_default();
+        let album = meta.and_then(|m| dict_str(m, "xesam:album")).map(|s| clip_meta(&s)).unwrap_or_default();
+        let duration = meta.and_then(|m| dict_micros(m, "mpris:length")).unwrap_or(Duration::ZERO);
+        let raw_pos = props.get("Position").and_then(|v| value_i64(v)).map(micros_to_duration).unwrap_or(Duration::ZERO);
+        let position = if !duration.is_zero() { raw_pos.min(duration) } else { raw_pos };
+        let art_url = meta.and_then(|m| dict_str(m, "mpris:artUrl"));
+        let track_id = meta.and_then(|m| dict_str(m, "mpris:trackid"));
+        let can_next = props.get("CanGoNext").and_then(|v| bool::try_from(&**v).ok()).unwrap_or(false);
+        let can_prev = props.get("CanGoPrevious").and_then(|v| bool::try_from(&**v).ok()).unwrap_or(false);
+        let can_seek = props.get("CanSeek").and_then(|v| bool::try_from(&**v).ok()).unwrap_or(false);
+
+        Some(Snapshot { bus: bus.to_string(), status, title, artist, album, duration, position, art_url, track_id, can_next, can_prev, can_seek })
+    }
+
+    fn get_position(conn: &Connection, bus: &str) -> Option<Duration> {
+        let msg = conn.call_method(Some(bus), MPRIS_PATH, Some(PROPS_IFACE), "Get", &(PLAYER_IFACE, "Position")).ok()?;
+        let val: OwnedValue = msg.body().deserialize().ok()?;
+        value_i64(&val).map(micros_to_duration)
+    }
+
+    fn send_command(conn: &Connection, active: &Active, cmd: Command) {
+        let bus = active.bus.as_str();
+        match cmd {
+            Command::TogglePlay => {
+                let _ = conn.call_method(Some(bus), MPRIS_PATH, Some(PLAYER_IFACE), "PlayPause", &());
+            }
+            Command::Next => {
+                let _ = conn.call_method(Some(bus), MPRIS_PATH, Some(PLAYER_IFACE), "Next", &());
+            }
+            Command::Previous => {
+                if active.can_prev {
+                    let _ = conn.call_method(Some(bus), MPRIS_PATH, Some(PLAYER_IFACE), "Previous", &());
+                } else {
+                    seek_to(conn, active, Duration::ZERO);
+                }
+            }
+            Command::Seek(d) => seek_to(conn, active, d),
+        }
+    }
+
+    fn seek_to(conn: &Connection, active: &Active, d: Duration) {
+        let target_us = d.as_micros().min(i64::MAX as u128) as i64;
+        if let Some(tid) = active.track_id.as_deref().filter(|t| *t != NO_TRACK)
+            && let Ok(path) = ObjectPath::try_from(tid)
+            && conn.call_method(Some(active.bus.as_str()), MPRIS_PATH, Some(PLAYER_IFACE), "SetPosition", &(path, target_us)).is_ok()
+        {
+            return;
+        }
+        let cur_us = active.position.as_micros().min(i64::MAX as u128) as i64;
+        let delta_us = (i128::from(target_us) - i128::from(cur_us)).clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+        let _ = conn.call_method(Some(active.bus.as_str()), MPRIS_PATH, Some(PLAYER_IFACE), "Seek", &(delta_us));
+    }
+
+    fn value_str(v: Option<&Value<'_>>) -> Option<String> {
+        match v? {
+            Value::Str(s) => Some(s.to_string()),
+            Value::ObjectPath(p) => Some(p.to_string()),
+            Value::Value(inner) => value_str(Some(inner)),
+            _ => None,
+        }
+    }
+
+    fn value_i64(v: &Value<'_>) -> Option<i64> {
+        match v {
+            Value::I64(n) => Some(*n),
+            Value::U64(n) => Some((*n).min(i64::MAX as u64) as i64),
+            Value::I32(n) => Some(i64::from(*n)),
+            Value::U32(n) => Some(i64::from(*n)),
+            Value::Value(inner) => value_i64(inner),
+            _ => None,
+        }
+    }
+
+    fn dict_get<'a>(dict: &'a zbus::zvariant::Dict<'a, 'a>, key: &str) -> Option<&'a Value<'a>> {
+        dict.iter().find(|(k, _)| matches!(k, Value::Str(s) if s.as_str() == key)).map(|(_, v)| v)
+    }
+
+    fn dict_str(dict: &zbus::zvariant::Dict<'_, '_>, key: &str) -> Option<String> {
+        value_str(dict_get(dict, key))
+    }
+
+    fn dict_micros(dict: &zbus::zvariant::Dict<'_, '_>, key: &str) -> Option<Duration> {
+        value_i64(dict_get(dict, key)?).map(micros_to_duration)
+    }
+
+    fn dict_artist(dict: &zbus::zvariant::Dict<'_, '_>) -> Option<String> {
+        let val = dict_get(dict, "xesam:artist")?;
+        match val {
+            Value::Array(arr) => {
+                let parts: Vec<String> = arr.iter().filter_map(|v| value_str(Some(v))).filter(|s| !s.is_empty()).collect();
+                (!parts.is_empty()).then(|| parts.join(", "))
+            }
+            other => value_str(Some(other)),
+        }
+    }
+
+    /// Pick the best MPRIS player index, ignoring empty `Stopped` stubs.
+    pub(super) fn pick_player_index(candidates: &[Snapshot], prev_bus: Option<&str>) -> Option<usize> {
+        let score = |s: &Snapshot| -> Option<(u8, u8)> {
+            let has_meta = !s.title.is_empty() || !s.artist.is_empty();
+            let tier = match s.status {
+                Status::Playing => 4,
+                Status::Paused if Some(s.bus.as_str()) == prev_bus => 3,
+                Status::Paused if has_meta => 2,
+                Status::Paused => 1,
+                Status::Stopped if has_meta => 0,
+                Status::Stopped => return None,
+            };
+            Some((tier, u8::from(Some(s.bus.as_str()) == prev_bus)))
+        };
+        candidates.iter().enumerate().filter_map(|(i, s)| score(s).map(|k| (k, i))).max_by_key(|(k, _)| *k).map(|(_, i)| i)
+    }
+
+    pub(super) fn micros_to_duration(us: i64) -> Duration {
+        Duration::from_micros(us.max(0) as u64)
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum ArtSource<'a> {
+        File(&'a str),
+        Https(&'a str),
+        Data(&'a str),
+    }
+
+    pub(super) fn classify_art_url(url: &str) -> Option<ArtSource<'_>> {
+        if url.starts_with("file://") {
+            Some(ArtSource::File(url))
+        } else if url.starts_with("https://") {
+            Some(ArtSource::Https(url))
+        } else if url.starts_with("data:image/") {
+            Some(ArtSource::Data(url))
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn file_url_to_path(url: &str) -> Option<PathBuf> {
+        let rest = url.strip_prefix("file://")?;
+        let path_part = if let Some(after_host) = rest.strip_prefix("localhost/") {
+            after_host
+        } else if rest.starts_with('/') {
+            rest
+        } else {
+            return None;
+        };
+        let path_part = path_part.split(['?', '#']).next()?;
+        let raw = percent_decode(path_part.as_bytes());
+        let prefixed = if raw.first() == Some(&b'/') {
+            raw
+        } else {
+            let mut v = Vec::with_capacity(raw.len() + 1);
+            v.push(b'/');
+            v.extend_from_slice(&raw);
+            v
+        };
+        Some(PathBuf::from(std::ffi::OsString::from_vec(prefixed)))
+    }
+
+    fn percent_decode(input: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(input.len());
+        let mut i = 0;
+        while i < input.len() {
+            if input[i] == b'%'
+                && i + 2 < input.len()
+                && let (Some(hi), Some(lo)) = (hex_val(input[i + 1]), hex_val(input[i + 2]))
+            {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+            out.push(input[i]);
+            i += 1;
+        }
+        out
+    }
+
+    fn hex_val(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    pub(super) fn decode_data_url(url: &str) -> Option<Vec<u8>> {
+        let rest = url.strip_prefix("data:image/")?;
+        let (meta, payload) = rest.split_once(',')?;
+        if !meta.ends_with(";base64") {
+            return None;
+        }
+        // Check encoded length before allocating (`ART_MAX_BYTES` cap).
+        let max_encoded = (ART_MAX_BYTES as usize).div_ceil(3) * 4 + 4;
+        if payload.len() > max_encoded {
+            return None;
+        }
+        let decoded = base64_decode(payload)?;
+        (decoded.len() as u64 <= ART_MAX_BYTES).then_some(decoded)
+    }
+
+    fn base64_decode(input: &str) -> Option<Vec<u8>> {
+        let mut buf: u32 = 0;
+        let mut bits: u8 = 0;
+        let mut out = Vec::with_capacity(input.len() * 3 / 4);
+        for &b in input.as_bytes() {
+            if b.is_ascii_whitespace() {
+                continue;
+            }
+            if b == b'=' {
+                break;
+            }
+            let val = match b {
+                b'A'..=b'Z' => b - b'A',
+                b'a'..=b'z' => b - b'a' + 26,
+                b'0'..=b'9' => b - b'0' + 52,
+                b'+' | b'-' => 62,
+                b'/' | b'_' => 63,
+                _ => return None,
+            };
+            buf = (buf << 6) | u32::from(val);
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push((buf >> bits) as u8);
+            }
+        }
+        Some(out)
+    }
+
+    fn read_limited_bytes(reader: impl Read) -> Option<Vec<u8>> {
+        let mut bytes = Vec::new();
+        reader.take(ART_MAX_BYTES + 1).read_to_end(&mut bytes).ok()?;
+        (bytes.len() as u64 <= ART_MAX_BYTES).then_some(bytes)
+    }
+
+    fn read_file_bytes(path: &Path) -> Option<Vec<u8>> {
+        let meta = std::fs::metadata(path).ok()?;
+        if meta.len() > ART_MAX_BYTES {
+            return None;
+        }
+        read_limited_bytes(File::open(path).ok()?)
+    }
+
+    fn read_https_bytes(url: &str) -> Option<Vec<u8>> {
+        let agent: ureq::Agent = ureq::Agent::config_builder().https_only(true).timeout_global(Some(Duration::from_secs(5))).build().into();
+        let mut resp = agent.get(url).header("User-Agent", concat!("Sky-Island/", env!("CARGO_PKG_VERSION"))).call().ok()?;
+        read_limited_bytes(resp.body_mut().as_reader())
+    }
+
+    fn read_mpris_art(url: &str) -> Option<Vec<u8>> {
+        let bytes = match classify_art_url(url)? {
+            ArtSource::File(u) => read_file_bytes(&file_url_to_path(u)?)?,
+            ArtSource::Https(u) => read_https_bytes(u)?,
+            ArtSource::Data(u) => decode_data_url(u)?,
+        };
+        let img = decode_art(&bytes)?;
+        Some(cover_square(img).to_rgba8().into_raw())
+    }
 }
 
 #[cfg(test)]
@@ -644,5 +1121,53 @@ mod tests {
         assert_eq!(clip_meta("Short"), "Short");
         let cut = clip_meta(&"\u{4E2D}".repeat(100_000));
         assert_eq!(cut.chars().count(), MAX_META_CHARS);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mpris_micros_and_art_url_parsing() {
+        use mpris::{ArtSource, Snapshot, Status, classify_art_url, decode_data_url, file_url_to_path, micros_to_duration, pick_player_index};
+
+        assert_eq!(micros_to_duration(-50), Duration::ZERO);
+        assert_eq!(micros_to_duration(2_500_000), Duration::from_millis(2500));
+
+        assert_eq!(file_url_to_path("file:///home/user/My%20Music/cover.png").unwrap(), std::path::PathBuf::from("/home/user/My Music/cover.png"));
+        assert_eq!(file_url_to_path("file://localhost/tmp/a%C3%A9.jpg").unwrap(), std::path::PathBuf::from("/tmp/a\u{e9}.jpg"));
+        assert!(file_url_to_path("https://example.com/a.png").is_none());
+
+        assert_eq!(classify_art_url("file:///a.png"), Some(ArtSource::File("file:///a.png")));
+        assert_eq!(classify_art_url("https://cdn.example/a.jpg"), Some(ArtSource::Https("https://cdn.example/a.jpg")));
+        assert_eq!(classify_art_url("data:image/png;base64,AAAA"), Some(ArtSource::Data("data:image/png;base64,AAAA")));
+        assert_eq!(classify_art_url("http://insecure.example/a.jpg"), None);
+        assert_eq!(classify_art_url("ftp://example/a.jpg"), None);
+
+        assert_eq!(decode_data_url("data:image/png;base64,aGVsbG8=").as_deref(), Some(b"hello".as_slice()));
+        assert!(decode_data_url("data:text/plain;base64,aGVsbG8=").is_none());
+        assert!(decode_data_url("data:image/png;base64,!!!").is_none());
+
+        let snap = |bus: &str, status: Status, title: &str| Snapshot {
+            bus: bus.into(),
+            status,
+            title: title.into(),
+            artist: String::new(),
+            album: String::new(),
+            duration: Duration::ZERO,
+            position: Duration::ZERO,
+            art_url: None,
+            track_id: None,
+            can_next: false,
+            can_prev: false,
+            can_seek: false,
+        };
+        let list = [
+            snap("org.mpris.MediaPlayer2.brave", Status::Stopped, ""),
+            snap("org.mpris.MediaPlayer2.vlc", Status::Paused, "Track A"),
+            snap("org.mpris.MediaPlayer2.spotify", Status::Playing, "Track B"),
+        ];
+        assert_eq!(pick_player_index(&list, Some("org.mpris.MediaPlayer2.vlc")), Some(2));
+        let paused_only = [snap("org.mpris.MediaPlayer2.a", Status::Paused, "A"), snap("org.mpris.MediaPlayer2.b", Status::Paused, "B")];
+        assert_eq!(pick_player_index(&paused_only, Some("org.mpris.MediaPlayer2.a")), Some(0));
+        let empty_stopped = [snap("org.mpris.MediaPlayer2.brave", Status::Stopped, "")];
+        assert_eq!(pick_player_index(&empty_stopped, None), None);
     }
 }
