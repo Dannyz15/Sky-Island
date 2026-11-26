@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 #[cfg(any(windows, target_os = "linux", test))]
 use std::time::Duration;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 use std::time::Instant;
 
 #[cfg(windows)]
@@ -122,7 +122,13 @@ pub fn spawn_all(proxy: Proxy) {
     }
     #[cfg(target_os = "linux")]
     {
-        thread::spawn(move || linux::audio(proxy));
+        let p = proxy.clone();
+        thread::spawn(move || linux::audio(p));
+        let p = proxy.clone();
+        thread::spawn(move || linux::battery(p));
+        let p = proxy.clone();
+        thread::spawn(move || linux::brightness(p));
+        thread::spawn(move || linux::network(proxy));
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     let _ = proxy;
@@ -616,6 +622,392 @@ mod linux {
             });
         }
     }
+
+    // ---- Battery ----
+
+    pub(super) fn read_power_supply_dir(dir: &std::path::Path) -> Option<(u8, u8)> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        let mut has_battery = false;
+        let mut any_charging = false;
+        let mut any_discharging = false;
+        let mut mains_online: Option<bool> = None;
+        let mut energy_now_sum: u64 = 0;
+        let mut energy_full_sum: u64 = 0;
+        let mut charge_now_sum: u64 = 0;
+        let mut charge_full_sum: u64 = 0;
+        let mut cap_sum: u64 = 0;
+        let mut cap_count: u64 = 0;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = std::fs::read_to_string(path.join("type")) else { continue };
+            let kind = kind.trim();
+            if let Ok(scope) = std::fs::read_to_string(path.join("scope"))
+                && scope.trim().eq_ignore_ascii_case("Device")
+            {
+                continue;
+            }
+            match kind {
+                "Battery" => {
+                    if let Ok(present) = std::fs::read_to_string(path.join("present"))
+                        && present.trim() == "0"
+                    {
+                        continue;
+                    }
+                    has_battery = true;
+                    if let Ok(status) = std::fs::read_to_string(path.join("status")) {
+                        match status.trim() {
+                            "Charging" | "Full" => any_charging = true,
+                            "Discharging" => any_discharging = true,
+                            _ => {}
+                        }
+                    }
+                    if let (Ok(now_s), Ok(full_s)) = (std::fs::read_to_string(path.join("energy_now")), std::fs::read_to_string(path.join("energy_full")))
+                        && let (Ok(now), Ok(full)) = (now_s.trim().parse::<u64>(), full_s.trim().parse::<u64>())
+                        && full > 0
+                    {
+                        energy_now_sum = energy_now_sum.saturating_add(now);
+                        energy_full_sum = energy_full_sum.saturating_add(full);
+                    }
+                    if let (Ok(now_s), Ok(full_s)) = (std::fs::read_to_string(path.join("charge_now")), std::fs::read_to_string(path.join("charge_full")))
+                        && let (Ok(now), Ok(full)) = (now_s.trim().parse::<u64>(), full_s.trim().parse::<u64>())
+                        && full > 0
+                    {
+                        charge_now_sum = charge_now_sum.saturating_add(now);
+                        charge_full_sum = charge_full_sum.saturating_add(full);
+                    }
+                    if let Ok(cap_s) = std::fs::read_to_string(path.join("capacity"))
+                        && let Ok(cap) = cap_s.trim().parse::<u64>()
+                    {
+                        cap_sum = cap_sum.saturating_add(cap);
+                        cap_count += 1;
+                    }
+                }
+                "Mains" | "USB" => {
+                    if let Ok(online) = std::fs::read_to_string(path.join("online")) {
+                        match online.trim() {
+                            "1" => mains_online = Some(true),
+                            "0" if mains_online != Some(true) => mains_online = Some(false),
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !has_battery {
+            return None;
+        }
+        let rounded_ratio = |num: u64, den: u64| num.saturating_add(den / 2).checked_div(den).map(|v| v.min(100) as u8);
+        let percent = if cap_count == 1 {
+            cap_sum.min(100) as u8
+        } else {
+            rounded_ratio(energy_now_sum.saturating_mul(100), energy_full_sum)
+                .or_else(|| rounded_ratio(charge_now_sum.saturating_mul(100), charge_full_sum))
+                .or_else(|| rounded_ratio(cap_sum, cap_count))
+                .unwrap_or(255)
+        };
+        let ac = match mains_online {
+            Some(true) => 1,
+            Some(false) => 0,
+            None => {
+                if any_charging {
+                    1
+                } else if any_discharging {
+                    0
+                } else {
+                    255
+                }
+            }
+        };
+        Some((ac, percent))
+    }
+
+    pub(super) fn battery(proxy: Proxy) {
+        let root = std::path::Path::new("/sys/class/power_supply");
+        let Some((ac, percent)) = read_power_supply_dir(root) else {
+            return;
+        };
+        let mut watch = BatteryWatch { ac: None, percent: None };
+        let _ = watch.look(ac, percent);
+
+        let mut check = || {
+            let Some((ac, percent)) = read_power_supply_dir(root) else { return };
+            for kind in watch.look(ac, percent) {
+                send(&proxy, Notice::Battery { percent: percent as u32, kind });
+            }
+        };
+
+        if let Ok(conn) = zbus::blocking::Connection::system()
+            && let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn)
+            && zbus::names::BusName::try_from("org.freedesktop.UPower").ok().and_then(|n| dbus.name_has_owner(n).ok()).unwrap_or(false)
+            && let Ok(rule) = zbus::MatchRule::try_from("type='signal',sender='org.freedesktop.UPower',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'")
+            && dbus.add_match_rule(rule).is_ok()
+        {
+            for item in zbus::blocking::MessageIterator::from(&conn) {
+                let Ok(msg) = item else { break };
+                if msg.header().message_type() == zbus::message::Type::Signal {
+                    check();
+                }
+            }
+        }
+
+        loop {
+            thread::sleep(BATTERY_POLL);
+            check();
+        }
+    }
+
+    // ---- Brightness ----
+
+    pub(super) fn pick_backlight_dir(root: &std::path::Path) -> Option<std::path::PathBuf> {
+        let entries = std::fs::read_dir(root).ok()?;
+        let mut best: Option<(u8, String, std::path::PathBuf)> = None;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(max_s) = std::fs::read_to_string(path.join("max_brightness")) else { continue };
+            let Ok(max) = max_s.trim().parse::<u64>() else { continue };
+            if max == 0 {
+                continue;
+            }
+            if std::fs::read_to_string(path.join("brightness")).or_else(|_| std::fs::read_to_string(path.join("actual_brightness"))).is_err() {
+                continue;
+            }
+            let rank = match std::fs::read_to_string(path.join("type")).ok().as_deref().map(str::trim) {
+                Some("raw") => 3,
+                Some("platform") => 2,
+                Some("firmware") => 1,
+                _ => 0,
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let replace = match &best {
+                None => true,
+                Some((best_rank, best_name, _)) => rank > *best_rank || (rank == *best_rank && name < *best_name),
+            };
+            if replace {
+                best = Some((rank, name, path));
+            }
+        }
+        best.map(|(_, _, path)| path)
+    }
+
+    pub(super) fn read_backlight_percent(dir: &std::path::Path) -> Option<u32> {
+        let max = std::fs::read_to_string(dir.join("max_brightness")).ok()?.trim().parse::<u64>().ok()?;
+        if max == 0 {
+            return None;
+        }
+        let cur_s = std::fs::read_to_string(dir.join("brightness")).or_else(|_| std::fs::read_to_string(dir.join("actual_brightness"))).ok()?;
+        let cur = cur_s.trim().parse::<u64>().ok()?;
+        Some(((cur.saturating_mul(100) + max / 2) / max).min(100) as u32)
+    }
+
+    pub(super) fn brightness(proxy: Proxy) {
+        let Some(dir) = pick_backlight_dir(std::path::Path::new("/sys/class/backlight")) else {
+            return;
+        };
+        let Some(first) = read_backlight_percent(&dir) else {
+            return;
+        };
+        let mut seen = Seen::new(first, Instant::now());
+        let mut quick_until = Instant::now();
+        loop {
+            let quick_left = quick_until.saturating_duration_since(Instant::now());
+            thread::sleep(brightness_interval(quick_left));
+            let Some(now) = read_backlight_percent(&dir) else { break };
+            let at = Instant::now();
+            if seen.look(now, at) {
+                send(&proxy, Notice::Brightness { percent: now });
+                quick_until = at + BRIGHTNESS_QUICK_FOR;
+            } else if seen.held.is_some() {
+                quick_until = at + BRIGHTNESS_QUICK_FOR;
+            }
+        }
+    }
+
+    // ---- Network ----
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(super) struct NetState {
+        pub(super) connected: bool,
+        pub(super) name: String,
+        pub(super) wifi: bool,
+    }
+
+    pub(super) fn is_nm_wifi(conn_type: &str) -> bool {
+        conn_type == "802-11-wireless"
+    }
+
+    pub(super) fn net_state_changed(prev: &NetState, now: &NetState) -> bool {
+        (prev.connected, &prev.name) != (now.connected, &now.name)
+    }
+
+    pub(super) fn parse_default_route_v4(proc_route: &str) -> Option<String> {
+        let mut best: Option<(u32, String)> = None;
+        for line in proc_route.lines().skip(1) {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            if cols.len() < 8 {
+                continue;
+            }
+            let iface = cols[0];
+            if iface == "lo" || cols[1] != "00000000" || cols[7] != "00000000" {
+                continue;
+            }
+            let Ok(flags) = u32::from_str_radix(cols[3], 16) else { continue };
+            if flags & 0x1 == 0 {
+                continue;
+            }
+            let metric = cols[6].parse::<u32>().unwrap_or(u32::MAX);
+            if best.as_ref().is_none_or(|(m, _)| metric < *m) {
+                best = Some((metric, iface.to_string()));
+            }
+        }
+        best.map(|(_, iface)| iface)
+    }
+
+    pub(super) fn parse_iw_ssid(iw_output: &str) -> Option<String> {
+        for line in iw_output.lines() {
+            if let Some(ssid) = line.trim().strip_prefix("SSID:") {
+                let ssid = ssid.trim();
+                if !ssid.is_empty() {
+                    return Some(ssid.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    fn read_nm_state(conn: &zbus::blocking::Connection) -> Option<NetState> {
+        use std::collections::HashMap;
+        use zbus::zvariant::{OwnedValue, Value};
+
+        let msg = conn
+            .call_method(
+                Some("org.freedesktop.NetworkManager"),
+                "/org/freedesktop/NetworkManager",
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.freedesktop.NetworkManager", "State"),
+            )
+            .ok()?;
+        let state_val: OwnedValue = msg.body().deserialize().ok()?;
+        let state = u32::try_from(&*state_val).ok()?;
+        if state < 60 {
+            return Some(NetState { connected: false, name: String::new(), wifi: false });
+        }
+        let msg = conn
+            .call_method(
+                Some("org.freedesktop.NetworkManager"),
+                "/org/freedesktop/NetworkManager",
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.freedesktop.NetworkManager", "PrimaryConnection"),
+            )
+            .ok()?;
+        let pc_val: OwnedValue = msg.body().deserialize().ok()?;
+        let primary_path = match &*pc_val {
+            Value::ObjectPath(p) => p.as_str().to_string(),
+            _ => return None,
+        };
+        if primary_path.is_empty() || primary_path == "/" {
+            return Some(NetState { connected: false, name: String::new(), wifi: false });
+        }
+        let msg = conn
+            .call_method(
+                Some("org.freedesktop.NetworkManager"),
+                primary_path.as_str(),
+                Some("org.freedesktop.DBus.Properties"),
+                "GetAll",
+                &("org.freedesktop.NetworkManager.Connection.Active"),
+            )
+            .ok()?;
+        let props: HashMap<String, OwnedValue> = msg.body().deserialize().ok()?;
+        let name = match props.get("Id").map(|v| &**v) {
+            Some(Value::Str(s)) => s.to_string(),
+            _ => String::new(),
+        };
+        let ty = match props.get("Type").map(|v| &**v) {
+            Some(Value::Str(s)) => s.to_string(),
+            _ => String::new(),
+        };
+        Some(NetState { connected: true, name, wifi: is_nm_wifi(&ty) })
+    }
+
+    fn read_proc_net_state() -> NetState {
+        let Ok(route) = std::fs::read_to_string("/proc/net/route") else {
+            return NetState { connected: false, name: String::new(), wifi: false };
+        };
+        let Some(iface) = parse_default_route_v4(&route) else {
+            return NetState { connected: false, name: String::new(), wifi: false };
+        };
+        let sys = std::path::Path::new("/sys/class/net").join(&iface);
+        let wifi = sys.join("wireless").exists() || sys.join("phy80211").exists();
+        let name = if wifi {
+            Command::new("iw")
+                .args(["dev", &iface, "link"])
+                .env("LC_ALL", "C")
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| parse_iw_ssid(&String::from_utf8_lossy(&o.stdout)))
+                .unwrap_or(iface)
+        } else {
+            iface
+        };
+        NetState { connected: true, name, wifi }
+    }
+
+    pub(super) fn network(proxy: Proxy) {
+        let mut last = read_proc_net_state();
+
+        if let Ok(conn) = zbus::blocking::Connection::system()
+            && let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn)
+            && zbus::names::BusName::try_from("org.freedesktop.NetworkManager").ok().and_then(|n| dbus.name_has_owner(n).ok()).unwrap_or(false)
+        {
+            if let Some(nm_initial) = read_nm_state(&conn) {
+                last = nm_initial;
+            }
+            let rules = [
+                "type='signal',sender='org.freedesktop.NetworkManager',path='/org/freedesktop/NetworkManager',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'",
+                "type='signal',sender='org.freedesktop.NetworkManager',path='/org/freedesktop/NetworkManager',interface='org.freedesktop.NetworkManager',member='StateChanged'",
+            ];
+            let mut subscribed = true;
+            for r in rules {
+                if let Ok(rule) = zbus::MatchRule::try_from(r) {
+                    if dbus.add_match_rule(rule).is_err() {
+                        subscribed = false;
+                        break;
+                    }
+                } else {
+                    subscribed = false;
+                    break;
+                }
+            }
+            if subscribed {
+                for item in zbus::blocking::MessageIterator::from(&conn) {
+                    let Ok(msg) = item else { break };
+                    if msg.header().message_type() == zbus::message::Type::Signal
+                        && let Some(now) = read_nm_state(&conn)
+                        && net_state_changed(&last, &now)
+                    {
+                        send(&proxy, Notice::Network { connected: now.connected, name: now.name.clone(), wifi: now.wifi });
+                        last = now;
+                    }
+                }
+            }
+        }
+
+        loop {
+            thread::sleep(Duration::from_secs(2));
+            let now = read_proc_net_state();
+            if net_state_changed(&last, &now) {
+                send(&proxy, Notice::Network { connected: now.connected, name: now.name.clone(), wifi: now.wifi });
+                last = now;
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -624,17 +1016,17 @@ pub(crate) use linux::kill_on_parent_exit;
 // ---- Battery ----
 
 /// How often the battery is looked at if Windows cannot tell the app when its state changes.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const BATTERY_POLL: Duration = Duration::from_secs(3);
 
 /// What the battery looked like at the last look, to tell what changed.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 struct BatteryWatch {
     ac: Option<u8>,
     percent: Option<u32>,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 impl BatteryWatch {
     /// The notices that a new look calls for: one when the charger is plugged in or pulled out, and one as
     /// the charge falls through 20, 10 and 5 percent while unplugged. `ac` and `percent` are Windows' own
@@ -724,28 +1116,28 @@ unsafe extern "system" fn power_proc(window: HWND, message: u32, wparam: WPARAM,
 
 /// How often the brightness is read: quickly for a few seconds after a change so a dragged slider is followed,
 /// slowly otherwise (only when Windows cannot tell the app about changes; see `brightness`).
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const BRIGHTNESS_IDLE: Duration = Duration::from_millis(300);
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const BRIGHTNESS_QUICK: Duration = Duration::from_millis(50);
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 const BRIGHTNESS_QUICK_FOR: Duration = Duration::from_secs(3);
 /// While a slider is dragged, Windows can report the previous step again for a moment (up to about 0.2 s once
 /// the drag ends). A reading that goes against the way the brightness was just moving is only believed after it
 /// has stayed this long. A change after the brightness has been still for `BRIGHTNESS_STILL` is believed at once.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const BRIGHTNESS_TURN_HOLD: Duration = Duration::from_millis(250);
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const BRIGHTNESS_STILL: Duration = Duration::from_secs(1);
 
 /// How long to wait before reading the brightness again, given how much of the "quick" period is left.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn brightness_interval(quick_left: Duration) -> Duration {
     if quick_left.is_zero() { BRIGHTNESS_IDLE } else { BRIGHTNESS_QUICK }
 }
 
 /// What the brightness has been doing, to tell a real change from a step-old reading.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 struct Seen {
     last: u32,
     /// 1 when the last change went up, -1 when it went down, 0 before any.
@@ -755,7 +1147,7 @@ struct Seen {
     held: Option<(u32, Instant)>,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 impl Seen {
     fn new(first: u32, at: Instant) -> Self {
         Seen { last: first, heading: 0, moved: at, held: None }
@@ -1230,5 +1622,113 @@ Sink #11
 
         let usb = linux::SinkInfo { name: "sink.usb".into(), description: "USB DAC".into(), active_port: "analog-output".into(), percent: 80, muted: true, headphones: false };
         assert_eq!(tracker.observe(&usb), linux::AudioDelta::OutputChanged { name: "USB DAC".into(), headphones: false, percent: 80, muted: true });
+    }
+
+    #[cfg(target_os = "linux")]
+    fn fresh_temp_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("sky-island-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn power_supply_reader_handles_desktop_single_and_dual_batteries() {
+        let root = fresh_temp_dir("ps");
+        assert_eq!(linux::read_power_supply_dir(&root), None);
+
+        let mouse = root.join("hid-mouse");
+        std::fs::create_dir_all(&mouse).unwrap();
+        std::fs::write(mouse.join("type"), "Battery\n").unwrap();
+        std::fs::write(mouse.join("scope"), "Device\n").unwrap();
+        std::fs::write(mouse.join("capacity"), "15\n").unwrap();
+        assert_eq!(linux::read_power_supply_dir(&root), None, "device-scoped peripherals are ignored");
+
+        let ac = root.join("AC");
+        let bat0 = root.join("BAT0");
+        std::fs::create_dir_all(&ac).unwrap();
+        std::fs::create_dir_all(&bat0).unwrap();
+        std::fs::write(ac.join("type"), "Mains\n").unwrap();
+        std::fs::write(ac.join("online"), "1\n").unwrap();
+        std::fs::write(bat0.join("type"), "Battery\n").unwrap();
+        std::fs::write(bat0.join("present"), "1\n").unwrap();
+        std::fs::write(bat0.join("status"), "Not charging\n").unwrap();
+        std::fs::write(bat0.join("capacity"), "89\n").unwrap();
+        assert_eq!(linux::read_power_supply_dir(&root), Some((1, 89)));
+
+        std::fs::write(ac.join("online"), "0\n").unwrap();
+        std::fs::write(bat0.join("capacity"), "42\n").unwrap();
+        assert_eq!(linux::read_power_supply_dir(&root), Some((0, 42)));
+
+        let _ = std::fs::remove_dir_all(&ac);
+        let bat1 = root.join("BAT1");
+        std::fs::create_dir_all(&bat1).unwrap();
+        std::fs::write(bat0.join("status"), "Discharging\n").unwrap();
+        std::fs::write(bat0.join("energy_now"), "1000\n").unwrap();
+        std::fs::write(bat0.join("energy_full"), "2000\n").unwrap();
+        std::fs::write(bat1.join("type"), "Battery\n").unwrap();
+        std::fs::write(bat1.join("status"), "Discharging\n").unwrap();
+        std::fs::write(bat1.join("energy_now"), "1000\n").unwrap();
+        std::fs::write(bat1.join("energy_full"), "6000\n").unwrap();
+        std::fs::write(bat1.join("capacity"), "17\n").unwrap();
+        // (1000 + 1000) / (2000 + 6000) = 25% weighted by energy, and status-based AC=0 without Mains.
+        assert_eq!(linux::read_power_supply_dir(&root), Some((0, 25)));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn backlight_picker_prefers_raw_and_rounds_percent() {
+        let root = fresh_temp_dir("bl");
+        assert_eq!(linux::pick_backlight_dir(&root), None);
+
+        let broken = root.join("broken");
+        std::fs::create_dir_all(&broken).unwrap();
+        std::fs::write(broken.join("type"), "raw\n").unwrap();
+        std::fs::write(broken.join("max_brightness"), "0\n").unwrap();
+        std::fs::write(broken.join("brightness"), "0\n").unwrap();
+
+        let firmware = root.join("acpi_video0");
+        std::fs::create_dir_all(&firmware).unwrap();
+        std::fs::write(firmware.join("type"), "firmware\n").unwrap();
+        std::fs::write(firmware.join("max_brightness"), "100\n").unwrap();
+        std::fs::write(firmware.join("brightness"), "50\n").unwrap();
+
+        let raw = root.join("amdgpu_bl1");
+        std::fs::create_dir_all(&raw).unwrap();
+        std::fs::write(raw.join("type"), "raw\n").unwrap();
+        std::fs::write(raw.join("max_brightness"), "65535\n").unwrap();
+        std::fs::write(raw.join("brightness"), "52428\n").unwrap();
+
+        let picked = linux::pick_backlight_dir(&root).unwrap();
+        assert_eq!(picked, raw);
+        assert_eq!(linux::read_backlight_percent(&picked), Some(80));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn network_route_and_ssid_parsers() {
+        let route = "\
+Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+docker0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0
+lo\t00000000\t0100007F\t0003\t0\t0\t10\t00000000\t0\t0\t0
+wlp3s0\t00000000\t0100A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0
+enp2s0\t00000000\t0100A8C0\t0003\t0\t0\t700\t00000000\t0\t0\t0
+";
+        assert_eq!(linux::parse_default_route_v4(route).as_deref(), Some("wlp3s0"));
+        assert_eq!(linux::parse_iw_ssid("Connected to 00:11:22:33:44:55 (on wlp3s0)\n\tSSID: ritaudin@unifi-5G\n\tfreq: 5200.0\n").as_deref(), Some("ritaudin@unifi-5G"));
+        assert_eq!(linux::parse_iw_ssid("Not connected.\n"), None);
+        assert!(linux::is_nm_wifi("802-11-wireless"));
+        assert!(!linux::is_nm_wifi("802-3-ethernet"));
+
+        let a = linux::NetState { connected: true, name: "HomeWiFi".into(), wifi: true };
+        let b = linux::NetState { connected: true, name: "HomeWiFi".into(), wifi: false };
+        let c = linux::NetState { connected: false, name: String::new(), wifi: false };
+        assert!(!linux::net_state_changed(&a, &b));
+        assert!(linux::net_state_changed(&a, &c));
     }
 }
