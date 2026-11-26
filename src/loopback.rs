@@ -7,13 +7,13 @@
 //! them). A moment after the last ask the thread closes the device and sleeps, so nothing runs while no song plays or
 //! while the notch is open.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::sync::OnceLock;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::thread;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
@@ -28,37 +28,37 @@ use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInst
 pub const BANDS: usize = 5;
 
 /// The FFT looks at this many samples at a time (about 43 ms of sound) and at a new look every `HOP` samples.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const FFT_N: usize = 2048;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const HOP: usize = 1024;
 
 /// The edges of the bands in hertz: bass, low middle, middle, high middle and treble.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const EDGES: [f32; BANDS + 1] = [45.0, 150.0, 450.0, 1400.0, 4200.0, 12000.0];
 /// Added to each band's loudness, in decibels. Music has far more energy low down than high up, and without this the
 /// bars on the right would hardly ever move.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const TILT_DB: [f32; BANDS] = [-2.0, 0.0, 2.0, 4.0, 6.0];
 
 /// How many decibels the bars span, from the loudest band (full height) down to the quietest that still shows.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const RANGE_DB: f32 = 34.0;
 /// The loudest band is never taken to be quieter than this, so a hiss or a very quiet room does not fill the bars.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const TOP_FLOOR_DB: f32 = -35.0;
 /// How fast what counts as loud forgets a loud passage, decibels a second.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const TOP_FALL_DB: f32 = 4.0;
 /// How long a bar takes to fall to about a third of its height once the sound stops.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const FALL_SECS: f32 = 0.12;
 /// How much of the way to a louder reading a bar goes at once.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const RISE: f32 = 0.75;
 
 /// The levels of the five bands, 0 to 1, made from a stream of mono samples.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 pub struct Analyser {
     rate: f32,
     /// The last `FFT_N` samples, written round and round.
@@ -77,7 +77,7 @@ pub struct Analyser {
     levels: [f32; BANDS],
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 impl Analyser {
     pub fn new(rate: u32) -> Self {
         let rate = rate.max(8000) as f32;
@@ -145,7 +145,7 @@ impl Analyser {
 }
 
 /// cos and sin of -2 pi k / `FFT_N`, for the FFT.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn twiddles() -> Vec<(f32, f32)> {
     (0..FFT_N / 2)
         .map(|k| {
@@ -156,7 +156,7 @@ fn twiddles() -> Vec<(f32, f32)> {
 }
 
 /// A plain radix-2 FFT of `re` and `im` (their length a power of two, `twiddle` made for it).
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn fft(re: &mut [f32], im: &mut [f32], twiddle: &[(f32, f32)]) {
     let n = re.len();
     let mut j = 0;
@@ -488,12 +488,269 @@ mod win {
 #[cfg(windows)]
 pub use win::{listen, warm};
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::*;
+    use std::io::Read;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+
+    const RATE: u32 = 48_000;
+    const STARTING: u8 = 0;
+    const LISTENING: u8 = 1;
+    const FAILED: u8 = 2;
+
+    const GRACE_MS: u64 = 1_500;
+    const RETRY: Duration = Duration::from_secs(10);
+    const POLL: Duration = Duration::from_millis(20);
+    const CHECK_DEFAULT: Duration = Duration::from_secs(1);
+
+    /// Resolve a sink name into its PipeWire/PulseAudio monitor source.
+    pub(super) fn monitor_for_sink(sink: Option<&str>) -> String {
+        match sink.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(name) => format!("{name}.monitor"),
+            None => "@DEFAULT_MONITOR@".to_string(),
+        }
+    }
+
+    /// Decode little-endian `f32` mono samples across arbitrary pipe read boundaries.
+    pub(super) fn decode_f32le_chunk(bytes: &[u8], carry: &mut [u8; 4], carry_len: &mut usize, out: &mut Vec<f32>) {
+        let mut rest = bytes;
+        if *carry_len > 0 {
+            let need = 4 - *carry_len;
+            if rest.len() < need {
+                carry[*carry_len..*carry_len + rest.len()].copy_from_slice(rest);
+                *carry_len += rest.len();
+                return;
+            }
+            carry[*carry_len..4].copy_from_slice(&rest[..need]);
+            out.push(f32::from_le_bytes(*carry));
+            *carry_len = 0;
+            rest = &rest[need..];
+        }
+        let (chunks, rem) = rest.as_chunks::<4>();
+        for &chunk in chunks {
+            out.push(f32::from_le_bytes(chunk));
+        }
+        if !rem.is_empty() {
+            carry[..rem.len()].copy_from_slice(rem);
+            *carry_len = rem.len();
+        }
+    }
+
+    fn default_sink() -> Option<String> {
+        let out = Command::new("pactl").arg("get-default-sink").env("LC_ALL", "C").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!name.is_empty()).then_some(name)
+    }
+
+    struct Capture {
+        sink: Option<String>,
+        child: Child,
+        rx: Receiver<Vec<u8>>,
+        reader: Option<thread::JoinHandle<()>>,
+    }
+
+    impl Capture {
+        fn open() -> Option<Self> {
+            let sink = default_sink();
+            let monitor = monitor_for_sink(sink.as_deref());
+            let mut cmd = Command::new("parec");
+            cmd.args(["--raw", "-d", &monitor, "--rate=48000", "--format=float32le", "--channels=1", "--latency-msec=25", "--client-name=Sky Island", "--stream-name=Sound Bars"])
+                .env("LC_ALL", "C")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            crate::sys::kill_on_parent_exit(&mut cmd);
+            let mut child = cmd.spawn().ok()?;
+            let mut stdout = child.stdout.take()?;
+            let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(8);
+            let reader = thread::Builder::new()
+                .name("loopback-read".into())
+                .spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        match stdout.read(&mut buf) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                if let Err(mpsc::TrySendError::Disconnected(_)) = tx.try_send(buf[..n].to_vec()) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                })
+                .ok()?;
+            Some(Self { sink, child, rx, reader: Some(reader) })
+        }
+
+        fn still_default(&self) -> bool {
+            let Some(ref id) = self.sink else {
+                return true;
+            };
+            default_sink().is_none_or(|now| &now == id)
+        }
+    }
+
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            if let Some(reader) = self.reader.take() {
+                let _ = reader.join();
+            }
+        }
+    }
+
+    struct Shared {
+        levels: [AtomicU32; BANDS],
+        asked: AtomicU64,
+        state: AtomicU8,
+        asleep: AtomicBool,
+        worked: AtomicBool,
+    }
+
+    static SHARED: Shared = Shared {
+        levels: [const { AtomicU32::new(0) }; BANDS],
+        asked: AtomicU64::new(0),
+        state: AtomicU8::new(STARTING),
+        asleep: AtomicBool::new(false),
+        worked: AtomicBool::new(false),
+    };
+    static THREAD: OnceLock<thread::Thread> = OnceLock::new();
+    static CLOCK: OnceLock<Instant> = OnceLock::new();
+
+    fn now_ms() -> u64 {
+        CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
+    }
+
+    fn wanted() -> bool {
+        let asked = SHARED.asked.load(Ordering::SeqCst);
+        asked != 0 && now_ms().saturating_sub(asked) <= GRACE_MS
+    }
+
+    pub fn listen() -> Option<[f32; BANDS]> {
+        SHARED.asked.store(now_ms(), Ordering::SeqCst);
+        let thread = THREAD.get_or_init(|| thread::Builder::new().name("loopback".into()).spawn(run).map(|h| h.thread().clone()).unwrap_or_else(|_| thread::current()));
+        if SHARED.asleep.swap(false, Ordering::SeqCst) {
+            thread.unpark();
+        }
+        match SHARED.state.load(Ordering::Relaxed) {
+            LISTENING => {}
+            STARTING if SHARED.worked.load(Ordering::Relaxed) => {}
+            _ => return None,
+        }
+        Some(std::array::from_fn(|i| f32::from_bits(SHARED.levels[i].load(Ordering::Relaxed))))
+    }
+
+    pub fn warm() {}
+
+    fn publish(levels: [f32; BANDS]) {
+        levels.iter().zip(&SHARED.levels).for_each(|(l, slot)| slot.store(l.to_bits(), Ordering::Relaxed));
+    }
+
+    fn run() {
+        loop {
+            while !wanted() {
+                SHARED.state.store(STARTING, Ordering::Relaxed);
+                publish([0.0; BANDS]);
+                SHARED.asleep.store(true, Ordering::SeqCst);
+                if wanted() {
+                    SHARED.asleep.store(false, Ordering::SeqCst);
+                    break;
+                }
+                thread::park();
+            }
+            let Some(capture) = Capture::open() else {
+                SHARED.state.store(FAILED, Ordering::Relaxed);
+                thread::park_timeout(RETRY);
+                continue;
+            };
+            let mut analyser = Analyser::new(RATE);
+            let mut samples = Vec::with_capacity(4096);
+            let mut carry = [0u8; 4];
+            let mut carry_len = 0usize;
+            let mut got_audio = false;
+            let mut failed = false;
+            let mut last = Instant::now();
+            let mut checked = last;
+            while wanted() {
+                samples.clear();
+                let mut disconnected = false;
+                match capture.rx.recv_timeout(POLL) {
+                    Ok(chunk) => {
+                        if !got_audio {
+                            got_audio = true;
+                            SHARED.state.store(LISTENING, Ordering::Relaxed);
+                            SHARED.worked.store(true, Ordering::Relaxed);
+                        }
+                        decode_f32le_chunk(&chunk, &mut carry, &mut carry_len, &mut samples);
+                    }
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => disconnected = true,
+                }
+                loop {
+                    match capture.rx.try_recv() {
+                        Ok(chunk) => {
+                            if !got_audio {
+                                got_audio = true;
+                                SHARED.state.store(LISTENING, Ordering::Relaxed);
+                                SHARED.worked.store(true, Ordering::Relaxed);
+                            }
+                            decode_f32le_chunk(&chunk, &mut carry, &mut carry_len, &mut samples);
+                        }
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => {
+                            disconnected = true;
+                            break;
+                        }
+                    }
+                }
+                if disconnected {
+                    if !got_audio {
+                        failed = true;
+                    }
+                    break;
+                }
+                let now = Instant::now();
+                if now.duration_since(checked) >= CHECK_DEFAULT {
+                    checked = now;
+                    if !capture.still_default() {
+                        break;
+                    }
+                }
+                if samples.is_empty() {
+                    analyser.idle(now.duration_since(last).as_secs_f32());
+                } else {
+                    analyser.push(&samples);
+                }
+                last = now;
+                publish(analyser.levels());
+            }
+            drop(capture);
+            publish([0.0; BANDS]);
+            if failed {
+                SHARED.state.store(FAILED, Ordering::Relaxed);
+                thread::park_timeout(RETRY);
+            } else {
+                SHARED.state.store(STARTING, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub use linux::{listen, warm};
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn listen() -> Option<[f32; BANDS]> {
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn warm() {}
 
 #[cfg(test)]
@@ -626,5 +883,36 @@ mod tests {
         out.clear();
         to_mono(&bytes[..6], 2, Sample::I16, 4, &mut out);
         assert_eq!(out.len(), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn monitor_name_falls_back_to_default_monitor() {
+        assert_eq!(linux::monitor_for_sink(Some("alsa_output.hdmi1")), "alsa_output.hdmi1.monitor");
+        assert_eq!(linux::monitor_for_sink(Some("  sink.usb \n")), "sink.usb.monitor");
+        assert_eq!(linux::monitor_for_sink(Some("   ")), "@DEFAULT_MONITOR@");
+        assert_eq!(linux::monitor_for_sink(None), "@DEFAULT_MONITOR@");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn f32le_chunk_decoder_handles_split_byte_boundaries() {
+        let expected = [0.25f32, -0.5f32, 0.75f32];
+        let raw: Vec<u8> = expected.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let mut out = Vec::new();
+        let mut carry = [0u8; 4];
+        let mut carry_len = 0;
+
+        linux::decode_f32le_chunk(&raw[..3], &mut carry, &mut carry_len, &mut out);
+        assert!(out.is_empty());
+        assert_eq!(carry_len, 3);
+
+        linux::decode_f32le_chunk(&raw[3..5], &mut carry, &mut carry_len, &mut out);
+        assert_eq!(out, vec![0.25]);
+        assert_eq!(carry_len, 1);
+
+        linux::decode_f32le_chunk(&raw[5..], &mut carry, &mut carry_len, &mut out);
+        assert_eq!(out, expected);
+        assert_eq!(carry_len, 0);
     }
 }
