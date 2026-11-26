@@ -7,6 +7,7 @@ use super::Image;
 /// Pictures with more pixels than this are not kept (an 8K screenshot has 33 million).
 const MAX_PIXELS: usize = 40 * 1024 * 1024;
 /// The most bytes of a picture read from the clipboard: that many pixels as an uncompressed bitmap.
+#[cfg(windows)]
 pub(super) const MAX_PICTURE_BYTES: usize = MAX_PIXELS * 4 + 4096;
 /// The most memory the decoding of a picture from another app may take: that many pixels at four bytes, and some room.
 const MAX_DECODE_BYTES: u64 = MAX_PIXELS as u64 * 4 + 32 * 1024 * 1024;

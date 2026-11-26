@@ -1,19 +1,32 @@
 //! Watches whether the user is at the computer and whether a full-screen app is in front.
 //! Runs on its own thread and only wakes the UI when one of them changes.
 
+#[cfg(windows)]
 use std::sync::OnceLock;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
 use std::thread::{self, Thread};
+#[cfg(any(windows, test))]
 use std::time::Duration;
 
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, RECT};
+#[cfg(windows)]
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
+#[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromWindow};
+#[cfg(windows)]
 use windows::Win32::System::SystemInformation::GetTickCount;
+#[cfg(windows)]
 use windows::Win32::System::Threading::GetCurrentProcessId;
+#[cfg(windows)]
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+#[cfg(windows)]
 use windows::Win32::UI::Shell::{QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EVENT_SYSTEM_FOREGROUND, GW_HWNDPREV, GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetMessageW, GetShellWindow, GetWindow, GetWindowLongPtrW, GetWindowRect,
     GetWindowThreadProcessId, HWND_TOPMOST, IsIconic, IsWindowVisible, IsZoomed, MSG, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, TranslateMessage,
@@ -24,8 +37,11 @@ use winit::event_loop::EventLoopProxy;
 use crate::UserEvent;
 
 /// No keyboard or mouse input for this long counts as idle, then as dozing.
+#[cfg(any(windows, test))]
 const IDLE_AFTER: Duration = Duration::from_secs(30);
+#[cfg(any(windows, test))]
 const DOZE_AFTER: Duration = Duration::from_secs(120);
+#[cfg(windows)]
 const POLL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -62,6 +78,7 @@ impl Fullscreen {
     }
 }
 
+#[cfg(any(windows, test))]
 pub fn classify(idle: Duration) -> Presence {
     if idle >= DOZE_AFTER {
         Presence::Dozing
@@ -73,11 +90,14 @@ pub fn classify(idle: Duration) -> Presence {
 }
 
 /// Set when another window came to the front, so the look at full screen is not left to the next tick.
+#[cfg(windows)]
 static FRONT_CHANGED: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
 static WATCHER: OnceLock<Thread> = OnceLock::new();
 
 /// `island` is the notch window's handle, which this thread also keeps in front (see `keep_in_front`).
 pub fn spawn(proxy: EventLoopProxy<UserEvent>, island: isize) {
+    #[cfg(windows)]
     thread::spawn(move || {
         let _ = WATCHER.set(thread::current());
         watch_foreground();
@@ -104,10 +124,13 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>, island: isize) {
             thread::park_timeout(POLL);
         }
     });
+    #[cfg(not(windows))]
+    let _ = (proxy, island);
 }
 
 /// Windows says when another window comes to the front; that wakes the thread above at once, so a full-screen
 /// app hides the notch (and leaving it brings the notch back) without waiting for the next look.
+#[cfg(windows)]
 fn watch_foreground() {
     unsafe extern "system" fn front_changed(_: HWINEVENTHOOK, _: u32, _: HWND, _: i32, _: i32, _: u32, _: u32) {
         FRONT_CHANGED.store(true, Ordering::Relaxed);
@@ -131,6 +154,7 @@ fn watch_foreground() {
 
 /// A number that changes when a screen is plugged in or out, moved or resized, or when the usable part of one
 /// changes (a taskbar docked somewhere else).
+#[cfg(windows)]
 fn screens() -> u64 {
     use std::hash::{DefaultHasher, Hash, Hasher};
     use windows::Win32::Foundation::{LPARAM, TRUE};
@@ -154,6 +178,7 @@ fn screens() -> u64 {
 }
 
 /// Whether two areas share any pixel.
+#[cfg(any(windows, test))]
 fn overlaps(a: Area, b: Area) -> bool {
     a.0 < b.2 && b.0 < a.2 && a.1 < b.3 && b.1 < a.3
 }
@@ -162,6 +187,7 @@ fn overlaps(a: Area, b: Area) -> bool {
 /// older ones (a task manager, a picture-in-picture video, a screen recorder), and a window can also lose
 /// the flag. So once a second: if the notch is no longer topmost, or another app's window sits over it,
 /// put it back on top without taking the focus. Nothing is done while it is hidden on purpose.
+#[cfg(windows)]
 fn keep_in_front(island: HWND) {
     unsafe {
         if !IsWindowVisible(island).as_bool() {
@@ -182,6 +208,7 @@ fn keep_in_front(island: HWND) {
 
 /// Whether a window of another app, above the notch in the stacking order, overlaps it. Windows of the
 /// shell (the taskbar, Task View, Alt+Tab) are left alone: they are meant to be in front of everything.
+#[cfg(windows)]
 unsafe fn covered(island: HWND, area: Area) -> bool {
     unsafe {
         let (mut shell, me) = (0u32, GetCurrentProcessId());
@@ -211,6 +238,7 @@ unsafe fn covered(island: HWND, area: Area) -> bool {
 }
 
 /// Time since the last keyboard or mouse input anywhere in the system.
+#[cfg(windows)]
 fn idle_time() -> Duration {
     let mut info = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
     unsafe {
@@ -224,6 +252,7 @@ fn idle_time() -> Duration {
 /// Whether a window with no title bar covers the whole of a screen (`window` and `screen` are areas). A window
 /// that has been maximised is not one: that is an ordinary app (one that draws its own title bar has no
 /// title-bar style, but it is still maximised, not full screen).
+#[cfg(windows)]
 fn covers_whole_screen(window: Area, screen: Area, style: u32, maximised: bool) -> bool {
     !maximised && style & WS_CAPTION.0 != WS_CAPTION.0 && window.0 <= screen.0 && window.1 <= screen.1 && window.2 >= screen.2 && window.3 >= screen.3
 }
@@ -231,6 +260,7 @@ fn covers_whole_screen(window: Area, screen: Area, style: u32, maximised: bool) 
 /// A game or player in "borderless windowed" mode is a window with no title bar the size of the screen, which
 /// Windows does not always count as full screen. Its screen, if the window in front is one. The desktop, the
 /// shell's own windows and this app's are not an app in full screen.
+#[cfg(windows)]
 fn borderless() -> Option<Area> {
     unsafe {
         let front = GetForegroundWindow();
@@ -257,6 +287,7 @@ fn borderless() -> Option<Area> {
 
 /// Windows decides whether a full-screen app is in front; the monitor of the window in front says which
 /// screen it is on.
+#[cfg(windows)]
 fn fullscreen() -> Fullscreen {
     let busy = match unsafe { SHQueryUserNotificationState() } {
         Ok(state) => state == QUNS_BUSY || state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_PRESENTATION_MODE,
@@ -309,6 +340,7 @@ mod tests {
         assert!(!overlaps(notch, (1068, 0, 1920, 1080)), "to the right of it");
     }
 
+    #[cfg(windows)]
     #[test]
     fn only_a_window_without_a_title_bar_that_fills_the_screen_counts_as_full_screen() {
         let (screen, bar) = ((0, 0, 1920, 1080), WS_CAPTION.0);

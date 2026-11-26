@@ -7,42 +7,58 @@
 //! them). A moment after the last ask the thread closes the device and sleeps, so nothing runs while no song plays or
 //! while the notch is open.
 
+#[cfg(windows)]
 use std::sync::OnceLock;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
+#[cfg(windows)]
 use std::thread;
+#[cfg(windows)]
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use windows::Win32::Media::Audio::{
     AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX, eMultimedia,
     eRender,
 };
+#[cfg(windows)]
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree};
 
 /// How many bands (bars) there are.
 pub const BANDS: usize = 5;
 
 /// The FFT looks at this many samples at a time (about 43 ms of sound) and at a new look every `HOP` samples.
+#[cfg(any(windows, test))]
 const FFT_N: usize = 2048;
+#[cfg(any(windows, test))]
 const HOP: usize = 1024;
 
 /// The edges of the bands in hertz: bass, low middle, middle, high middle and treble.
+#[cfg(any(windows, test))]
 const EDGES: [f32; BANDS + 1] = [45.0, 150.0, 450.0, 1400.0, 4200.0, 12000.0];
 /// Added to each band's loudness, in decibels. Music has far more energy low down than high up, and without this the
 /// bars on the right would hardly ever move.
+#[cfg(any(windows, test))]
 const TILT_DB: [f32; BANDS] = [-2.0, 0.0, 2.0, 4.0, 6.0];
 
 /// How many decibels the bars span, from the loudest band (full height) down to the quietest that still shows.
+#[cfg(any(windows, test))]
 const RANGE_DB: f32 = 34.0;
 /// The loudest band is never taken to be quieter than this, so a hiss or a very quiet room does not fill the bars.
+#[cfg(any(windows, test))]
 const TOP_FLOOR_DB: f32 = -35.0;
 /// How fast what counts as loud forgets a loud passage, decibels a second.
+#[cfg(any(windows, test))]
 const TOP_FALL_DB: f32 = 4.0;
 /// How long a bar takes to fall to about a third of its height once the sound stops.
+#[cfg(any(windows, test))]
 const FALL_SECS: f32 = 0.12;
 /// How much of the way to a louder reading a bar goes at once.
+#[cfg(any(windows, test))]
 const RISE: f32 = 0.75;
 
 /// The levels of the five bands, 0 to 1, made from a stream of mono samples.
+#[cfg(any(windows, test))]
 pub struct Analyser {
     rate: f32,
     /// The last `FFT_N` samples, written round and round.
@@ -61,6 +77,7 @@ pub struct Analyser {
     levels: [f32; BANDS],
 }
 
+#[cfg(any(windows, test))]
 impl Analyser {
     pub fn new(rate: u32) -> Self {
         let rate = rate.max(8000) as f32;
@@ -128,6 +145,7 @@ impl Analyser {
 }
 
 /// cos and sin of -2 pi k / `FFT_N`, for the FFT.
+#[cfg(any(windows, test))]
 fn twiddles() -> Vec<(f32, f32)> {
     (0..FFT_N / 2)
         .map(|k| {
@@ -138,6 +156,7 @@ fn twiddles() -> Vec<(f32, f32)> {
 }
 
 /// A plain radix-2 FFT of `re` and `im` (their length a power of two, `twiddle` made for it).
+#[cfg(any(windows, test))]
 fn fft(re: &mut [f32], im: &mut [f32], twiddle: &[(f32, f32)]) {
     let n = re.len();
     let mut j = 0;
@@ -171,295 +190,311 @@ fn fft(re: &mut [f32], im: &mut [f32], twiddle: &[(f32, f32)]) {
     }
 }
 
-/// How the device writes its samples.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Sample {
-    F32,
-    I16,
-    I32,
-}
+#[cfg(windows)]
+mod win {
+    use super::*;
 
-/// What the format Windows mixes in is, if it is one that can be read: (sample rate, channels, sample kind, bytes a frame).
-fn describe(format: &WAVEFORMATEX) -> Option<(u32, usize, Sample, usize)> {
-    // The format is packed, so each field is copied out before it is looked at.
-    let (tag, channels, rate, align, bits) = (format.wFormatTag, format.nChannels, format.nSamplesPerSec, format.nBlockAlign, format.wBitsPerSample);
-    const IEEE_FLOAT: u16 = 3;
-    const EXTENSIBLE: u16 = 0xFFFE;
-    const PCM: u16 = 1;
-    // The shared mix is float, but an extensible format says what its samples are in the first part of a GUID that
-    // follows the usual fields: 3 is float, 1 is whole numbers, and anything else cannot be read.
-    let float = match tag {
-        IEEE_FLOAT => true,
-        PCM => false,
-        EXTENSIBLE => {
-            // The extra part has to be all there (22 bytes) before the GUID in it is looked at.
-            if { format.cbSize } < 22 {
-                return None;
-            }
-            // SAFETY: an extensible format is a WAVEFORMATEXTENSIBLE, which starts with this structure, and `cbSize`
-            // says Windows gave us the rest of it.
-            let sub = unsafe { std::ptr::read_unaligned((format as *const WAVEFORMATEX as *const u8).add(24) as *const u32) };
-            match sub {
-                3 => true,
-                1 => false,
-                _ => return None,
-            }
-        }
-        _ => return None,
-    };
-    let kind = match (bits, float) {
-        (32, true) => Sample::F32,
-        (16, false) => Sample::I16,
-        (32, false) => Sample::I32,
-        _ => return None,
-    };
-    (channels >= 1 && rate >= 8000 && align as usize >= channels as usize * (bits as usize / 8)).then_some((rate, channels as usize, kind, align as usize))
-}
-
-/// One mono sample from each frame of `bytes`: the channels added and divided.
-fn to_mono(bytes: &[u8], channels: usize, kind: Sample, align: usize, out: &mut Vec<f32>) {
-    let width = match kind {
-        Sample::I16 => 2,
-        _ => 4,
-    };
-    for frame in bytes.chunks_exact(align) {
-        let mut sum = 0.0;
-        for c in 0..channels {
-            let b = &frame[c * width..(c + 1) * width];
-            sum += match kind {
-                Sample::F32 => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
-                Sample::I16 => i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0,
-                Sample::I32 => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32 / 2_147_483_648.0,
-            };
-        }
-        out.push(sum / channels as f32);
-    }
-}
-
-/// The name Windows gives a device, which stays the same while it is the same device.
-fn device_id(device: &IMMDevice) -> Option<String> {
-    // SAFETY: the text Windows hands back is read once and then freed.
-    unsafe {
-        let id = device.GetId().ok()?;
-        let text = id.to_string().ok();
-        CoTaskMemFree(Some(id.0 as *const _));
-        text
-    }
-}
-
-/// The open device: the default one the PC plays on, listened to.
-struct Capture {
-    enumerator: IMMDeviceEnumerator,
-    /// Which device it is, to notice when another one becomes the default.
-    id: Option<String>,
-    client: IAudioClient,
-    reader: IAudioCaptureClient,
-    rate: u32,
-    channels: usize,
-    kind: Sample,
-    align: usize,
-}
-
-impl Capture {
-    fn open() -> Option<Capture> {
-        // SAFETY: plain COM and WASAPI calls on this thread; the format Windows hands back is freed after use.
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-            let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-            let device = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).ok()?;
-            let id = device_id(&device);
-            let client: IAudioClient = device.Activate(CLSCTX_ALL, None).ok()?;
-            let format = client.GetMixFormat().ok()?;
-            let described = describe(&*format);
-            // 200 ms of room, in units of 100 ns.
-            let started = described.and_then(|_| client.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 2_000_000, 0, format, None).ok());
-            CoTaskMemFree(Some(format as *const _));
-            let (rate, channels, kind, align) = described?;
-            started?;
-            let reader: IAudioCaptureClient = client.GetService().ok()?;
-            client.Start().ok()?;
-            Some(Capture { enumerator, id, client, reader, rate, channels, kind, align })
-        }
+    /// How the device writes its samples.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub(super) enum Sample {
+        F32,
+        I16,
+        I32,
     }
 
-    /// Whether this is still the device the PC plays on. When another one becomes the default (headphones plugged in,
-    /// another output picked) the old one keeps answering, only with nothing, so this has to be asked.
-    fn still_default(&self) -> bool {
-        let Some(id) = &self.id else { return true };
-        // SAFETY: a plain COM call on the thread that made the enumerator.
-        let now = unsafe { self.enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).ok() };
-        now.and_then(|d| device_id(&d)).is_none_or(|now| &now == id)
-    }
-
-    /// Take what has come in since the last time and add it, as mono samples, to `out`. `None` when the device went
-    /// away (it was unplugged or switched off); a device that is only no longer the default is noticed by
-    /// `still_default`.
-    fn pump(&self, out: &mut Vec<f32>) -> Option<()> {
-        // SAFETY: each buffer is read before it is given back, and only for as many frames as Windows says it holds.
-        unsafe {
-            loop {
-                let frames = self.reader.GetNextPacketSize().ok()?;
-                if frames == 0 {
-                    return Some(());
+    /// What the format Windows mixes in is, if it is one that can be read: (sample rate, channels, sample kind, bytes a frame).
+    pub(super) fn describe(format: &WAVEFORMATEX) -> Option<(u32, usize, Sample, usize)> {
+        // The format is packed, so each field is copied out before it is looked at.
+        let (tag, channels, rate, align, bits) = (format.wFormatTag, format.nChannels, format.nSamplesPerSec, format.nBlockAlign, format.wBitsPerSample);
+        const IEEE_FLOAT: u16 = 3;
+        const EXTENSIBLE: u16 = 0xFFFE;
+        const PCM: u16 = 1;
+        // The shared mix is float, but an extensible format says what its samples are in the first part of a GUID that
+        // follows the usual fields: 3 is float, 1 is whole numbers, and anything else cannot be read.
+        let float = match tag {
+            IEEE_FLOAT => true,
+            PCM => false,
+            EXTENSIBLE => {
+                // The extra part has to be all there (22 bytes) before the GUID in it is looked at.
+                if { format.cbSize } < 22 {
+                    return None;
                 }
-                let (mut data, mut got, mut flags) = (std::ptr::null_mut(), 0u32, 0u32);
-                self.reader.GetBuffer(&mut data, &mut got, &mut flags, None, None).ok()?;
-                const SILENT: u32 = 2;
-                if flags & SILENT != 0 || data.is_null() {
-                    out.extend(std::iter::repeat_n(0.0, got as usize));
-                } else {
-                    to_mono(std::slice::from_raw_parts(data, got as usize * self.align), self.channels, self.kind, self.align, out);
+                // SAFETY: an extensible format is a WAVEFORMATEXTENSIBLE, which starts with this structure, and `cbSize`
+                // says Windows gave us the rest of it.
+                let sub = unsafe { std::ptr::read_unaligned((format as *const WAVEFORMATEX as *const u8).add(24) as *const u32) };
+                match sub {
+                    3 => true,
+                    1 => false,
+                    _ => return None,
                 }
-                self.reader.ReleaseBuffer(got).ok()?;
             }
-        }
-    }
-}
-
-impl Drop for Capture {
-    fn drop(&mut self) {
-        // SAFETY: stopping a stream that is running (or already stopped) is harmless.
-        unsafe {
-            let _ = self.client.Stop();
-        }
-    }
-}
-
-const STARTING: u8 = 0;
-const LISTENING: u8 = 1;
-const FAILED: u8 = 2;
-
-/// How long the listening carries on after it was last asked for.
-const GRACE_MS: u64 = 1_500;
-/// How long it waits before trying again after the device could not be opened.
-const RETRY: Duration = Duration::from_secs(10);
-/// How often the device is looked at.
-const POLL: Duration = Duration::from_millis(20);
-/// How often it checks that the device is still the one the PC plays on.
-const CHECK_DEFAULT: Duration = Duration::from_secs(1);
-
-/// What the thread and the UI share.
-struct Shared {
-    /// The five levels, as the bits of f32 numbers.
-    levels: [AtomicU32; BANDS],
-    /// When it was last asked, in milliseconds since the program began (0: never).
-    asked: AtomicU64,
-    state: AtomicU8,
-    /// Whether the thread is asleep because nobody asked (so it needs waking).
-    asleep: AtomicBool,
-    /// Whether it has listened at least once. After that, while it starts again, the bars stay flat (they are about to
-    /// follow the sound) instead of jumping to the made-up beat for a moment.
-    worked: AtomicBool,
-}
-
-static SHARED: Shared = Shared {
-    levels: [const { AtomicU32::new(0) }; BANDS],
-    asked: AtomicU64::new(0),
-    state: AtomicU8::new(STARTING),
-    asleep: AtomicBool::new(false),
-    worked: AtomicBool::new(false),
-};
-static THREAD: OnceLock<thread::Thread> = OnceLock::new();
-static CLOCK: OnceLock<Instant> = OnceLock::new();
-
-fn now_ms() -> u64 {
-    // One more than the time, so that "never asked" (0) is never a time.
-    CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
-}
-
-// `asked` and `asleep` are a handshake: each side writes one and then reads the other, and with anything weaker than
-// SeqCst both could read the old value, so the thread would sleep with nobody to wake it.
-fn wanted() -> bool {
-    let asked = SHARED.asked.load(Ordering::SeqCst);
-    asked != 0 && now_ms().saturating_sub(asked) <= GRACE_MS
-}
-
-/// Ask for the levels of the music (which starts the listening, or wakes it) and say what they are, 0 to 1 for each
-/// band, or `None` when the sound of this PC cannot be listened to (and while it starts the very first time).
-pub fn listen() -> Option<[f32; BANDS]> {
-    SHARED.asked.store(now_ms(), Ordering::SeqCst);
-    let thread = THREAD.get_or_init(|| thread::Builder::new().name("loopback".into()).spawn(run).map(|h| h.thread().clone()).unwrap_or_else(|_| thread::current()));
-    if SHARED.asleep.swap(false, Ordering::SeqCst) {
-        thread.unpark();
-    }
-    match SHARED.state.load(Ordering::Relaxed) {
-        LISTENING => {}
-        // Starting again: the levels are flat until the sound comes in.
-        STARTING if SHARED.worked.load(Ordering::Relaxed) => {}
-        _ => return None,
-    }
-    Some(std::array::from_fn(|i| f32::from_bits(SHARED.levels[i].load(Ordering::Relaxed))))
-}
-
-/// Open the device once and let it go at once, on a thread of its own. The first time Windows is asked to be listened to
-/// it takes most of a second, and every time after that a few milliseconds, so this is done as soon as a song plays,
-/// so that the bars do not begin with the made-up ones.
-pub fn warm() {
-    static DONE: AtomicBool = AtomicBool::new(false);
-    if DONE.swap(true, Ordering::Relaxed) {
-        return;
-    }
-    let _ = thread::Builder::new().name("loopback-warm".into()).spawn(|| drop(Capture::open()));
-}
-
-fn publish(levels: [f32; BANDS]) {
-    levels.iter().zip(&SHARED.levels).for_each(|(l, slot)| slot.store(l.to_bits(), Ordering::Relaxed));
-}
-
-/// The thread: waits until the levels are wanted, listens while they are, and lets go of the device when they are not.
-fn run() {
-    loop {
-        while !wanted() {
-            SHARED.state.store(STARTING, Ordering::Relaxed);
-            publish([0.0; BANDS]);
-            SHARED.asleep.store(true, Ordering::SeqCst);
-            // Asked just now? Then do not sleep after all.
-            if wanted() {
-                SHARED.asleep.store(false, Ordering::SeqCst);
-                break;
-            }
-            thread::park();
-        }
-        let Some(capture) = Capture::open() else {
-            SHARED.state.store(FAILED, Ordering::Relaxed);
-            thread::park_timeout(RETRY);
-            continue;
+            _ => return None,
         };
-        let mut analyser = Analyser::new(capture.rate);
-        let mut samples = Vec::with_capacity(4096);
-        let mut last = Instant::now();
-        let mut checked = last;
-        SHARED.state.store(LISTENING, Ordering::Relaxed);
-        SHARED.worked.store(true, Ordering::Relaxed);
-        while wanted() {
-            samples.clear();
-            if capture.pump(&mut samples).is_none() {
-                break;
+        let kind = match (bits, float) {
+            (32, true) => Sample::F32,
+            (16, false) => Sample::I16,
+            (32, false) => Sample::I32,
+            _ => return None,
+        };
+        (channels >= 1 && rate >= 8000 && align as usize >= channels as usize * (bits as usize / 8)).then_some((rate, channels as usize, kind, align as usize))
+    }
+
+    /// One mono sample from each frame of `bytes`: the channels added and divided.
+    pub(super) fn to_mono(bytes: &[u8], channels: usize, kind: Sample, align: usize, out: &mut Vec<f32>) {
+        let width = match kind {
+            Sample::I16 => 2,
+            _ => 4,
+        };
+        for frame in bytes.chunks_exact(align) {
+            let mut sum = 0.0;
+            for c in 0..channels {
+                let b = &frame[c * width..(c + 1) * width];
+                sum += match kind {
+                    Sample::F32 => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+                    Sample::I16 => i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0,
+                    Sample::I32 => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32 / 2_147_483_648.0,
+                };
             }
-            let now = Instant::now();
-            // Another device became the default: listen to that one instead.
-            if now.duration_since(checked) >= CHECK_DEFAULT {
-                checked = now;
-                if !capture.still_default() {
+            out.push(sum / channels as f32);
+        }
+    }
+
+    /// The name Windows gives a device, which stays the same while it is the same device.
+    fn device_id(device: &IMMDevice) -> Option<String> {
+        // SAFETY: the text Windows hands back is read once and then freed.
+        unsafe {
+            let id = device.GetId().ok()?;
+            let text = id.to_string().ok();
+            CoTaskMemFree(Some(id.0 as *const _));
+            text
+        }
+    }
+
+    /// The open device: the default one the PC plays on, listened to.
+    struct Capture {
+        enumerator: IMMDeviceEnumerator,
+        /// Which device it is, to notice when another one becomes the default.
+        id: Option<String>,
+        client: IAudioClient,
+        reader: IAudioCaptureClient,
+        rate: u32,
+        channels: usize,
+        kind: Sample,
+        align: usize,
+    }
+
+    impl Capture {
+        fn open() -> Option<Capture> {
+            // SAFETY: plain COM and WASAPI calls on this thread; the format Windows hands back is freed after use.
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+                let device = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).ok()?;
+                let id = device_id(&device);
+                let client: IAudioClient = device.Activate(CLSCTX_ALL, None).ok()?;
+                let format = client.GetMixFormat().ok()?;
+                let described = describe(&*format);
+                // 200 ms of room, in units of 100 ns.
+                let started = described.and_then(|_| client.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 2_000_000, 0, format, None).ok());
+                CoTaskMemFree(Some(format as *const _));
+                let (rate, channels, kind, align) = described?;
+                started?;
+                let reader: IAudioCaptureClient = client.GetService().ok()?;
+                client.Start().ok()?;
+                Some(Capture { enumerator, id, client, reader, rate, channels, kind, align })
+            }
+        }
+
+        /// Whether this is still the device the PC plays on. When another one becomes the default (headphones plugged in,
+        /// another output picked) the old one keeps answering, only with nothing, so this has to be asked.
+        fn still_default(&self) -> bool {
+            let Some(id) = &self.id else { return true };
+            // SAFETY: a plain COM call on the thread that made the enumerator.
+            let now = unsafe { self.enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia).ok() };
+            now.and_then(|d| device_id(&d)).is_none_or(|now| &now == id)
+        }
+
+        /// Take what has come in since the last time and add it, as mono samples, to `out`. `None` when the device went
+        /// away (it was unplugged or switched off); a device that is only no longer the default is noticed by
+        /// `still_default`.
+        fn pump(&self, out: &mut Vec<f32>) -> Option<()> {
+            // SAFETY: each buffer is read before it is given back, and only for as many frames as Windows says it holds.
+            unsafe {
+                loop {
+                    let frames = self.reader.GetNextPacketSize().ok()?;
+                    if frames == 0 {
+                        return Some(());
+                    }
+                    let (mut data, mut got, mut flags) = (std::ptr::null_mut(), 0u32, 0u32);
+                    self.reader.GetBuffer(&mut data, &mut got, &mut flags, None, None).ok()?;
+                    const SILENT: u32 = 2;
+                    if flags & SILENT != 0 || data.is_null() {
+                        out.extend(std::iter::repeat_n(0.0, got as usize));
+                    } else {
+                        to_mono(std::slice::from_raw_parts(data, got as usize * self.align), self.channels, self.kind, self.align, out);
+                    }
+                    self.reader.ReleaseBuffer(got).ok()?;
+                }
+            }
+        }
+    }
+
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            // SAFETY: stopping a stream that is running (or already stopped) is harmless.
+            unsafe {
+                let _ = self.client.Stop();
+            }
+        }
+    }
+
+    const STARTING: u8 = 0;
+    const LISTENING: u8 = 1;
+    const FAILED: u8 = 2;
+
+    /// How long the listening carries on after it was last asked for.
+    const GRACE_MS: u64 = 1_500;
+    /// How long it waits before trying again after the device could not be opened.
+    const RETRY: Duration = Duration::from_secs(10);
+    /// How often the device is looked at.
+    const POLL: Duration = Duration::from_millis(20);
+    /// How often it checks that the device is still the one the PC plays on.
+    const CHECK_DEFAULT: Duration = Duration::from_secs(1);
+
+    /// What the thread and the UI share.
+    struct Shared {
+        /// The five levels, as the bits of f32 numbers.
+        levels: [AtomicU32; BANDS],
+        /// When it was last asked, in milliseconds since the program began (0: never).
+        asked: AtomicU64,
+        state: AtomicU8,
+        /// Whether the thread is asleep because nobody asked (so it needs waking).
+        asleep: AtomicBool,
+        /// Whether it has listened at least once. After that, while it starts again, the bars stay flat (they are about to
+        /// follow the sound) instead of jumping to the made-up beat for a moment.
+        worked: AtomicBool,
+    }
+
+    static SHARED: Shared = Shared {
+        levels: [const { AtomicU32::new(0) }; BANDS],
+        asked: AtomicU64::new(0),
+        state: AtomicU8::new(STARTING),
+        asleep: AtomicBool::new(false),
+        worked: AtomicBool::new(false),
+    };
+    static THREAD: OnceLock<thread::Thread> = OnceLock::new();
+    static CLOCK: OnceLock<Instant> = OnceLock::new();
+
+    fn now_ms() -> u64 {
+        // One more than the time, so that "never asked" (0) is never a time.
+        CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
+    }
+
+    // `asked` and `asleep` are a handshake: each side writes one and then reads the other, and with anything weaker than
+    // SeqCst both could read the old value, so the thread would sleep with nobody to wake it.
+    fn wanted() -> bool {
+        let asked = SHARED.asked.load(Ordering::SeqCst);
+        asked != 0 && now_ms().saturating_sub(asked) <= GRACE_MS
+    }
+
+    /// Ask for the levels of the music (which starts the listening, or wakes it) and say what they are, 0 to 1 for each
+    /// band, or `None` when the sound of this PC cannot be listened to (and while it starts the very first time).
+    pub fn listen() -> Option<[f32; BANDS]> {
+        SHARED.asked.store(now_ms(), Ordering::SeqCst);
+        let thread = THREAD.get_or_init(|| thread::Builder::new().name("loopback".into()).spawn(run).map(|h| h.thread().clone()).unwrap_or_else(|_| thread::current()));
+        if SHARED.asleep.swap(false, Ordering::SeqCst) {
+            thread.unpark();
+        }
+        match SHARED.state.load(Ordering::Relaxed) {
+            LISTENING => {}
+            // Starting again: the levels are flat until the sound comes in.
+            STARTING if SHARED.worked.load(Ordering::Relaxed) => {}
+            _ => return None,
+        }
+        Some(std::array::from_fn(|i| f32::from_bits(SHARED.levels[i].load(Ordering::Relaxed))))
+    }
+
+    /// Open the device once and let it go at once, on a thread of its own. The first time Windows is asked to be listened to
+    /// it takes most of a second, and every time after that a few milliseconds, so this is done as soon as a song plays,
+    /// so that the bars do not begin with the made-up ones.
+    pub fn warm() {
+        static DONE: AtomicBool = AtomicBool::new(false);
+        if DONE.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let _ = thread::Builder::new().name("loopback-warm".into()).spawn(|| drop(Capture::open()));
+    }
+
+    fn publish(levels: [f32; BANDS]) {
+        levels.iter().zip(&SHARED.levels).for_each(|(l, slot)| slot.store(l.to_bits(), Ordering::Relaxed));
+    }
+
+    /// The thread: waits until the levels are wanted, listens while they are, and lets go of the device when they are not.
+    fn run() {
+        loop {
+            while !wanted() {
+                SHARED.state.store(STARTING, Ordering::Relaxed);
+                publish([0.0; BANDS]);
+                SHARED.asleep.store(true, Ordering::SeqCst);
+                // Asked just now? Then do not sleep after all.
+                if wanted() {
+                    SHARED.asleep.store(false, Ordering::SeqCst);
                     break;
                 }
+                thread::park();
             }
-            if samples.is_empty() {
-                // Nothing is playing (the device sends nothing at all then).
-                analyser.idle(now.duration_since(last).as_secs_f32());
-            } else {
-                analyser.push(&samples);
+            let Some(capture) = Capture::open() else {
+                SHARED.state.store(FAILED, Ordering::Relaxed);
+                thread::park_timeout(RETRY);
+                continue;
+            };
+            let mut analyser = Analyser::new(capture.rate);
+            let mut samples = Vec::with_capacity(4096);
+            let mut last = Instant::now();
+            let mut checked = last;
+            SHARED.state.store(LISTENING, Ordering::Relaxed);
+            SHARED.worked.store(true, Ordering::Relaxed);
+            while wanted() {
+                samples.clear();
+                if capture.pump(&mut samples).is_none() {
+                    break;
+                }
+                let now = Instant::now();
+                // Another device became the default: listen to that one instead.
+                if now.duration_since(checked) >= CHECK_DEFAULT {
+                    checked = now;
+                    if !capture.still_default() {
+                        break;
+                    }
+                }
+                if samples.is_empty() {
+                    // Nothing is playing (the device sends nothing at all then).
+                    analyser.idle(now.duration_since(last).as_secs_f32());
+                } else {
+                    analyser.push(&samples);
+                }
+                last = now;
+                publish(analyser.levels());
+                thread::sleep(POLL);
             }
-            last = now;
-            publish(analyser.levels());
-            thread::sleep(POLL);
+            // Either nobody asks any more or the device went away: close it, and start again if it is still wanted.
+            drop(capture);
+            SHARED.state.store(STARTING, Ordering::Relaxed);
+            publish([0.0; BANDS]);
         }
-        // Either nobody asks any more or the device went away: close it, and start again if it is still wanted.
-        drop(capture);
-        SHARED.state.store(STARTING, Ordering::Relaxed);
-        publish([0.0; BANDS]);
     }
 }
+
+#[cfg(windows)]
+pub use win::{listen, warm};
+
+#[cfg(not(windows))]
+pub fn listen() -> Option<[f32; BANDS]> {
+    None
+}
+
+#[cfg(not(windows))]
+pub fn warm() {}
 
 #[cfg(test)]
 mod tests {
@@ -553,8 +588,10 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_format_is_read_for_what_it_is() {
+        use super::win::{Sample, describe};
         let format = |tag: u16, channels: u16, bits: u16| WAVEFORMATEX {
             wFormatTag: tag,
             nChannels: channels,
@@ -573,8 +610,10 @@ mod tests {
         assert_eq!(describe(&format(0xFFFE, 2, 32)), None, "an extensible format without its extra part is not looked into");
     }
 
+    #[cfg(windows)]
     #[test]
     fn frames_become_one_mono_sample_each() {
+        use super::win::{Sample, to_mono};
         let mut out = Vec::new();
         let bytes: Vec<u8> = [0.5f32, -0.25, 1.0, 1.0].iter().flat_map(|f| f.to_le_bytes()).collect();
         to_mono(&bytes, 2, Sample::F32, 8, &mut out);

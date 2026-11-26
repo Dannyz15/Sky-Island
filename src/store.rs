@@ -9,9 +9,30 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::Value;
 
+/// The folder where the app keeps its settings, tasks, shelf and crash log (`%APPDATA%\Sky-Island` on Windows,
+/// `$XDG_CONFIG_HOME/sky-island` or `~/.config/sky-island` on Linux).
+pub fn data_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        Some(PathBuf::from(std::env::var_os("APPDATA")?).join("Sky-Island"))
+    }
+    #[cfg(not(windows))]
+    {
+        xdg_data_dir(std::env::var_os("XDG_CONFIG_HOME").as_deref(), std::env::var_os("HOME").as_deref())
+    }
+}
+
+#[cfg(not(windows))]
+fn xdg_data_dir(xdg: Option<&std::ffi::OsStr>, home: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    if let Some(dir) = xdg.filter(|v| !v.is_empty()).map(Path::new).filter(|p| p.is_absolute()) {
+        return Some(dir.join("sky-island"));
+    }
+    home.filter(|v| !v.is_empty()).map(|h| PathBuf::from(h).join(".config").join("sky-island"))
+}
+
 /// A file in the app's data folder, which is created when it is missing.
 pub fn path(name: &str) -> Option<PathBuf> {
-    let dir = PathBuf::from(std::env::var_os("APPDATA")?).join("Sky-Island");
+    let dir = data_dir()?;
     fs::create_dir_all(&dir).ok()?;
     Some(dir.join(name))
 }
@@ -316,6 +337,7 @@ mod tests {
         assert_eq!(fs::read_to_string(dir.join("todo.json.unread2")).unwrap(), "the defaults of the first start");
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_save_while_the_file_is_held_is_made_when_it_is_let_go() {
         use std::os::windows::fs::OpenOptionsExt;
@@ -335,6 +357,17 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         panic!("the newest text was never written: {}", fs::read_to_string(&file).unwrap());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn xdg_data_dir_prefers_absolute_xdg_config_home_and_falls_back_to_home() {
+        use std::ffi::OsStr;
+        assert_eq!(xdg_data_dir(Some(OsStr::new("/tmp/xdg-cfg")), Some(OsStr::new("/home/alice"))), Some(PathBuf::from("/tmp/xdg-cfg/sky-island")));
+        assert_eq!(xdg_data_dir(Some(OsStr::new("relative/dir")), Some(OsStr::new("/home/alice"))), Some(PathBuf::from("/home/alice/.config/sky-island")));
+        assert_eq!(xdg_data_dir(Some(OsStr::new("")), Some(OsStr::new("/home/alice"))), Some(PathBuf::from("/home/alice/.config/sky-island")));
+        assert_eq!(xdg_data_dir(None, Some(OsStr::new("/home/alice"))), Some(PathBuf::from("/home/alice/.config/sky-island")));
+        assert_eq!(xdg_data_dir(None, None), None);
     }
 
     #[test]

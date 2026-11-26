@@ -399,17 +399,25 @@ fn matches(mut file: impl Read, asset: &Asset) -> bool {
 /// held open (nobody can write to it) from the check until the installer has started. A file that fails the check
 /// is deleted. Returns whether the installer was started.
 pub fn launch(path: &std::path::Path, asset: &Asset) -> bool {
-    use std::os::windows::fs::OpenOptionsExt;
-    const FILE_SHARE_READ: u32 = 1;
-    let Ok(file) = fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(path) else { return false };
-    if !matches(&file, asset) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 1;
+        let Ok(file) = fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(path) else { return false };
+        if !matches(&file, asset) {
+            drop(file);
+            let _ = fs::remove_file(path);
+            return false;
+        }
+        let started = std::process::Command::new(path).spawn().is_ok();
         drop(file);
-        let _ = fs::remove_file(path);
-        return false;
+        started
     }
-    let started = std::process::Command::new(path).spawn().is_ok();
-    drop(file);
-    started
+    #[cfg(not(windows))]
+    {
+        let _ = (path, asset);
+        false
+    }
 }
 
 /// Delete setup files that "Check for updates" left in the temporary folder once they are no longer
@@ -478,6 +486,7 @@ mod tests {
         assert!(!matches(b"".as_slice(), &asset_of(bytes)), "empty");
     }
 
+    #[cfg(windows)]
     #[test]
     fn an_installer_is_checked_again_before_it_is_run_and_a_changed_one_is_deleted() {
         // A real program stands in for the installer: it starts and ends at once.

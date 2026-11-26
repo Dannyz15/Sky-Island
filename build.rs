@@ -1,8 +1,10 @@
+#[cfg(windows)]
 use std::{env, fs, path::PathBuf};
 
 /// The Windows resources of the exe: its icon, and its version information (what Explorer shows under
 /// Properties, Details, and what Task Manager calls the app). The version is taken from Cargo.toml, so it
 /// cannot differ from the version the app and the installer report.
+#[cfg(windows)]
 fn resource_script(version: &str, numbers: [u32; 4], icon: &str) -> String {
     let [a, b, c, d] = numbers;
     format!(
@@ -40,6 +42,7 @@ END
     )
 }
 
+#[cfg(windows)]
 fn main() {
     let number = |name: &str| env::var(name).ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
     let numbers = [number("CARGO_PKG_VERSION_MAJOR"), number("CARGO_PKG_VERSION_MINOR"), number("CARGO_PKG_VERSION_PATCH"), 0];
@@ -70,3 +73,6 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/icon.ico");
     println!("cargo:rerun-if-changed=Cargo.toml");
 }
+
+#[cfg(not(windows))]
+fn main() {}

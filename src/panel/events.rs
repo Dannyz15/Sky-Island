@@ -232,7 +232,7 @@ impl App {
             Act::DetectCity => self.detect_city(),
             Act::ClearCity => self.clear_city(),
             Act::OpenFolder => {
-                if let Some(dir) = std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join("Sky-Island")) {
+                if let Some(dir) = crate::store::data_dir() {
                     let _ = std::fs::create_dir_all(&dir);
                     crate::open::open(dir);
                 }

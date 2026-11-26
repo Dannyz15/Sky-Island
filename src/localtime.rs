@@ -2,11 +2,16 @@
 //! whole year where the clocks change (summer time), so it is asked of Windows for the very moment that is converted:
 //! a reminder set in March for a day in April is changed with April's offset, not March's.
 
+#[cfg(windows)]
 use windows::Win32::Foundation::SYSTEMTIME;
+#[cfg(windows)]
 use windows::Win32::System::SystemInformation::GetLocalTime;
+#[cfg(windows)]
 use windows::Win32::System::Time::{SystemTimeToTzSpecificLocalTime, TIME_ZONE_INFORMATION, TzSpecificLocalTimeToSystemTime};
 
-use crate::{calendar, todo};
+#[cfg(any(windows, test))]
+use crate::calendar;
+use crate::todo;
 
 /// Which clock local times are read on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -23,7 +28,13 @@ impl Zone {
     pub fn at_utc(self, unix: u64) -> i64 {
         match self {
             Zone::Fixed(offset) => offset,
+            #[cfg(windows)]
             Zone::System => offset_at_utc(None, unix as i64).unwrap_or_else(offset_now),
+            #[cfg(not(windows))]
+            Zone::System => {
+                let _ = unix;
+                0
+            }
         }
     }
 
@@ -31,7 +42,13 @@ impl Zone {
     pub fn at_local(self, day: i64, minutes: u32) -> i64 {
         match self {
             Zone::Fixed(offset) => offset,
+            #[cfg(windows)]
             Zone::System => offset_at_local(None, day * 86_400 + i64::from(minutes) * 60).unwrap_or_else(offset_now),
+            #[cfg(not(windows))]
+            Zone::System => {
+                let _ = (day, minutes);
+                0
+            }
         }
     }
 
@@ -46,6 +63,7 @@ impl Zone {
     }
 }
 
+#[cfg(windows)]
 fn system_time(secs: i64) -> SYSTEMTIME {
     let (year, month, day) = calendar::civil_from_days(secs.div_euclid(86_400));
     let rest = secs.rem_euclid(86_400);
@@ -61,11 +79,13 @@ fn system_time(secs: i64) -> SYSTEMTIME {
     }
 }
 
+#[cfg(windows)]
 fn seconds(t: &SYSTEMTIME) -> i64 {
     calendar::days_from_civil(i32::from(t.wYear), u32::from(t.wMonth), u32::from(t.wDay)) * 86_400 + i64::from(t.wHour) * 3600 + i64::from(t.wMinute) * 60 + i64::from(t.wSecond)
 }
 
 /// Local minus UTC at the UTC moment `unix`, in `zone` (`None`: the time zone of this PC).
+#[cfg(windows)]
 fn offset_at_utc(zone: Option<&TIME_ZONE_INFORMATION>, unix: i64) -> Option<i64> {
     let utc = system_time(unix);
     let mut local = SYSTEMTIME::default();
@@ -76,6 +96,7 @@ fn offset_at_utc(zone: Option<&TIME_ZONE_INFORMATION>, unix: i64) -> Option<i64>
 
 /// Local minus UTC at a local moment (seconds since 1970 on the local clock), in `zone`. A time the clocks skip over
 /// or show twice gets the offset Windows picks for it.
+#[cfg(windows)]
 fn offset_at_local(zone: Option<&TIME_ZONE_INFORMATION>, local_secs: i64) -> Option<i64> {
     let local = system_time(local_secs);
     let mut utc = SYSTEMTIME::default();
@@ -86,6 +107,7 @@ fn offset_at_local(zone: Option<&TIME_ZONE_INFORMATION>, local_secs: i64) -> Opt
 
 /// Local minus UTC right now, from the local clock against the system clock, rounded to a quarter hour. Only used
 /// if Windows cannot convert.
+#[cfg(windows)]
 fn offset_now() -> i64 {
     // SAFETY: a plain call that fills in a structure.
     let t = unsafe { GetLocalTime() };
@@ -97,15 +119,18 @@ mod tests {
     use super::*;
 
     /// US Eastern time: UTC-5, and UTC-4 from the second Sunday of March to the first Sunday of November.
+    #[cfg(windows)]
     fn eastern() -> TIME_ZONE_INFORMATION {
         let rule = |month: u16, week: u16| SYSTEMTIME { wMonth: month, wDayOfWeek: 0, wDay: week, wHour: 2, ..Default::default() };
         TIME_ZONE_INFORMATION { Bias: 300, StandardDate: rule(11, 1), StandardBias: 0, DaylightDate: rule(3, 2), DaylightBias: -60, ..Default::default() }
     }
 
+    #[cfg(windows)]
     fn utc(year: i32, month: u32, day: u32, hour: i64) -> i64 {
         calendar::days_from_civil(year, month, day) * 86_400 + hour * 3600
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_offset_is_the_one_of_the_moment_asked_about() {
         let tz = eastern();
@@ -119,6 +144,7 @@ mod tests {
         assert_eq!(offset_at_local(Some(&tz), local(4, 2)), Some(-4 * 3600));
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_reminder_across_a_clock_change_keeps_its_local_time() {
         let tz = eastern();

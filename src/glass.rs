@@ -175,6 +175,7 @@ impl Watcher {
 }
 
 /// A copy of a part of the screen as BGRA bytes, row by row from the top.
+#[cfg(windows)]
 fn copy_screen(area: Area) -> Option<Vec<u8>> {
     use windows::Win32::Graphics::Gdi::{
         BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC,
@@ -210,6 +211,11 @@ fn copy_screen(area: Area) -> Option<Vec<u8>> {
         ReleaseDC(None, screen);
         (rows == h).then_some(bytes)
     }
+}
+
+#[cfg(not(windows))]
+fn copy_screen(_area: Area) -> Option<Vec<u8>> {
+    None
 }
 
 /// The part of `area` that `hole` covers, as columns and rows of the copy: (x0, y0, x1, y1), possibly empty.

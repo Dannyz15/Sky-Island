@@ -561,15 +561,18 @@ impl App {
     /// Move and resize the window in one step (pixels: left, top, width, height). Done apart, Windows can show a frame
     /// with the new size at the old place, where the notch has grown to one side only, so it shakes while it grows.
     fn move_window(&self, window: &Window, (x, y, w, h): (i32, i32, i32, i32)) {
-        use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::{SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos};
-        let Some(hwnd) = self.native_handle() else {
-            let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(w as u32, h as u32));
-            window.set_outer_position(PhysicalPosition::new(x, y));
-            return;
-        };
-        // SAFETY: the handle is this app's own live window.
-        let _ = unsafe { SetWindowPos(HWND(hwnd as *mut _), None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER) };
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::{SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos};
+            if let Some(hwnd) = self.native_handle() {
+                // SAFETY: the handle is this app's own live window.
+                let _ = unsafe { SetWindowPos(HWND(hwnd as *mut _), None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER) };
+                return;
+            }
+        }
+        let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(w as u32, h as u32));
+        window.set_outer_position(PhysicalPosition::new(x, y));
     }
 
     /// How far a drop hangs below the closed glass notch, in logical pixels: while a notice makes it swell or shrink
@@ -688,15 +691,22 @@ impl App {
     }
 
     pub(crate) fn cursor_over_window(&self) -> bool {
-        use windows::Win32::Foundation::POINT;
-        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-        let Some(w) = &self.window else { return false };
-        let mut pt = POINT::default();
-        if unsafe { GetCursorPos(&mut pt) }.is_err() {
-            return false;
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::POINT;
+            use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+            let Some(w) = &self.window else { return false };
+            let mut pt = POINT::default();
+            if unsafe { GetCursorPos(&mut pt) }.is_err() {
+                return false;
+            }
+            let (pos, size) = (w.outer_position().unwrap_or_default(), w.outer_size());
+            pt.x >= pos.x && pt.x < pos.x + size.width as i32 && pt.y >= pos.y && pt.y < pos.y + size.height as i32
         }
-        let (pos, size) = (w.outer_position().unwrap_or_default(), w.outer_size());
-        pt.x >= pos.x && pt.x < pos.x + size.width as i32 && pt.y >= pos.y && pt.y < pos.y + size.height as i32
+        #[cfg(not(windows))]
+        {
+            self.pointer.inside
+        }
     }
 
     /// The scale of everything drawn on the notch: the screen's scale times the Size setting.
@@ -759,38 +769,58 @@ impl App {
 
     /// The notch window's Win32 handle, as a number so it can go to another thread.
     pub(crate) fn native_handle(&self) -> Option<isize> {
-        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let handle = self.window.as_ref()?.window_handle().ok()?;
-        match handle.as_raw() {
-            RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
-            _ => None,
+        #[cfg(windows)]
+        {
+            use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            let handle = self.window.as_ref()?.window_handle().ok()?;
+            match handle.as_raw() {
+                RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+                _ => None,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            None
         }
     }
 
     /// Remember the window the user is in, so the keyboard can be handed back to it after typing in the notch.
     pub(crate) fn remember_foreground(&mut self) {
-        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-        let front = unsafe { GetForegroundWindow() };
-        self.edit.prev_foreground = (!front.is_invalid()).then_some(front);
+        #[cfg(windows)]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+            let front = unsafe { GetForegroundWindow() };
+            self.edit.prev_foreground = (!front.is_invalid()).then_some(front);
+        }
     }
 
     /// Give the keyboard back to the window remembered, if there is one.
     pub(crate) fn restore_foreground(&mut self) {
-        use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
-        if let Some(window) = self.edit.prev_foreground.take() {
-            let _ = unsafe { SetForegroundWindow(window) };
+        #[cfg(windows)]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+            if let Some(window) = self.edit.prev_foreground.take() {
+                let _ = unsafe { SetForegroundWindow(window) };
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            self.edit.prev_foreground = None;
         }
     }
 
     /// Make clicks on the notch not steal focus from the user's current app.
     pub(crate) fn make_non_activating(&self) {
-        use windows::Win32::Foundation::HWND;
-        use windows::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_NOACTIVATE};
-        if let Some(h) = self.native_handle() {
-            let hwnd = HWND(h as *mut _);
-            unsafe {
-                let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as isize);
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_NOACTIVATE};
+            if let Some(h) = self.native_handle() {
+                let hwnd = HWND(h as *mut _);
+                unsafe {
+                    let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as isize);
+                }
             }
         }
     }
@@ -830,6 +860,7 @@ pub(crate) fn screen_by_order(devices: &[u32], n: u32) -> Option<u32> {
 
 /// How far down from the top of the screen the usable area starts: more than zero when a taskbar (or any
 /// other bar) is docked along the top.
+#[cfg(windows)]
 pub(crate) fn top_inset(monitor: &winit::monitor::MonitorHandle) -> i32 {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
@@ -837,6 +868,11 @@ pub(crate) fn top_inset(monitor: &winit::monitor::MonitorHandle) -> i32 {
     let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
     let handle = HMONITOR(HANDLE(monitor.hmonitor() as *mut _).0);
     if unsafe { GetMonitorInfoW(handle, &mut info) }.as_bool() { (info.rcWork.top - info.rcMonitor.top).max(0) } else { 0 }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn top_inset(_monitor: &winit::monitor::MonitorHandle) -> i32 {
+    0
 }
 
 /// How often the screen's refresh rate is read again while the notch animates.

@@ -10,13 +10,29 @@ pub(crate) enum TrayEntry {
     Quit,
 }
 
+#[cfg(not(windows))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MenuId(String);
+
+#[cfg(not(windows))]
+impl MenuId {
+    #[cfg(test)]
+    pub(crate) fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+}
+
 /// The tray icon (kept here so Windows keeps showing it) and the ids of its menu entries. Empty until `build`, and
 /// also when Windows would not make the icon or the menu.
 #[derive(Default)]
 pub(crate) struct Tray {
     /// Never read: the icon is only kept alive, because it goes away from the tray when this is dropped.
+    #[cfg(windows)]
     #[allow(dead_code)]
     icon: Option<TrayIcon>,
+    #[cfg(not(windows))]
+    #[allow(dead_code)]
+    icon: Option<()>,
     settings: Option<MenuId>,
     about: Option<MenuId>,
     quit: Option<MenuId>,
@@ -24,6 +40,7 @@ pub(crate) struct Tray {
 
 impl Tray {
     /// Make the tray icon with its menu. A click on an entry arrives as `UserEvent::Menu`.
+    #[cfg(windows)]
     pub(crate) fn build(proxy: &EventLoopProxy<UserEvent>) -> Self {
         let menu = Menu::new();
         let open = MenuItem::new("Settings\u{2026}", true, None);
@@ -42,6 +59,11 @@ impl Tray {
             }
         }));
         Self { icon: tray.ok(), settings: Some(open.id().clone()), about: Some(about.id().clone()), quit: Some(quit.id().clone()) }
+    }
+
+    #[cfg(not(windows))]
+    pub(crate) fn build(_proxy: &EventLoopProxy<UserEvent>) -> Self {
+        Self::default()
     }
 
     /// Which entry of the menu a click was on, if it was one of ours.

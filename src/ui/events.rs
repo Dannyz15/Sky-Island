@@ -13,8 +13,15 @@ pub(crate) fn wheel(delta: &MouseScrollDelta, per_line: f64, per_pixel: f64) -> 
 /// Whether Ctrl is held right now. The notch never has the keyboard focus, so its own key events
 /// cannot be trusted to say.
 pub(crate) fn ctrl_down() -> bool {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL};
-    unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) < 0 }
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL};
+        unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) < 0 }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 /// Updates: how the last check went, the version the notch has already told about, and the changelog.
@@ -59,14 +66,18 @@ impl ApplicationHandler<UserEvent> for App {
         }
         // A setup downloaded by "Check for updates" has done its job once this version is running.
         update::clean_up_downloads();
-        let attrs = Window::default_attributes()
+        #[allow(unused_mut)]
+        let mut attrs = Window::default_attributes()
             .with_title("Sky Island")
             .with_decorations(false)
             .with_transparent(true)
             .with_resizable(false)
             .with_window_level(WindowLevel::AlwaysOnTop)
-            .with_skip_taskbar(true)
             .with_inner_size(LogicalSize::new(COLLAPSED.0 + 2.0 * EAR, COLLAPSED.1));
+        #[cfg(windows)]
+        {
+            attrs = attrs.with_skip_taskbar(true);
+        }
         let window = Rc::new(event_loop.create_window(attrs).expect("create window"));
         let context = Context::new(window.clone()).expect("softbuffer context");
         self.surface = Some(Surface::new(&context, window.clone()).expect("softbuffer surface"));

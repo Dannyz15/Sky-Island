@@ -1,16 +1,23 @@
 //! Short chime sounds, synthesized in code and played straight from memory, so the app needs no
 //! sound files. They replace the harsh system beep.
 
+#[cfg(windows)]
 use std::collections::HashMap;
+#[cfg(any(windows, test))]
 use std::f32::consts::TAU;
+#[cfg(windows)]
 use std::sync::Mutex;
 
 use std::path::Path;
 
+#[cfg(windows)]
 use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
+#[cfg(windows)]
 use windows::Win32::Media::Multimedia::mciSendStringW;
+#[cfg(windows)]
 use windows::core::PCWSTR;
 
+#[cfg(any(windows, test))]
 const RATE: u32 = 44_100;
 
 #[derive(Clone, Copy)]
@@ -53,6 +60,7 @@ impl Slot {
     }
 
     /// The name MCI knows its sound file by, so that one part's long file does not hold back another's.
+    #[cfg(any(windows, test))]
     fn alias(self) -> &'static str {
         ["skyalarm", "skytodo", "skywater", "skyprayer"][self.index()]
     }
@@ -65,33 +73,39 @@ pub fn level(master: u32, own: u32) -> u32 {
 
 /// Play a chime without blocking, at `volume` percent. Does nothing if it can't be played.
 pub fn play(chime: Chime, volume: u32) {
-    // Each chime is made once per volume and kept for good, because it must stay valid while it plays
-    // in the background. The volume is rounded to a step of 10, so there are at most ten of them.
-    type Cache = HashMap<(u8, u32), &'static [u8]>;
-    static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
-    let volume = ((volume + 5) / 10 * 10).clamp(10, 100);
-    let key = (chime as u8, volume);
-    #[allow(clippy::explicit_auto_deref)]
-    let wav: &'static [u8] = {
-        let Ok(mut cache) = CACHE.lock() else { return };
-        let map = cache.get_or_insert_with(HashMap::new);
-        *map.entry(key).or_insert_with(|| {
-            // E5 and B5 for the pair, G5 for the reminder. Each is (frequency Hz, start s, length s).
-            let data = match chime {
-                Chime::TimerDone => wav(&[(659.3, 0.0, 0.9), (987.8, 0.16, 1.0)], 1.3, volume as f32 / 100.0),
-                Chime::Reminder => wav(&[(784.0, 0.0, 0.9)], 1.0, volume as f32 / 100.0),
-            };
-            Box::leak(data.into_boxed_slice())
-        })
-    };
-    // The buffer lives in a static, so it stays valid while the sound plays in the background.
-    unsafe {
-        let _ = PlaySoundW(PCWSTR(wav.as_ptr() as *const u16), None, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+    #[cfg(windows)]
+    {
+        // Each chime is made once per volume and kept for good, because it must stay valid while it plays
+        // in the background. The volume is rounded to a step of 10, so there are at most ten of them.
+        type Cache = HashMap<(u8, u32), &'static [u8]>;
+        static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+        let volume = ((volume + 5) / 10 * 10).clamp(10, 100);
+        let key = (chime as u8, volume);
+        #[allow(clippy::explicit_auto_deref)]
+        let wav: &'static [u8] = {
+            let Ok(mut cache) = CACHE.lock() else { return };
+            let map = cache.get_or_insert_with(HashMap::new);
+            *map.entry(key).or_insert_with(|| {
+                // E5 and B5 for the pair, G5 for the reminder. Each is (frequency Hz, start s, length s).
+                let data = match chime {
+                    Chime::TimerDone => wav(&[(659.3, 0.0, 0.9), (987.8, 0.16, 1.0)], 1.3, volume as f32 / 100.0),
+                    Chime::Reminder => wav(&[(784.0, 0.0, 0.9)], 1.0, volume as f32 / 100.0),
+                };
+                Box::leak(data.into_boxed_slice())
+            })
+        };
+        // The buffer lives in a static, so it stays valid while the sound plays in the background.
+        unsafe {
+            let _ = PlaySoundW(PCWSTR(wav.as_ptr() as *const u16), None, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+        }
     }
+    #[cfg(not(windows))]
+    let _ = (chime, volume);
 }
 
 /// Send one command to the system's media player (MCI), which plays WAV, MP3, WMA, AAC and more.
 /// Returns whether it worked, and the text it answered with.
+#[cfg(windows)]
 fn mci(command: &str) -> (bool, String) {
     let wide: Vec<u16> = command.encode_utf16().chain(Some(0)).collect();
     let mut answer = [0u16; 64];
@@ -109,14 +123,18 @@ pub fn safe_path(path: &str) -> bool {
 
 /// How long a file on another computer gets to answer before it counts as out of reach, and how long that verdict
 /// holds (so the alarm that repeats does not start the wait again each time).
+#[cfg(windows)]
 const REACH_WAIT: std::time::Duration = std::time::Duration::from_millis(400);
+#[cfg(windows)]
 const OUT_OF_REACH: std::time::Duration = std::time::Duration::from_secs(60);
+#[cfg(windows)]
 static UNREACHABLE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 
 /// Whether a sound file can be reached. A file on this PC always can (it is simply tried). One on another computer
 /// is asked about on a thread of its own and given a moment: opening it for the alarm would block the notch for as
 /// long as Windows waits for a server that is gone, at the moment the alarm should ring. When it does not answer,
 /// the built-in chime plays instead.
+#[cfg(windows)]
 fn reachable(path: &Path) -> bool {
     if !crate::shelf::is_remote(path) {
         return true;
@@ -140,36 +158,48 @@ fn reachable(path: &Path) -> bool {
 /// playing is left alone, so a long song is not restarted by every repeat of the alarm. Returns
 /// whether it is playing; false means the file could not be played.
 pub fn play_file(slot: Slot, path: &Path, volume: u32) -> bool {
-    let alias = slot.alias();
-    if mci(&format!("status {alias} mode")).1 == "playing" {
-        return true;
-    }
-    mci(&format!("close {alias}"));
-    // Quotes are not allowed in Windows file names, so a path with one did not come from a real file (only from a
-    // settings file edited by hand) and is refused: in the command it would end the name and add words of its own.
-    if !safe_path(&path.display().to_string()) || !reachable(path) {
-        return false;
-    }
-    if !mci(&format!("open \"{}\" type mpegvideo alias {alias}", path.display())).0 {
-        return false;
-    }
-    // MCI's volume runs from 0 to 1000; not every kind of file supports it, which is fine.
-    mci(&format!("setaudio {alias} volume to {}", volume.clamp(0, 100) * 10));
-    if mci(&format!("play {alias} from 0")).0 {
-        true
-    } else {
+    #[cfg(windows)]
+    {
+        let alias = slot.alias();
+        if mci(&format!("status {alias} mode")).1 == "playing" {
+            return true;
+        }
         mci(&format!("close {alias}"));
+        // Quotes are not allowed in Windows file names, so a path with one did not come from a real file (only from a
+        // settings file edited by hand) and is refused: in the command it would end the name and add words of its own.
+        if !safe_path(&path.display().to_string()) || !reachable(path) {
+            return false;
+        }
+        if !mci(&format!("open \"{}\" type mpegvideo alias {alias}", path.display())).0 {
+            return false;
+        }
+        // MCI's volume runs from 0 to 1000; not every kind of file supports it, which is fine.
+        mci(&format!("setaudio {alias} volume to {}", volume.clamp(0, 100) * 10));
+        if mci(&format!("play {alias} from 0")).0 {
+            true
+        } else {
+            mci(&format!("close {alias}"));
+            false
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (slot, path, volume);
         false
     }
 }
 
 /// Stop a part's sound file if it is playing.
 pub fn stop_file(slot: Slot) {
+    #[cfg(windows)]
     mci(&format!("close {}", slot.alias()));
+    #[cfg(not(windows))]
+    let _ = slot;
 }
 
 /// A 16-bit mono WAV file of bell-like notes: a sine with two quieter overtones that fades out.
 /// `loudness` is 1.0 for the normal level.
+#[cfg(any(windows, test))]
 fn wav(notes: &[(f32, f32, f32)], total: f32, loudness: f32) -> Vec<u8> {
     let count = (total * RATE as f32) as usize;
     let mut samples = vec![0f32; count];
@@ -214,6 +244,7 @@ fn wav(notes: &[(f32, f32, f32)], total: f32, loudness: f32) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
     #[test]
     fn a_sound_on_another_computer_that_does_not_answer_is_not_waited_for() {
         assert!(reachable(Path::new(r"C:\Windows\notepad.exe")), "a file on this PC is always tried");
@@ -269,6 +300,7 @@ mod tests {
     }
 
     /// Plays a real file, so it needs a sound card: run it by hand with `cargo test -- --ignored`.
+    #[cfg(windows)]
     #[test]
     #[ignore]
     fn a_real_sound_file_plays_and_stops() {

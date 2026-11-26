@@ -4,12 +4,18 @@
 //! mouse position with a few rectangles and says nothing while the mouse is anywhere else, and it is taken away
 //! again when the setting is switched off or there is no other screen.
 
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
+#[cfg(windows)]
 use std::sync::{Mutex, OnceLock};
+#[cfg(windows)]
 use std::thread;
 
+#[cfg(windows)]
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+#[cfg(windows)]
 use windows::Win32::System::Threading::GetCurrentThreadId;
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, MSG, MSLLHOOKSTRUCT, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_MOUSE_LL, WM_MOUSEMOVE, WM_QUIT,
 };
@@ -30,6 +36,7 @@ pub struct Zone {
 }
 
 impl Zone {
+    #[cfg(any(windows, test))]
     pub fn contains(&self, x: i32, y: i32) -> bool {
         x >= self.left && x < self.right && y >= self.top && y <= self.bottom
     }
@@ -61,70 +68,90 @@ pub fn zones_for(screens: &[Screen], current: u32, notch_w: f64) -> Vec<Zone> {
         .collect()
 }
 
+#[cfg(windows)]
 static ZONES: Mutex<Vec<Zone>> = Mutex::new(Vec::new());
+#[cfg(windows)]
 static PROXY: OnceLock<EventLoopProxy<UserEvent>> = OnceLock::new();
 /// The screen the mouse was last found on, so that resting there says it once; -1 while it is on none.
+#[cfg(windows)]
 static LAST: AtomicI64 = AtomicI64::new(-1);
 /// The hook thread's id, or 0 until it is running.
+#[cfg(windows)]
 static THREAD: AtomicU32 = AtomicU32::new(0);
 /// Whether a hook thread has been started and has not ended (so that only one is ever started).
+#[cfg(windows)]
 static RUNNING: AtomicBool = AtomicBool::new(false);
 /// Whether the hook is wanted. A thread that finds it is not wanted when it is ready ends at once.
+#[cfg(windows)]
 static WANTED: AtomicBool = AtomicBool::new(false);
 
 /// Use these zones from now on (and none, to stop the hook saying anything).
 pub fn set_zones(zones: Vec<Zone>) {
-    if let Ok(mut z) = ZONES.lock() {
-        *z = zones;
+    #[cfg(windows)]
+    {
+        if let Ok(mut z) = ZONES.lock() {
+            *z = zones;
+        }
+        LAST.store(-1, Ordering::Relaxed);
     }
-    LAST.store(-1, Ordering::Relaxed);
+    #[cfg(not(windows))]
+    let _ = zones;
 }
 
 /// Start watching the mouse, if it is not being watched.
 pub fn enable(proxy: EventLoopProxy<UserEvent>) {
-    let _ = PROXY.set(proxy);
-    WANTED.store(true, Ordering::Relaxed);
-    if RUNNING.swap(true, Ordering::Relaxed) {
-        return;
-    }
-    thread::spawn(|| unsafe {
-        loop {
-            THREAD.store(GetCurrentThreadId(), Ordering::Relaxed);
-            let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), None, 0);
-            // A hook needs its thread to keep taking messages; it ends when it is told to quit (or, if it was told
-            // before it was ready, at once).
-            let mut msg = MSG::default();
-            while WANTED.load(Ordering::Relaxed) {
-                if GetMessageW(&mut msg, None, 0, 0).0 <= 0 {
+    #[cfg(windows)]
+    {
+        let _ = PROXY.set(proxy);
+        WANTED.store(true, Ordering::Relaxed);
+        if RUNNING.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        thread::spawn(|| unsafe {
+            loop {
+                THREAD.store(GetCurrentThreadId(), Ordering::Relaxed);
+                let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), None, 0);
+                // A hook needs its thread to keep taking messages; it ends when it is told to quit (or, if it was told
+                // before it was ready, at once).
+                let mut msg = MSG::default();
+                while WANTED.load(Ordering::Relaxed) {
+                    if GetMessageW(&mut msg, None, 0, 0).0 <= 0 {
+                        break;
+                    }
+                }
+                if let Ok(hook) = hook {
+                    let _ = UnhookWindowsHookEx(hook);
+                }
+                THREAD.store(0, Ordering::Relaxed);
+                // Told to stop, and not asked again in the meantime: done. (Asked again: watch again.)
+                if !WANTED.load(Ordering::Relaxed) {
+                    RUNNING.store(false, Ordering::Relaxed);
                     break;
                 }
             }
-            if let Ok(hook) = hook {
-                let _ = UnhookWindowsHookEx(hook);
-            }
-            THREAD.store(0, Ordering::Relaxed);
-            // Told to stop, and not asked again in the meantime: done. (Asked again: watch again.)
-            if !WANTED.load(Ordering::Relaxed) {
-                RUNNING.store(false, Ordering::Relaxed);
-                break;
-            }
-        }
-    });
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = proxy;
 }
 
 /// Stop watching the mouse.
 pub fn disable() {
-    WANTED.store(false, Ordering::Relaxed);
-    let id = THREAD.load(Ordering::Relaxed);
-    if id != 0 {
-        // SAFETY: only posts a quit message to the hook's own thread.
-        unsafe {
-            let _ = PostThreadMessageW(id, WM_QUIT, WPARAM(0), LPARAM(0));
+    #[cfg(windows)]
+    {
+        WANTED.store(false, Ordering::Relaxed);
+        let id = THREAD.load(Ordering::Relaxed);
+        if id != 0 {
+            // SAFETY: only posts a quit message to the hook's own thread.
+            unsafe {
+                let _ = PostThreadMessageW(id, WM_QUIT, WPARAM(0), LPARAM(0));
+            }
         }
+        set_zones(Vec::new());
     }
-    set_zones(Vec::new());
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code >= 0 && wparam.0 as u32 == WM_MOUSEMOVE {
         // SAFETY: for a WH_MOUSE_LL hook Windows passes a pointer to a MSLLHOOKSTRUCT.

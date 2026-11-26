@@ -3,6 +3,7 @@
 use super::glyphs::{self, Script};
 use crate::*;
 
+#[cfg(windows)]
 pub(crate) fn load_font() -> Option<Font> {
     let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
     for name in ["segoeui.ttf", "arial.ttf"] {
@@ -15,10 +16,53 @@ pub(crate) fn load_font() -> Option<Font> {
     None
 }
 
+#[cfg(not(windows))]
+pub(crate) fn load_font() -> Option<Font> {
+    for path in [
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ] {
+        if let Ok(bytes) = std::fs::read(path)
+            && let Ok(font) = Font::from_bytes(bytes, FontSettings::default())
+        {
+            return Some(font);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
 pub(crate) fn load_bold_font() -> Option<Font> {
     let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
     for name in ["seguisb.ttf", "segoeuib.ttf"] {
         if let Ok(bytes) = std::fs::read(format!("{windir}\\Fonts\\{name}"))
+            && let Ok(font) = Font::from_bytes(bytes, FontSettings::default())
+        {
+            return Some(font);
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_bold_font() -> Option<Font> {
+    for path in [
+        "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    ] {
+        if let Ok(bytes) = std::fs::read(path)
             && let Ok(font) = Font::from_bytes(bytes, FontSettings::default())
         {
             return Some(font);
@@ -282,6 +326,7 @@ mod tests {
 
     /// Korean, Japanese, Chinese, Thai and Hindi text is drawn with real glyphs, not boxes (a script is skipped when
     /// this Windows has no font for it).
+    #[cfg(windows)]
     #[test]
     fn other_writing_systems_are_drawn_with_windows_fonts() {
         let main = load_font().expect("a system font");

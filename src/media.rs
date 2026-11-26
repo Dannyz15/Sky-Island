@@ -1,17 +1,27 @@
 //! Now-playing info and controls via Windows GSMTC. Runs on its own thread and
 //! pushes a fresh `MediaState` to the UI whenever something changes.
 
+#[cfg(windows)]
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+#[cfg(windows)]
 use std::thread;
+#[cfg(not(windows))]
+use std::time::Duration;
+#[cfg(windows)]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
 use windows::Foundation::TypedEventHandler;
+#[cfg(windows)]
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession as Session, GlobalSystemMediaTransportControlsSessionManager as Manager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status, MediaPropertiesChangedEventArgs, PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs,
 };
+#[cfg(windows)]
 use windows::Storage::Streams::{Buffer, DataReader, IRandomAccessStreamReference, InputStreamOptions};
+#[cfg(windows)]
 use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
+#[cfg(windows)]
 use windows::core::{HRESULT, Result};
 use winit::event_loop::EventLoopProxy;
 
@@ -19,20 +29,25 @@ use crate::UserEvent;
 
 /// The longest a call to a player or to Windows is waited for. A player that never answers must not freeze the
 /// media thread for good, and with it every now-playing update.
+#[cfg(windows)]
 const CALL_LIMIT: Duration = Duration::from_secs(10);
 
 /// ERROR_TIMEOUT as an HRESULT.
+#[cfg(windows)]
 const TIMED_OUT: HRESULT = HRESULT(0x8007_05B4_u32 as i32);
 
 /// The result of a finished Windows call on its way from the thread that finished it to the one that waits.
 /// Some of these objects are not marked as sendable by the `windows` crate, but they are free-threaded here: the media
 /// thread is in the multithreaded apartment, and `join()` hands them over from the finishing thread the same way.
+#[cfg(windows)]
 struct Carried<T>(Result<T>);
 // SAFETY: see above; the object is used only by the waiting thread after it is handed over.
+#[cfg(windows)]
 unsafe impl<T> Send for Carried<T> {}
 
 /// The result of a Windows call (`when` hands over a function that is called with it), waited for at most `limit`.
 /// After that `cancel` is called and an error comes back.
+#[cfg(windows)]
 fn within<T: 'static>(when: impl FnOnce(Box<dyn FnOnce(Result<T>) + Send>) -> Result<()>, cancel: impl FnOnce(), limit: Duration) -> Result<T> {
     let (tx, rx) = mpsc::channel();
     when(Box::new(move |result| {
@@ -48,6 +63,7 @@ fn within<T: 'static>(when: impl FnOnce(Box<dyn FnOnce(Result<T>) + Send>) -> Re
 }
 
 /// `op.join()` for a Windows async operation, but it gives up after `limit` and cancels the call.
+#[cfg(windows)]
 macro_rules! join_within {
     ($op:expr, $limit:expr) => {{
         let op = $op;
@@ -59,14 +75,18 @@ const ART_SIZE: u32 = 96;
 
 /// How often the player is read again even if Windows said nothing, to catch a missed change and
 /// to keep the position honest.
+#[cfg(windows)]
 const RESYNC: Duration = Duration::from_secs(4);
 /// The same while nothing is playing: Windows still announces every change, and no position is running
 /// that needs to be kept honest, so the thread can sleep longer.
+#[cfg(windows)]
 const RESYNC_IDLE: Duration = Duration::from_secs(15);
 /// How long to wait before asking Windows for the media sessions again when that failed.
+#[cfg(windows)]
 const START_RETRY: Duration = Duration::from_secs(5);
 /// When a track changes, browsers (YouTube above all) fill in its title, length, picture and time one
 /// piece at a time. The player is read again after these delays so the settled values win.
+#[cfg(windows)]
 const SETTLE: [Duration; 5] = [Duration::from_millis(500), Duration::from_millis(1500), Duration::from_millis(3500), Duration::from_millis(6000), Duration::from_millis(10000)];
 
 #[derive(Clone, Default)]
@@ -88,6 +108,7 @@ pub struct MediaState {
 /// Whether a click on the bar or on a lyric line can move the song. Apple Music says it cannot ("position can
 /// be set" is false) and ignores the jump, so the song would carry on where it was and the lyrics would go back
 /// to it. A player that has not given a length yet (Firefox, for a moment) is given the benefit of the doubt.
+#[cfg(any(windows, test))]
 fn seek_allowed(position_enabled: bool, duration: Duration) -> bool {
     position_enabled || duration.is_zero()
 }
@@ -110,6 +131,7 @@ impl MediaState {
     }
 
     /// Nothing the UI shows differs between the two.
+    #[cfg(windows)]
     fn same_as(&self, o: &MediaState) -> bool {
         (&self.title, &self.artist, &self.album, self.playing, self.position, self.duration) == (&o.title, &o.artist, &o.album, o.playing, o.position, o.duration)
             && (self.has_session, self.next_enabled, self.can_seek, &self.art) == (o.has_session, o.next_enabled, o.can_seek, &o.art)
@@ -120,23 +142,41 @@ pub enum Command {
     TogglePlay,
     Next,
     Previous,
-    Seek(Duration),
+    Seek(#[cfg_attr(not(windows), allow(dead_code))] Duration),
 }
 
+#[cfg(windows)]
 enum Msg {
     Refresh,
     Command(Command),
 }
 
+#[cfg(windows)]
 #[derive(Clone)]
 pub struct MediaHandle(Sender<Msg>);
 
+#[cfg(windows)]
 impl MediaHandle {
     pub fn send(&self, cmd: Command) {
         let _ = self.0.send(Msg::Command(cmd));
     }
 }
 
+#[cfg(not(windows))]
+#[derive(Clone)]
+pub struct MediaHandle;
+
+#[cfg(not(windows))]
+impl MediaHandle {
+    pub fn send(&self, _cmd: Command) {}
+}
+
+#[cfg(not(windows))]
+pub fn spawn(_proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
+    MediaHandle
+}
+
+#[cfg(windows)]
 pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
     let (tx, rx) = mpsc::channel::<Msg>();
     let handle = MediaHandle(tx.clone());
@@ -239,6 +279,7 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>) -> MediaHandle {
 }
 
 /// Holds the per-session event registrations; unregisters on drop.
+#[cfg(windows)]
 struct Subscription {
     session: Session,
     props: i64,
@@ -246,6 +287,7 @@ struct Subscription {
     timeline: i64,
 }
 
+#[cfg(windows)]
 impl Subscription {
     fn new(session: &Session, tx: Sender<Msg>) -> Result<Self> {
         let t = tx.clone();
@@ -267,6 +309,7 @@ impl Subscription {
     }
 }
 
+#[cfg(windows)]
 impl Drop for Subscription {
     fn drop(&mut self) {
         let _ = self.session.RemoveMediaPropertiesChanged(self.props);
@@ -276,14 +319,17 @@ impl Drop for Subscription {
 }
 
 /// The most characters of a title, artist or album that are kept.
+#[cfg(any(windows, test))]
 const MAX_META_CHARS: usize = 256;
 
+#[cfg(any(windows, test))]
 fn clip_meta(s: &str) -> String {
     crate::lyrics::clip(s, MAX_META_CHARS).to_string()
 }
 
 /// `reuse`: the state sent last, on a plain resync. Its cover is kept for the same song instead of being
 /// read and decoded again.
+#[cfg(windows)]
 fn read_state(session: &Session, reuse: Option<&MediaState>) -> Result<MediaState> {
     let props = join_within!(session.TryGetMediaPropertiesAsync()?, CALL_LIMIT)?;
     let info = session.GetPlaybackInfo()?;
@@ -328,6 +374,7 @@ fn read_state(session: &Session, reuse: Option<&MediaState>) -> Result<MediaStat
 
 /// Previous track if the source supports it (Spotify), otherwise restart the current one
 /// (single YouTube videos in Chrome don't expose a previous track).
+#[cfg(windows)]
 fn skip_previous(s: &Session) -> Result<()> {
     let can_skip = s.GetPlaybackInfo()?.Controls()?.IsPreviousEnabled()?;
     if can_skip {
@@ -340,6 +387,7 @@ fn skip_previous(s: &Session) -> Result<()> {
 
 /// How long ago a WinRT DateTime (100 ns ticks since 1601) was. Zero for a time in the future, and for
 /// one so old that it is not a real update time.
+#[cfg(windows)]
 fn since(universal: i64) -> Duration {
     const EPOCH_TICKS: i64 = 116_444_736_000_000_000;
     let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else { return Duration::ZERO };
@@ -349,6 +397,7 @@ fn since(universal: i64) -> Duration {
 }
 
 /// WinRT TimeSpan is in 100 ns ticks.
+#[cfg(windows)]
 fn ticks(t: i64) -> Duration {
     // A player can send any number here; a huge one must not overflow.
     Duration::from_nanos((t.max(0) as u64).saturating_mul(100))
@@ -356,12 +405,16 @@ fn ticks(t: i64) -> Duration {
 
 /// The most bytes of album art that are read. Real covers are well under 1 MB; a player (or a web page,
 /// through the browser's media session) can hand over anything, and a bigger one is left out.
+#[cfg(windows)]
 const ART_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// The largest cover that is decoded, across and down, and the most memory the decoding may take.
+#[cfg(any(windows, test))]
 const ART_MAX_SIDE: u32 = 4096;
+#[cfg(any(windows, test))]
 const ART_MAX_ALLOC: u64 = 96 * 1024 * 1024;
 
 /// Decode a cover within the limits above (`None` for one that is too big or not a picture).
+#[cfg(any(windows, test))]
 fn decode_art(bytes: &[u8]) -> Option<image::DynamicImage> {
     crate::gfx::decode_limited(bytes, ART_MAX_SIDE, ART_MAX_ALLOC)
 }
@@ -369,6 +422,7 @@ fn decode_art(bytes: &[u8]) -> Option<image::DynamicImage> {
 /// The cover as a square picture of `ART_SIZE`: the middle square is cut out FIRST, and only that is scaled.
 /// (`resize_to_fill` scales the whole picture to fill the square and cuts afterwards, so a cover of 4096 x 1 pixels
 /// was first made 393216 x 96 pixels.)
+#[cfg(any(windows, test))]
 fn cover_square(img: image::DynamicImage) -> image::DynamicImage {
     let (w, h) = (img.width(), img.height());
     let side = w.min(h);
@@ -378,6 +432,7 @@ fn cover_square(img: image::DynamicImage) -> image::DynamicImage {
     img.crop_imm((w - side) / 2, (h - side) / 2, side, side).resize_exact(ART_SIZE, ART_SIZE, image::imageops::FilterType::Triangle)
 }
 
+#[cfg(windows)]
 fn read_art(r: &IRandomAccessStreamReference) -> Result<Option<Vec<u8>>> {
     let stream = join_within!(r.OpenReadAsync()?, CALL_LIMIT)?;
     let size = stream.Size()?;
@@ -404,6 +459,7 @@ pub const fn art_size() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     fn png(width: u32, height: u32) -> Vec<u8> {
         use image::ImageEncoder;
@@ -413,6 +469,7 @@ mod tests {
         out
     }
 
+    #[cfg(windows)]
     #[test]
     fn strange_times_from_a_player_do_not_overflow() {
         assert_eq!(ticks(10_000_000), Duration::from_secs(1));
@@ -429,6 +486,7 @@ mod tests {
         assert!(decode_art(b"not a picture").is_none());
     }
 
+    #[cfg(windows)]
     fn filetime_now() -> i64 {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         (now.as_nanos() / 100) as i64 + 116_444_736_000_000_000
@@ -496,12 +554,14 @@ mod tests {
         assert_eq!(song(7, 0).keep_timeline(&song(5, 0), shown, false).position, Duration::from_secs(7));
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_age_of_an_update_is_the_time_since_it() {
         let age = since(filetime_now() - 30 * 10_000_000);
         assert!((29..=31).contains(&age.as_secs()), "{age:?}");
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_future_or_ancient_update_time_adds_nothing() {
         assert_eq!(since(filetime_now() + 50_000_000), Duration::ZERO);
@@ -509,8 +569,10 @@ mod tests {
     }
 
     /// What `within` hands to a call so that it can report back.
+    #[cfg(windows)]
     type Done = Box<dyn FnOnce(Result<i32>) + Send>;
 
+    #[cfg(windows)]
     fn answered_later(value: i32, after_ms: u64) -> impl FnOnce(Done) -> Result<()> {
         move |done| {
             thread::spawn(move || {
@@ -521,6 +583,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_call_that_answers_in_time_gives_its_answer() {
         let cancelled = std::cell::Cell::new(false);
@@ -529,6 +592,7 @@ mod tests {
         assert!(!cancelled.get(), "nothing to cancel");
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_call_that_never_answers_is_given_up_on_and_cancelled() {
         let cancelled = std::cell::Cell::new(false);
@@ -539,6 +603,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(2), "it did not wait for the slow answer");
     }
 
+    #[cfg(windows)]
     #[test]
     fn an_error_from_the_call_is_passed_on() {
         let failing = |done: Done| {
