@@ -2,15 +2,19 @@
 //! Each pushes a `Notice` to the UI only when something actually changes.
 
 #[cfg(windows)]
+use std::sync::Mutex;
+#[cfg(any(windows, target_os = "linux"))]
+use std::sync::OnceLock;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::sync::mpsc::{self, Sender};
-#[cfg(windows)]
-use std::sync::{Mutex, OnceLock};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::thread;
+#[cfg(any(windows, target_os = "linux", test))]
+use std::time::Duration;
 #[cfg(any(windows, test))]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[cfg(windows)]
 use windows::Networking::Connectivity::{NetworkInformation, NetworkStatusChangedEventHandler};
@@ -99,7 +103,7 @@ pub enum BatteryKind {
 
 type Proxy = EventLoopProxy<UserEvent>;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn send(proxy: &Proxy, notice: Notice) {
     let _ = proxy.send_event(UserEvent::Notice(notice));
 }
@@ -116,7 +120,11 @@ pub fn spawn_all(proxy: Proxy) {
         thread::spawn(move || brightness(p));
         thread::spawn(move || network(proxy));
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        thread::spawn(move || linux::audio(proxy));
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     let _ = proxy;
 }
 
@@ -140,7 +148,9 @@ pub fn set_volume(percent: u32) {
     if let Some(tx) = AUDIO_TX.get() {
         let _ = tx.send(AudioMsg::SetVolume(percent.min(100) as f32 / 100.0));
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    linux::set_volume(percent);
+    #[cfg(not(any(windows, target_os = "linux")))]
     let _ = percent;
 }
 
@@ -150,6 +160,8 @@ pub fn toggle_mute() {
     if let Some(tx) = AUDIO_TX.get() {
         let _ = tx.send(AudioMsg::ToggleMute);
     }
+    #[cfg(target_os = "linux")]
+    linux::toggle_mute();
 }
 
 #[cfg(windows)]
@@ -278,6 +290,336 @@ fn audio(proxy: Proxy) {
         }
     }
 }
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::*;
+    use std::io::{self, BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(super) struct SinkInfo {
+        pub(super) name: String,
+        pub(super) description: String,
+        pub(super) active_port: String,
+        pub(super) percent: u32,
+        pub(super) muted: bool,
+        pub(super) headphones: bool,
+    }
+
+    pub(super) fn is_headphones(form_factor: &str, icon_name: &str, active_port: &str, description: &str) -> bool {
+        const NEEDLES: [&str; 5] = ["headphone", "headset", "hands-free", "earphone", "airpods"];
+        [form_factor, icon_name, active_port, description].into_iter().any(|field| {
+            let lower = field.to_ascii_lowercase();
+            NEEDLES.iter().any(|needle| lower.contains(needle))
+        })
+    }
+
+    fn collect_percents(fragment: &str, sum: &mut u64, count: &mut u64) {
+        for word in fragment.split_whitespace() {
+            let cleaned = word.trim_matches(|c: char| matches!(c, ',' | '/' | ';' | '(' | ')'));
+            if let Some(num) = cleaned.strip_suffix('%')
+                && !num.is_empty()
+                && num.bytes().all(|b| b.is_ascii_digit())
+                && let Ok(val) = num.parse::<u64>()
+            {
+                *sum += val;
+                *count += 1;
+            }
+        }
+    }
+
+    pub(super) fn parse_sinks(text: &str) -> Vec<SinkInfo> {
+        #[derive(Default)]
+        struct Builder {
+            started: bool,
+            name: String,
+            description: String,
+            active_port: String,
+            form_factor: String,
+            icon_name: String,
+            muted: bool,
+            vol_sum: u64,
+            vol_count: u64,
+            in_volume: bool,
+        }
+
+        impl Builder {
+            fn finish(self, out: &mut Vec<SinkInfo>) {
+                if !self.started || self.name.is_empty() {
+                    return;
+                }
+                let percent = (self.vol_sum + self.vol_count / 2).checked_div(self.vol_count).unwrap_or(0).min(100) as u32;
+                let headphones = is_headphones(&self.form_factor, &self.icon_name, &self.active_port, &self.description);
+                out.push(SinkInfo { name: self.name, description: self.description, active_port: self.active_port, percent, muted: self.muted, headphones });
+            }
+        }
+
+        let mut sinks = Vec::new();
+        let mut cur = Builder::default();
+
+        for raw in text.lines() {
+            let line = raw.trim_end_matches('\r');
+            if line.starts_with("Sink #") {
+                std::mem::take(&mut cur).finish(&mut sinks);
+                cur.started = true;
+                continue;
+            }
+            if !cur.started {
+                continue;
+            }
+            if cur.in_volume {
+                if line.starts_with("\t ") || line.starts_with("  ") {
+                    collect_percents(line, &mut cur.vol_sum, &mut cur.vol_count);
+                    continue;
+                }
+                cur.in_volume = false;
+            }
+            if let Some(field) = line.strip_prefix('\t').filter(|s| !s.starts_with(['\t', ' '])) {
+                if let Some(val) = field.strip_prefix("Name:") {
+                    cur.name = val.trim().to_string();
+                } else if let Some(val) = field.strip_prefix("Description:") {
+                    cur.description = val.trim().to_string();
+                } else if let Some(val) = field.strip_prefix("Mute:") {
+                    cur.muted = val.trim().eq_ignore_ascii_case("yes");
+                } else if let Some(val) = field.strip_prefix("Volume:") {
+                    cur.in_volume = true;
+                    cur.vol_sum = 0;
+                    cur.vol_count = 0;
+                    collect_percents(val, &mut cur.vol_sum, &mut cur.vol_count);
+                } else if let Some(val) = field.strip_prefix("Active Port:") {
+                    cur.active_port = val.trim().to_string();
+                }
+            } else {
+                let trimmed = line.trim();
+                if let Some(val) = trimmed.strip_prefix("device.form_factor = ") {
+                    cur.form_factor = val.trim().trim_matches('"').to_string();
+                } else if let Some(val) = trimmed.strip_prefix("device.icon_name = ") {
+                    cur.icon_name = val.trim().trim_matches('"').to_string();
+                }
+            }
+        }
+        cur.finish(&mut sinks);
+        sinks
+    }
+
+    pub(super) fn is_relevant_subscribe_line(line: &str) -> bool {
+        line.contains(" on sink #") || line.contains(" on server #")
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(super) enum AudioDelta {
+        Initial { percent: u32, muted: bool },
+        OutputChanged { name: String, headphones: bool, percent: u32, muted: bool },
+        VolumeChanged { percent: u32, muted: bool },
+        Unchanged,
+    }
+
+    #[derive(Default)]
+    pub(super) struct AudioTracker {
+        last_sink: Option<String>,
+        last_port: Option<String>,
+        last_desc: Option<String>,
+        last_vol: Option<(u32, bool)>,
+    }
+
+    impl AudioTracker {
+        pub(super) fn observe(&mut self, sink: &SinkInfo) -> AudioDelta {
+            if self.last_sink.is_none() {
+                self.last_sink = Some(sink.name.clone());
+                self.last_port = Some(sink.active_port.clone());
+                self.last_desc = Some(sink.description.clone());
+                self.last_vol = Some((sink.percent, sink.muted));
+                return AudioDelta::Initial { percent: sink.percent, muted: sink.muted };
+            }
+
+            let sink_changed = self.last_sink.as_deref() != Some(sink.name.as_str());
+            let port_changed = self.last_port.as_deref() != Some(sink.active_port.as_str());
+            let desc_changed = self.last_desc.as_deref() != Some(sink.description.as_str());
+
+            if sink_changed || port_changed {
+                let fallback = || if !sink.description.is_empty() { sink.description.clone() } else { sink.name.clone() };
+                let name = if sink_changed || desc_changed {
+                    fallback()
+                } else {
+                    let port = sink.active_port.strip_prefix("[Out] ").unwrap_or(&sink.active_port).trim();
+                    if !port.is_empty() { port.to_string() } else { fallback() }
+                };
+                self.last_sink = Some(sink.name.clone());
+                self.last_port = Some(sink.active_port.clone());
+                self.last_desc = Some(sink.description.clone());
+                self.last_vol = Some((sink.percent, sink.muted));
+                return AudioDelta::OutputChanged { name, headphones: sink.headphones, percent: sink.percent, muted: sink.muted };
+            }
+
+            if self.last_vol != Some((sink.percent, sink.muted)) {
+                self.last_vol = Some((sink.percent, sink.muted));
+                return AudioDelta::VolumeChanged { percent: sink.percent, muted: sink.muted };
+            }
+
+            AudioDelta::Unchanged
+        }
+    }
+
+    enum Cmd {
+        SetVolume(u32),
+        ToggleMute,
+    }
+
+    static AUDIO_TX: OnceLock<Sender<Cmd>> = OnceLock::new();
+
+    pub(super) fn set_volume(percent: u32) {
+        if let Some(tx) = AUDIO_TX.get() {
+            let _ = tx.send(Cmd::SetVolume(percent.min(100)));
+        }
+    }
+
+    pub(super) fn toggle_mute() {
+        if let Some(tx) = AUDIO_TX.get() {
+            let _ = tx.send(Cmd::ToggleMute);
+        }
+    }
+
+    fn apply_volume(percent: u32) {
+        let arg = format!("{}%", percent.min(100));
+        let _ =
+            Command::new("pactl").args(["set-sink-volume", "@DEFAULT_SINK@", &arg]).env("LC_ALL", "C").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        if percent > 0 {
+            let _ =
+                Command::new("pactl").args(["set-sink-mute", "@DEFAULT_SINK@", "0"]).env("LC_ALL", "C").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        }
+    }
+
+    fn apply_toggle_mute() {
+        let _ =
+            Command::new("pactl").args(["set-sink-mute", "@DEFAULT_SINK@", "toggle"]).env("LC_ALL", "C").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    }
+
+    fn query_default_sink() -> Option<SinkInfo> {
+        let def = Command::new("pactl").arg("get-default-sink").env("LC_ALL", "C").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        if !def.status.success() {
+            return None;
+        }
+        let default_name = String::from_utf8_lossy(&def.stdout).trim().to_string();
+        if default_name.is_empty() {
+            return None;
+        }
+        let list = Command::new("pactl").args(["list", "sinks"]).env("LC_ALL", "C").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        if !list.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&list.stdout);
+        parse_sinks(&text).into_iter().find(|s| s.name == default_name)
+    }
+
+    fn dispatch(proxy: &Proxy, tracker: &mut AudioTracker, sink: &SinkInfo) {
+        match tracker.observe(sink) {
+            AudioDelta::Initial { percent, muted } => {
+                let _ = proxy.send_event(UserEvent::SysVolume { percent, muted });
+            }
+            AudioDelta::OutputChanged { name, headphones, percent, muted } => {
+                send(proxy, Notice::Audio { name, headphones });
+                let _ = proxy.send_event(UserEvent::SysVolume { percent, muted });
+            }
+            AudioDelta::VolumeChanged { percent, muted } => {
+                send(proxy, Notice::Volume { percent, muted });
+            }
+            AudioDelta::Unchanged => {}
+        }
+    }
+
+    pub(super) fn audio(proxy: Proxy) {
+        let (tx, rx) = mpsc::channel();
+        if AUDIO_TX.set(tx).is_err() {
+            return;
+        }
+        let _ = thread::Builder::new().name("audio-ctl".into()).spawn(move || {
+            while let Ok(first) = rx.recv() {
+                let mut pending = vec![first];
+                pending.extend(rx.try_iter());
+                let mut i = 0;
+                while i < pending.len() {
+                    match pending[i] {
+                        Cmd::SetVolume(mut p) => {
+                            while i + 1 < pending.len() {
+                                if let Cmd::SetVolume(next) = pending[i + 1] {
+                                    p = next;
+                                    i += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            apply_volume(p);
+                        }
+                        Cmd::ToggleMute => apply_toggle_mute(),
+                    }
+                    i += 1;
+                }
+            }
+        });
+
+        let mut tracker = AudioTracker::default();
+        if let Some(sink) = query_default_sink() {
+            dispatch(&proxy, &mut tracker, &sink);
+        }
+
+        loop {
+            let mut cmd = Command::new("pactl");
+            cmd.arg("subscribe").env("LC_ALL", "C").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+            kill_on_parent_exit(&mut cmd);
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => return,
+                Err(_) => {
+                    thread::sleep(Duration::from_secs(2));
+                    continue;
+                }
+            };
+            if let Some(stdout) = child.stdout.take() {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    if is_relevant_subscribe_line(&line)
+                        && let Some(sink) = query_default_sink()
+                    {
+                        dispatch(&proxy, &mut tracker, &sink);
+                    }
+                }
+            }
+            let _ = child.wait();
+            thread::sleep(Duration::from_secs(2));
+        }
+    }
+
+    /// Ask the Linux kernel to send `SIGTERM` to a long-lived child process if its parent thread/process exits.
+    pub(crate) fn kill_on_parent_exit(cmd: &mut Command) {
+        use std::os::unix::process::CommandExt;
+
+        const PR_SET_PDEATHSIG: i32 = 1;
+        const SIGTERM: usize = 15;
+
+        unsafe extern "C" {
+            fn prctl(option: i32, ...) -> i32;
+            fn getppid() -> i32;
+        }
+
+        let parent_pid = std::process::id() as i32;
+        // SAFETY: `pre_exec` runs between `fork` and `execve`; `prctl(PR_SET_PDEATHSIG, ...)` and `getppid` are
+        // async-signal-safe syscalls, and `parent_pid` is copied as a plain `i32` before `fork`.
+        unsafe {
+            cmd.pre_exec(move || {
+                prctl(PR_SET_PDEATHSIG, SIGTERM, 0usize, 0usize, 0usize);
+                if getppid() != parent_pid {
+                    return Err(io::Error::new(io::ErrorKind::BrokenPipe, "parent exited"));
+                }
+                Ok(())
+            });
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) use linux::kill_on_parent_exit;
 
 // ---- Battery ----
 
@@ -805,5 +1147,88 @@ mod tests {
         assert_eq!(brightness_interval(Duration::ZERO), BRIGHTNESS_IDLE);
         assert_eq!(brightness_interval(Duration::from_secs(1)), BRIGHTNESS_QUICK);
         assert!(BRIGHTNESS_IDLE >= Duration::from_millis(250), "far fewer wake-ups than the old 100 ms");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_sinks_reads_multiple_sinks_and_surround_volumes() {
+        let sample = "\
+Sink #10
+\tState: RUNNING
+\tName: alsa_output.pci.speaker
+\tDescription: Built-in Speaker
+\tMute: no
+\tVolume: front-left: 55706 /  85% / -4.23 dB,   front-right: 55706 /  85% / -4.23 dB
+\t        balance 0.00
+\tBase Volume: 65536 / 100% / 0.00 dB
+\tProperties:
+\t\tdevice.icon_name = \"audio-speakers\"
+\tActive Port: [Out] Speaker
+Sink #11
+\tState: IDLE
+\tName: bluez_output.headphones
+\tDescription: Sony WH-1000XM5
+\tMute: yes
+\tVolume: front-left: 72090 / 110% / 2.5 dB,   front-right: 72090 / 110% / 2.5 dB,
+\t        rear-left: 58982 /  90% / -2.75 dB,   rear-right: 58982 /  90% / -2.75 dB
+\tBase Volume: 65536 / 100% / 0.00 dB
+\tProperties:
+\t\tdevice.form_factor = \"headset\"
+\t\tdevice.icon_name = \"audio-headset-bluetooth\"
+\tActive Port: headset-output
+";
+        let sinks = linux::parse_sinks(sample);
+        assert_eq!(sinks.len(), 2);
+        assert_eq!(sinks[0].name, "alsa_output.pci.speaker");
+        assert_eq!(sinks[0].description, "Built-in Speaker");
+        assert_eq!(sinks[0].percent, 85);
+        assert!(!sinks[0].muted);
+        assert!(!sinks[0].headphones);
+        assert_eq!(sinks[0].active_port, "[Out] Speaker");
+
+        assert_eq!(sinks[1].name, "bluez_output.headphones");
+        assert_eq!(sinks[1].percent, 100, "average clamped to 100, Base Volume ignored");
+        assert!(sinks[1].muted);
+        assert!(sinks[1].headphones);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headphones_detection_and_subscribe_filter() {
+        assert!(linux::is_headphones("headphone", "", "", ""));
+        assert!(linux::is_headphones("", "audio-headset", "", ""));
+        assert!(linux::is_headphones("", "", "[Out] Headphones", ""));
+        assert!(linux::is_headphones("", "", "", "AirPods Pro Hands-Free"));
+        assert!(!linux::is_headphones("speaker", "audio-speakers", "[Out] Speaker", "Built-in Audio"));
+
+        assert!(linux::is_relevant_subscribe_line("Event 'change' on sink #26911"));
+        assert!(linux::is_relevant_subscribe_line("Event 'change' on server #0"));
+        assert!(!linux::is_relevant_subscribe_line("Event 'change' on client #30856"));
+        assert!(!linux::is_relevant_subscribe_line("Event 'new' on sink-input #42"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn audio_tracker_emits_initial_volume_and_output_deltas() {
+        let mut tracker = linux::AudioTracker::default();
+        let speaker = linux::SinkInfo {
+            name: "sink.speaker".into(),
+            description: "Built-in Audio".into(),
+            active_port: "[Out] Speaker".into(),
+            percent: 50,
+            muted: false,
+            headphones: false,
+        };
+        assert_eq!(tracker.observe(&speaker), linux::AudioDelta::Initial { percent: 50, muted: false });
+        assert_eq!(tracker.observe(&speaker), linux::AudioDelta::Unchanged);
+
+        let louder = linux::SinkInfo { percent: 65, ..speaker.clone() };
+        assert_eq!(tracker.observe(&louder), linux::AudioDelta::VolumeChanged { percent: 65, muted: false });
+
+        let jack = linux::SinkInfo { active_port: "[Out] Headphones".into(), headphones: true, percent: 35, ..louder.clone() };
+        assert_eq!(tracker.observe(&jack), linux::AudioDelta::OutputChanged { name: "Headphones".into(), headphones: true, percent: 35, muted: false });
+
+        let usb = linux::SinkInfo { name: "sink.usb".into(), description: "USB DAC".into(), active_port: "analog-output".into(), percent: 80, muted: true, headphones: false };
+        assert_eq!(tracker.observe(&usb), linux::AudioDelta::OutputChanged { name: "USB DAC".into(), headphones: false, percent: 80, muted: true });
     }
 }
