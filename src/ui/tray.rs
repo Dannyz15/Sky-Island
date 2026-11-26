@@ -16,21 +16,86 @@ pub struct MenuId(String);
 
 #[cfg(not(windows))]
 impl MenuId {
-    #[cfg(test)]
+    #[cfg(any(target_os = "linux", test))]
     pub(crate) fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 }
 
-/// The tray icon (kept here so Windows keeps showing it) and the ids of its menu entries. Empty until `build`, and
-/// also when Windows would not make the icon or the menu.
+#[cfg(target_os = "linux")]
+struct LinuxTray {
+    proxy: EventLoopProxy<UserEvent>,
+    icons: Vec<ksni::Icon>,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxTray {
+    fn emit(&self, id: &str) {
+        let _ = self.proxy.send_event(UserEvent::Menu(MenuId::new(id)));
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ksni::Tray for LinuxTray {
+    fn id(&self) -> String {
+        "sky-island".into()
+    }
+
+    fn title(&self) -> String {
+        "Sky Island".into()
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.icons.clone()
+    }
+
+    fn activate(&mut self, _x: i32, _y: i32) {
+        self.emit("settings");
+    }
+
+    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+        use ksni::menu::StandardItem;
+        vec![
+            StandardItem { label: "Settings\u{2026}".into(), activate: Box::new(|this: &mut Self| this.emit("settings")), ..Default::default() }.into(),
+            ksni::MenuItem::Separator,
+            StandardItem { label: "About Sky Island".into(), activate: Box::new(|this: &mut Self| this.emit("about")), ..Default::default() }.into(),
+            StandardItem { label: "Exit".into(), activate: Box::new(|this: &mut Self| this.emit("quit")), ..Default::default() }.into(),
+        ]
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxTrayHandle(ksni::blocking::Handle<LinuxTray>);
+
+#[cfg(target_os = "linux")]
+impl Drop for LinuxTrayHandle {
+    fn drop(&mut self) {
+        self.0.shutdown();
+    }
+}
+
+/// Convert straight RGBA8 pixels to network byte-order ARGB32 for `StatusNotifierItem`.
+#[cfg(target_os = "linux")]
+fn rgba_to_argb_be(rgba: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(rgba.len());
+    for px in rgba.as_chunks::<4>().0 {
+        out.extend_from_slice(&[px[3], px[0], px[1], px[2]]);
+    }
+    out
+}
+
+/// The tray icon (kept here so the desktop keeps showing it) and the ids of its menu entries. Empty until `build`, and
+/// also when the desktop would not make the icon or the menu.
 #[derive(Default)]
 pub(crate) struct Tray {
     /// Never read: the icon is only kept alive, because it goes away from the tray when this is dropped.
     #[cfg(windows)]
     #[allow(dead_code)]
     icon: Option<TrayIcon>,
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    #[allow(dead_code)]
+    icon: Option<LinuxTrayHandle>,
+    #[cfg(all(not(windows), not(target_os = "linux")))]
     #[allow(dead_code)]
     icon: Option<()>,
     settings: Option<MenuId>,
@@ -61,7 +126,18 @@ impl Tray {
         Self { icon: tray.ok(), settings: Some(open.id().clone()), about: Some(about.id().clone()), quit: Some(quit.id().clone()) }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    pub(crate) fn build(proxy: &EventLoopProxy<UserEvent>) -> Self {
+        use ksni::blocking::TrayMethods;
+        let icons = [32u32, 64].into_iter().map(|size| ksni::Icon { width: size as i32, height: size as i32, data: rgba_to_argb_be(&appicon::rgba(size)) }).collect();
+        let tray = LinuxTray { proxy: proxy.clone(), icons };
+        let Ok(handle) = tray.assume_sni_available(true).spawn() else {
+            return Self::default();
+        };
+        Self { icon: Some(LinuxTrayHandle(handle)), settings: Some(MenuId::new("settings")), about: Some(MenuId::new("about")), quit: Some(MenuId::new("quit")) }
+    }
+
+    #[cfg(all(not(windows), not(target_os = "linux")))]
     pub(crate) fn build(_proxy: &EventLoopProxy<UserEvent>) -> Self {
         Self::default()
     }
@@ -97,5 +173,13 @@ mod tests {
     #[test]
     fn without_a_tray_no_click_matches() {
         assert_eq!(Tray::default().entry(&MenuId::new("q")), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rgba_to_argb_be_converts_pixels_to_network_byte_order() {
+        let rgba = [10u8, 20, 30, 255, 1, 2, 3, 128];
+        assert_eq!(rgba_to_argb_be(&rgba), vec![255, 10, 20, 30, 128, 1, 2, 3]);
+        assert!(rgba_to_argb_be(&[]).is_empty());
     }
 }
