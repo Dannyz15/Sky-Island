@@ -28,7 +28,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Dannyz15/Sky-Island/releases/latest"><b>⬇ Download the latest version</b></a>
+  <a href="https://apps.microsoft.com/detail/9NB2G6D5MQPL"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200" alt="Get it from Microsoft"></a>
+  <br>
+  <a href="https://github.com/Dannyz15/Sky-Island/releases/latest"><b>⬇ Or download the setup from GitHub</b></a>
 </p>
 
 ---
@@ -74,6 +76,10 @@ Every tab can be switched off in Settings > Tabs. Weather and Prayer need your c
 ## Installation
 
 **Requirements:** Windows 10 or 11 (64-bit). The setup is about 4 MB and needs no administrator rights.
+
+**From the Microsoft Store:** get [Sky Island](https://apps.microsoft.com/detail/9NB2G6D5MQPL) there. The Store installs it, keeps it up to date and removes it. In this version there is no **Check for updates**, and **Start with Windows** is a Windows startup task (also listed in Task Manager > Startup apps).
+
+**From GitHub:**
 
 1. Download `Sky-Island-Setup-<version>.exe` from the [Releases page](https://github.com/Dannyz15/Sky-Island/releases).
 2. Run it. It installs for your user only.
@@ -165,7 +171,7 @@ Network requests, and why:
 
 **Glass:** with Clear or Smoky glass, Sky Island copies the part of the screen right around the notch a few times a second (up to about fifteen while the notch is moving), to show it blurred through the glass. The copy is kept in memory only; it is never saved or sent. Nothing is copied with Black glass or no glass.
 
-To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whether one of those two keys was pressed. It never records or sends what you type. **Start with Windows** adds one startup entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whether one of those two keys was pressed. It never records or sends what you type. **Start with Windows** adds one startup entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. The Microsoft Store version never looks for updates on GitHub (the Store updates it), and its **Start with Windows** uses a Windows startup task instead of that entry.
 </details>
 
 ## Known limitations
