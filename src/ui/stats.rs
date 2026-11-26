@@ -480,17 +480,22 @@ impl App {
         for (i, d) in last.disks.iter().enumerate() {
             let y = top + STORAGE_HEAD + DRIVE_ROW * i as f32;
             let frac = if d.total > 0 { d.used as f32 / d.total as f32 } else { 0.0 };
-            let before = self.stats.data.prev.disks.get(i).filter(|p| p.letter == d.letter && p.total > 0).map(|p| p.used as f32 / p.total as f32);
+            let before = self.stats.data.prev.disks.get(i).filter(|p| p.same_id(d) && p.total > 0).map(|p| p.used as f32 / p.total as f32);
             let shown = glide(before, Some(frac), self.glide_progress()).unwrap_or(frac).clamp(0.0, 1.0);
-            // The letter in a small tile that takes the colour of how full the drive is.
+            let label = d.label();
+            #[cfg(target_os = "linux")]
+            let (label_size, tile_w) = (11.0, (text_width(heading, &label, 11.0 * s) / s + 12.0).clamp(22.0, 58.0));
+            #[cfg(not(target_os = "linux"))]
+            let (label_size, tile_w) = (12.0, 22.0);
+            // The drive badge in a small tile that takes the colour of how full the drive is.
             let col = load_color(shown, a);
-            fill_rounded(pm, MARGIN * s, y * s, 22.0 * s, 20.0 * s, 6.0 * s, [col[0], col[1], col[2], (alpha * 40.0) as u8]);
-            draw_text_centered(pm, heading, &d.letter.to_string(), (MARGIN + 11.0) * s, (y + 14.5) * s, 12.0 * s, white, 20.0 * s);
+            fill_rounded(pm, MARGIN * s, y * s, tile_w * s, 20.0 * s, 6.0 * s, [col[0], col[1], col[2], (alpha * 40.0) as u8]);
+            draw_text_centered(pm, heading, &label, (MARGIN + tile_w / 2.0) * s, (y + 14.5) * s, label_size * s, white, (tile_w - 4.0) * s);
             let words = stats::used_of(d.used, d.total);
             let tw = text_width(font, &words, 10.5 * s);
             draw_text(pm, font, &words, (MARGIN + WIDTH) * s - tw, (y + 14.0) * s, 10.5 * s, grey, 100.0 * s);
-            let bar_x = MARGIN + 32.0;
-            let bar_w = WIDTH - 32.0 - tw / s - 10.0;
+            let bar_x = MARGIN + tile_w + 10.0;
+            let bar_w = (WIDTH - (tile_w + 10.0) - tw / s - 10.0).max(20.0);
             draw_bar(pm, bar_x * s, (y + 10.0) * s, bar_w * s, shown, col, s, a);
         }
     }

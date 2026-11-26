@@ -5,10 +5,10 @@
 #[cfg(any(windows, test))]
 use std::collections::HashMap;
 use std::collections::VecDeque;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, channel};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -53,12 +53,39 @@ const DRIVE_REMOVABLE: u32 = 2;
 #[cfg(windows)]
 const DRIVE_FIXED: u32 = 3;
 
-/// One drive: its letter, and the space in use and in all, in bytes.
-#[derive(Clone, Copy, PartialEq, Debug)]
+/// One drive: its letter (or short mount label on Linux), and the space in use and in all, in bytes.
+#[derive(Clone, PartialEq, Debug)]
+#[cfg_attr(not(target_os = "linux"), derive(Copy))]
 pub struct Drive {
     pub letter: char,
     pub used: u64,
     pub total: u64,
+    #[cfg(target_os = "linux")]
+    pub label: String,
+}
+
+impl Drive {
+    pub fn label(&self) -> std::borrow::Cow<'_, str> {
+        #[cfg(target_os = "linux")]
+        {
+            std::borrow::Cow::Borrowed(&self.label)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            std::borrow::Cow::Owned(self.letter.to_string())
+        }
+    }
+
+    pub fn same_id(&self, other: &Self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            self.label == other.label
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.letter == other.letter
+        }
+    }
 }
 
 /// What the last look found. `None` where it needs a second look or Windows would not say.
@@ -202,20 +229,20 @@ impl Stats {
     }
 }
 
-/// What the look at the graphics chips has found: nothing yet (`None`), or the chips (none at all when Windows has no
+/// What the look at the graphics chips has found: nothing yet (`None`), or the chips (none at all when the OS has no
 /// load to report for any chip of this PC).
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 type GpuReport = Arc<Mutex<Option<Vec<Chip>>>>;
 
 /// How long the look at the graphics chips carries on after it was last asked for. The Stats view asks once a second.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const GPU_GRACE_MS: u64 = 3_000;
 
 /// The look at the graphics chips. Naming them and opening their counters takes a couple of seconds, and reading
 /// them a few milliseconds, so it is done on a thread of its own that is started the first time the Stats view
 /// asks and then stays: it sleeps (without waking up) while nobody asks, and starts reading within a second of
 /// the next ask. It leaves the answer in `report`.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 struct GpuWatch {
     report: GpuReport,
     /// When it was last asked, in milliseconds since the program began.
@@ -225,17 +252,17 @@ struct GpuWatch {
 
 #[cfg(windows)]
 static GPU_WATCH: OnceLock<GpuWatch> = OnceLock::new();
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 static CLOCK: OnceLock<Instant> = OnceLock::new();
 
 /// Milliseconds since the program began (the first time anyone asks).
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn now_ms() -> u64 {
     CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 /// Whether the look is still wanted: it was asked for in the last few seconds.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn gpu_wanted(asked_ms: u64, now_ms: u64) -> bool {
     now_ms.saturating_sub(asked_ms) <= GPU_GRACE_MS
 }
@@ -265,7 +292,12 @@ fn gpu_look() -> Option<Vec<Chip>> {
     watch.report.lock().ok().and_then(|report| report.clone())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn gpu_look() -> Option<Vec<Chip>> {
+    linux::gpu_look()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn gpu_look() -> Option<Vec<Chip>> {
     None
 }
@@ -447,7 +479,12 @@ fn system_times() -> Option<(u64, u64)> {
     Some((filetime(idle), filetime(kernel) + filetime(user)))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn system_times() -> Option<(u64, u64)> {
+    linux::system_times()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn system_times() -> Option<(u64, u64)> {
     None
 }
@@ -461,7 +498,12 @@ fn memory() -> Option<(u64, u64)> {
     (info.ullTotalPhys > 0).then(|| (info.ullTotalPhys.saturating_sub(info.ullAvailPhys), info.ullTotalPhys))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn memory() -> Option<(u64, u64)> {
+    linux::memory()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn memory() -> Option<(u64, u64)> {
     None
 }
@@ -499,7 +541,12 @@ fn drives() -> Vec<Drive> {
     found
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn drives() -> Vec<Drive> {
+    linux::drives()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn drives() -> Vec<Drive> {
     Vec::new()
 }
@@ -529,9 +576,381 @@ fn network_totals() -> Option<(u64, u64)> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn network_totals() -> Option<(u64, u64)> {
+    linux::network_totals()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn network_totals() -> Option<(u64, u64)> {
     None
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+
+    pub(super) fn parse_proc_stat(text: &str) -> Option<(u64, u64)> {
+        let line = text.lines().find(|l| l.starts_with("cpu "))?;
+        // Use the first 8 columns (user..=steal); columns 9–10 (guest, guest_nice) are already included in user/nice.
+        let vals: Vec<u64> = line.split_whitespace().skip(1).take(8).filter_map(|s| s.parse::<u64>().ok()).collect();
+        if vals.len() < 4 {
+            return None;
+        }
+        let idle = vals[3].saturating_add(vals.get(4).copied().unwrap_or(0));
+        let total: u64 = vals.iter().copied().fold(0, u64::saturating_add);
+        (total > 0).then_some((idle, total))
+    }
+
+    pub(super) fn system_times() -> Option<(u64, u64)> {
+        let text = std::fs::read_to_string("/proc/stat").ok()?;
+        parse_proc_stat(&text)
+    }
+
+    pub(super) fn parse_proc_meminfo(text: &str) -> Option<(u64, u64)> {
+        let (mut total, mut available, mut free, mut buffers, mut cached) = (0u64, None, 0u64, 0u64, 0u64);
+        for line in text.lines() {
+            let Some((key, rest)) = line.split_once(':') else { continue };
+            let Some(kb) = rest.split_whitespace().next().and_then(|s| s.parse::<u64>().ok()) else { continue };
+            let bytes = kb.saturating_mul(1024);
+            match key.trim() {
+                "MemTotal" => total = bytes,
+                "MemAvailable" => available = Some(bytes),
+                "MemFree" => free = bytes,
+                "Buffers" => buffers = bytes,
+                "Cached" => cached = bytes,
+                _ => {}
+            }
+        }
+        if total == 0 {
+            return None;
+        }
+        let avail = available.unwrap_or_else(|| free.saturating_add(buffers).saturating_add(cached));
+        Some((total.saturating_sub(avail), total))
+    }
+
+    pub(super) fn memory() -> Option<(u64, u64)> {
+        let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+        parse_proc_meminfo(&text)
+    }
+
+    pub(super) fn parse_proc_net_dev(text: &str, include: impl Fn(&str) -> bool) -> (u64, u64) {
+        let (mut received, mut sent) = (0u64, 0u64);
+        for line in text.lines().skip(2) {
+            let Some((iface, rest)) = line.split_once(':') else { continue };
+            let iface = iface.trim();
+            if !include(iface) {
+                continue;
+            }
+            let mut cols = rest.split_whitespace();
+            let Some(rx) = cols.next().and_then(|s| s.parse::<u64>().ok()) else { continue };
+            let Some(tx) = cols.nth(7).and_then(|s| s.parse::<u64>().ok()) else { continue };
+            received = received.saturating_add(rx);
+            sent = sent.saturating_add(tx);
+        }
+        (received, sent)
+    }
+
+    fn is_hw_net_up(iface: &str) -> bool {
+        if iface == "lo" {
+            return false;
+        }
+        let sys = Path::new("/sys/class/net").join(iface);
+        if !sys.join("device").exists() {
+            return false;
+        }
+        std::fs::read_to_string(sys.join("operstate")).ok().is_some_and(|s| s.trim() == "up")
+    }
+
+    pub(super) fn network_totals() -> Option<(u64, u64)> {
+        let text = std::fs::read_to_string("/proc/net/dev").ok()?;
+        Some(parse_proc_net_dev(&text, is_hw_net_up))
+    }
+
+    pub(super) fn short_mount_label(mount: &str) -> String {
+        if mount == "/" {
+            return "/".to_string();
+        }
+        let seg = mount.split('/').rfind(|s| !s.is_empty()).unwrap_or("/");
+        if seg.chars().count() > 8 {
+            let mut out: String = seg.chars().take(7).collect();
+            out.push('…');
+            out
+        } else {
+            seg.to_string()
+        }
+    }
+
+    pub(super) fn parse_df_output(text: &str, block_scale: u64) -> Vec<Drive> {
+        let mut by_dev: HashMap<String, (String, u64, u64)> = HashMap::new();
+        for line in text.lines().skip(1) {
+            let mut tokens = [""; 5];
+            let mut rest = line.trim_start();
+            let mut ok = true;
+            for slot in &mut tokens {
+                let Some(end) = rest.find(char::is_whitespace) else {
+                    ok = false;
+                    break;
+                };
+                *slot = &rest[..end];
+                rest = rest[end..].trim_start();
+            }
+            if !ok || rest.is_empty() {
+                continue;
+            }
+            let (fs, blocks_s, used_s, mount) = (tokens[0], tokens[1], tokens[2], rest.trim_end());
+            if !fs.starts_with("/dev/") || fs.starts_with("/dev/loop") || fs.starts_with("/dev/sr") || fs.starts_with("/dev/fd") {
+                continue;
+            }
+            if mount == "/boot/efi" || mount == "/efi" || mount.starts_with("/snap/") {
+                continue;
+            }
+            let (Ok(blocks), Ok(used_blocks)) = (blocks_s.parse::<u64>(), used_s.parse::<u64>()) else { continue };
+            let total = blocks.saturating_mul(block_scale);
+            let used = used_blocks.saturating_mul(block_scale).min(total);
+            if total == 0 {
+                continue;
+            }
+            let replace = match by_dev.get(fs) {
+                None => true,
+                Some((prev_mount, _, _)) => mount.len() < prev_mount.len() || (mount.len() == prev_mount.len() && mount < prev_mount.as_str()),
+            };
+            if replace {
+                by_dev.insert(fs.to_string(), (mount.to_string(), used, total));
+            }
+        }
+        let mut entries: Vec<(String, u64, u64)> = by_dev.into_values().collect();
+        entries.sort_by(|a, b| (a.0 != "/").cmp(&(b.0 != "/")).then_with(|| a.0.cmp(&b.0)));
+        entries.truncate(MAX_DRIVES);
+        entries
+            .into_iter()
+            .map(|(mount, used, total)| {
+                let label = short_mount_label(&mount);
+                let letter = label.chars().next().unwrap_or('/');
+                Drive { letter, used, total, label }
+            })
+            .collect()
+    }
+
+    pub(super) fn drives() -> Vec<Drive> {
+        let run = |args: &[&str]| Command::new("df").args(args).env("LC_ALL", "C").stdin(Stdio::null()).stderr(Stdio::null()).output().ok().filter(|o| o.status.success());
+        if let Some(out) = run(&["-P", "-B1"]) {
+            return parse_df_output(&String::from_utf8_lossy(&out.stdout), 1);
+        }
+        if let Some(out) = run(&["-P", "-k"]) {
+            return parse_df_output(&String::from_utf8_lossy(&out.stdout), 1024);
+        }
+        Vec::new()
+    }
+
+    pub(super) fn clean_pci_gpu_name(raw: &str) -> String {
+        let trimmed = raw.trim();
+        let inner = if let (Some(l), Some(r)) = (trimmed.find('['), trimmed.rfind(']'))
+            && r > l + 1
+        {
+            trimmed[l + 1..r].trim()
+        } else {
+            trimmed
+        };
+        inner.split(" / ").next().and_then(|s| s.split('/').next()).unwrap_or(inner).trim().to_string()
+    }
+
+    pub(super) fn lookup_pci_name(pci_ids: &str, vendor: &str, device: &str) -> Option<String> {
+        let v = vendor.trim().trim_start_matches("0x").trim_start_matches("0X").to_ascii_lowercase();
+        let d = device.trim().trim_start_matches("0x").trim_start_matches("0X").to_ascii_lowercase();
+        if v.is_empty() || d.is_empty() {
+            return None;
+        }
+        let mut in_vendor = false;
+        for line in pci_ids.lines() {
+            if line.starts_with('#') || line.trim().is_empty() {
+                continue;
+            }
+            if !line.starts_with('\t') {
+                if in_vendor {
+                    break;
+                }
+                if line.strip_prefix(&v).is_some_and(|r| r.starts_with(char::is_whitespace)) {
+                    in_vendor = true;
+                }
+                continue;
+            }
+            if in_vendor
+                && let Some(after_tab) = line.strip_prefix('\t').filter(|s| !s.starts_with('\t'))
+                && let Some(rest) = after_tab.strip_prefix(&d)
+                && rest.starts_with(char::is_whitespace)
+            {
+                let name = rest.trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    pub(super) fn parse_nvidia_smi(text: &str) -> Vec<Chip> {
+        let mut chips = Vec::new();
+        for line in text.lines() {
+            let Some((name, util_s)) = line.rsplit_once(',') else { continue };
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let load = util_s.trim().parse::<f32>().ok().map(|p| (p / 100.0).clamp(0.0, 1.0));
+            chips.push(Chip { name: name.to_string(), load });
+            if chips.len() == MAX_CHIPS {
+                break;
+            }
+        }
+        chips
+    }
+
+    fn resolve_card_name(dev_dir: &Path, pci_ids: Option<&str>, vendor_hex: &str) -> String {
+        if let Ok(name) = std::fs::read_to_string(dev_dir.join("product_name")) {
+            let trimmed = name.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+        if let (Some(ids), Ok(dev)) = (pci_ids, std::fs::read_to_string(dev_dir.join("device")))
+            && let Some(raw) = lookup_pci_name(ids, vendor_hex, &dev)
+        {
+            let cleaned = clean_pci_gpu_name(&raw);
+            if !cleaned.is_empty() {
+                return cleaned;
+            }
+        }
+        match vendor_hex {
+            "1002" => "AMD Radeon",
+            "8086" => "Intel Graphics",
+            "10de" => "NVIDIA GPU",
+            _ => "GPU",
+        }
+        .to_string()
+    }
+
+    struct SysfsGpu {
+        name: String,
+        busy_path: PathBuf,
+    }
+
+    fn discover_gpus() -> (Vec<SysfsGpu>, bool) {
+        let Ok(entries) = std::fs::read_dir("/sys/class/drm") else {
+            return (Vec::new(), false);
+        };
+        let mut cards: Vec<(String, PathBuf)> = entries
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let num = name.strip_prefix("card")?;
+                (!num.is_empty() && num.bytes().all(|b| b.is_ascii_digit())).then(|| (name, e.path()))
+            })
+            .collect();
+        cards.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let pci_ids = ["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids", "/usr/share/pci.ids"].into_iter().find_map(|p| std::fs::read_to_string(p).ok());
+
+        let mut sysfs = Vec::new();
+        let mut has_nvidia = false;
+        for (_, card_path) in cards {
+            let dev_dir = card_path.join("device");
+            let vendor =
+                std::fs::read_to_string(dev_dir.join("vendor")).map(|s| s.trim().trim_start_matches("0x").trim_start_matches("0X").to_ascii_lowercase()).unwrap_or_default();
+            let busy_path = dev_dir.join("gpu_busy_percent");
+            if std::fs::read_to_string(&busy_path).ok().and_then(|s| s.trim().parse::<u64>().ok()).is_some() {
+                let name = resolve_card_name(&dev_dir, pci_ids.as_deref(), &vendor);
+                sysfs.push(SysfsGpu { name, busy_path });
+            } else if vendor == "10de" {
+                has_nvidia = true;
+            }
+        }
+        (sysfs, has_nvidia)
+    }
+
+    fn read_nvidia_gpus() -> Vec<Chip> {
+        let Ok(out) = Command::new("nvidia-smi")
+            .args(["--query-gpu=name,utilization.gpu", "--format=csv,noheader,nounits"])
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+        else {
+            return Vec::new();
+        };
+        if !out.status.success() {
+            return Vec::new();
+        }
+        parse_nvidia_smi(&String::from_utf8_lossy(&out.stdout))
+    }
+
+    fn watch_gpus(report: &Mutex<Option<Vec<Chip>>>, asked: &AtomicU64) {
+        let (sysfs, has_nvidia) = discover_gpus();
+        let say = |chips: Vec<Chip>| {
+            if let Ok(mut guard) = report.lock() {
+                *guard = Some(chips);
+            }
+        };
+        if sysfs.is_empty() && !has_nvidia {
+            say(Vec::new());
+            return;
+        }
+        let names = || sysfs.iter().take(MAX_CHIPS).map(|g| Chip { name: g.name.clone(), load: None }).collect::<Vec<_>>();
+        say(names());
+
+        loop {
+            while !gpu_wanted(asked.load(Ordering::Relaxed), now_ms()) {
+                std::thread::park();
+            }
+            while gpu_wanted(asked.load(Ordering::Relaxed), now_ms()) {
+                let mut chips = Vec::with_capacity(MAX_CHIPS);
+                for g in &sysfs {
+                    let load = std::fs::read_to_string(&g.busy_path).ok().and_then(|s| s.trim().parse::<f32>().ok()).map(|p| (p / 100.0).clamp(0.0, 1.0));
+                    chips.push(Chip { name: g.name.clone(), load });
+                    if chips.len() == MAX_CHIPS {
+                        break;
+                    }
+                }
+                if has_nvidia && chips.len() < MAX_CHIPS {
+                    for nv in read_nvidia_gpus() {
+                        chips.push(nv);
+                        if chips.len() == MAX_CHIPS {
+                            break;
+                        }
+                    }
+                }
+                say(chips);
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            say(names());
+        }
+    }
+
+    static GPU_WATCH: OnceLock<GpuWatch> = OnceLock::new();
+
+    pub(super) fn gpu_look() -> Option<Vec<Chip>> {
+        let watch = GPU_WATCH.get_or_init(|| {
+            let (report, asked) = (GpuReport::default(), Arc::new(AtomicU64::new(0)));
+            let (r, a) = (report.clone(), asked.clone());
+            a.store(now_ms(), Ordering::Relaxed);
+            let thread =
+                std::thread::Builder::new().name("gpu-stats".into()).spawn(move || watch_gpus(&r, &a)).map(|h| h.thread().clone()).unwrap_or_else(|_| std::thread::current());
+            GpuWatch { report, asked, thread }
+        });
+        let now = now_ms();
+        let was = watch.asked.swap(now, Ordering::Relaxed);
+        if !gpu_wanted(was, now)
+            && let Ok(mut report) = watch.report.lock()
+            && let Some(chips) = report.as_mut()
+        {
+            chips.iter_mut().for_each(|chip| chip.load = None);
+        }
+        watch.thread.unpark();
+        watch.report.lock().ok().and_then(|report| report.clone())
+    }
 }
 
 /// What the network graph is scaled by: the fastest second in `history`, in either direction, but never less than a
@@ -768,5 +1187,121 @@ mod tests {
         let (idle, all) = system_times().expect("times");
         assert!(all >= idle && all > 0);
         assert!(network_totals().is_some());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn proc_stat_parser_counts_idle_and_skips_guest_double_count() {
+        let sample = "\
+cpu  100 10 40 800 50 5 5 0 99 11
+cpu0 50 5 20 400 25 2 3 0 50 5
+";
+        // idle + iowait = 800 + 50 = 850; total (first 8 fields only) = 1010.
+        assert_eq!(linux::parse_proc_stat(sample), Some((850, 1010)));
+        assert_eq!(linux::parse_proc_stat("cpu  1 2 3\n"), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn proc_meminfo_parser_uses_available_with_legacy_fallback() {
+        let modern = "\
+MemTotal:       16384000 kB
+MemFree:         2000000 kB
+MemAvailable:   10000000 kB
+Buffers:          500000 kB
+Cached:          4000000 kB
+";
+        assert_eq!(linux::parse_proc_meminfo(modern), Some((6_384_000 * 1024, 16_384_000 * 1024)));
+
+        let legacy = "\
+MemTotal:       1000 kB
+MemFree:         200 kB
+Buffers:         100 kB
+Cached:          300 kB
+";
+        assert_eq!(linux::parse_proc_meminfo(legacy), Some((400 * 1024, 1000 * 1024)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn proc_net_dev_parser_sums_selected_interfaces() {
+        let sample = "\
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0
+wlp3s0: 12000 100 0 0 0 0 0 0 3400 50 0 0 0 0 0 0
+docker0: 99999 10 0 0 0 0 0 0 88888 10 0 0 0 0 0 0
+eth0: 800 5 0 0 0 0 0 0 600 4 0 0 0 0 0 0
+";
+        assert_eq!(linux::parse_proc_net_dev(sample, |n| matches!(n, "wlp3s0" | "eth0")), (12_800, 4_000));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn df_parser_deduplicates_btrfs_subvolumes_and_handles_spaces() {
+        let df_out = "\
+Filesystem     1-blocks      Used Available Capacity Mounted on
+tmpfs        1000000000  10000000 990000000       1% /tmp
+/dev/loop0    100000000 100000000         0     100% /snap/core/1
+/dev/mapper/root 500000000000 300000000000 200000000000 60% /home
+/dev/mapper/root 500000000000 300000000000 200000000000 60% /
+/dev/nvme0n1p1  2000000000   500000000  1500000000 25% /boot/efi
+/dev/sda1     64000000000  16000000000 48000000000 25% /run/media/user/My Backup Drive
+";
+        let found = linux::parse_df_output(df_out, 1);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].label, "/");
+        assert_eq!(found[0].total, 500_000_000_000);
+        assert_eq!(found[1].label, "My Back…");
+        assert_eq!(found[1].used, 16_000_000_000);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pci_id_lookup_and_nvidia_smi_parser() {
+        let ids = "\
+# comment
+1002  Advanced Micro Devices, Inc. [AMD/ATI]
+\t1636  Renoir [Radeon Vega Series / Radeon Vega Mobile Series]
+\t\t17aa 5081  Lenovo Device
+10de  NVIDIA Corporation
+\t28e0  AD107M [GeForce RTX 4050 Max-Q / Mobile]
+";
+        let raw = linux::lookup_pci_name(ids, "0x1002", "0x1636").unwrap();
+        assert_eq!(linux::clean_pci_gpu_name(&raw), "Radeon Vega Series");
+        assert_eq!(linux::clean_pci_gpu_name("Intel UHD Graphics 630"), "Intel UHD Graphics 630");
+
+        let nv = linux::parse_nvidia_smi("NVIDIA GeForce RTX 4050 Laptop GPU, 37\nNVIDIA GeForce RTX 3090, 105\n");
+        assert_eq!(nv.len(), 2);
+        assert_eq!(nv[0].name, "NVIDIA GeForce RTX 4050 Laptop GPU");
+        assert_eq!(nv[0].load, Some(0.37));
+        assert_eq!(nv[1].load, Some(1.0));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_this_pc_answers_the_questions() {
+        let (used, total) = memory().expect("memory");
+        assert!(total > used && used > 0);
+        let disks = drives();
+        assert!(!disks.is_empty() && disks.len() <= MAX_DRIVES);
+        assert!(disks.iter().all(|d| d.total >= d.used && d.total > 0 && !d.label.is_empty()));
+        let (idle, all) = system_times().expect("times");
+        assert!(all >= idle && all > 0);
+        assert!(network_totals().is_some());
+
+        let mut tries = 0;
+        let mut chips = gpu_look();
+        while chips.is_none() && tries < 100 {
+            std::thread::sleep(Duration::from_millis(50));
+            chips = gpu_look();
+            tries += 1;
+        }
+        let chips = chips.expect("gpu_look answers within five seconds");
+        assert!(chips.len() <= MAX_CHIPS);
+        for chip in &chips {
+            assert!(!chip.name.is_empty());
+            assert!(chip.load.is_none_or(|load| (0.0..=1.0).contains(&load)));
+        }
     }
 }
