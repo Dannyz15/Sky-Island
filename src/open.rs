@@ -8,7 +8,7 @@
 use std::ffi::OsStr;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::thread;
 
 #[cfg(windows)]
@@ -29,8 +29,60 @@ pub fn open(target: impl AsRef<OsStr>) {
         let wide: Vec<u16> = target.as_ref().encode_wide().chain(Some(0)).collect();
         let _ = thread::Builder::new().name("open".into()).spawn(move || shell_open(&wide));
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    if let Some(arg) = linux::prepare_target(target.as_ref()) {
+        let _ = thread::Builder::new().name("open".into()).spawn(move || linux::open_target(&arg));
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     let _ = target;
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::ffi::{OsStr, OsString};
+    use std::io;
+    use std::os::unix::ffi::OsStrExt;
+    use std::process::{Command, Stdio};
+
+    pub(super) fn prepare_target(target: &OsStr) -> Option<OsString> {
+        let bytes = target.as_bytes();
+        if bytes.is_empty() || bytes.contains(&0) {
+            return None;
+        }
+        if let Some(text) = target.to_str() {
+            if text.chars().any(char::is_control) {
+                return None;
+            }
+            if text.starts_with("https://") || text.starts_with("http://") {
+                return Some(target.to_os_string());
+            }
+        }
+        if bytes.starts_with(b"-") {
+            let resolved = std::env::current_dir().map(|dir| dir.join(target).into_os_string()).unwrap_or_else(|_| {
+                let mut out = OsString::from("./");
+                out.push(target);
+                out
+            });
+            return Some(resolved);
+        }
+        Some(target.to_os_string())
+    }
+
+    pub(super) fn open_target(target: &OsStr) {
+        let run = |program: &str, args: &[&OsStr]| -> Option<()> {
+            match Command::new(program).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+                Ok(mut child) => {
+                    let _ = child.wait();
+                    Some(())
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+                Err(_) => Some(()),
+            }
+        };
+        if run("xdg-open", &[target]).is_none() {
+            let _ = run("gio", &[OsStr::new("open"), OsStr::new("--"), target]);
+        }
+    }
 }
 
 /// `wide` is the NUL-ended name to open.
@@ -70,5 +122,22 @@ mod tests {
         open(base.join("x,y"));
         std::thread::sleep(std::time::Duration::from_secs(12));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_prepare_target_keeps_urls_commas_and_guards_dashes() {
+        assert_eq!(linux::prepare_target(OsStr::new("https://github.com/Dannyz15/Sky-Island")).as_deref(), Some(OsStr::new("https://github.com/Dannyz15/Sky-Island")));
+        assert_eq!(linux::prepare_target(OsStr::new("/tmp/x,y/my notes.pdf")).as_deref(), Some(OsStr::new("/tmp/x,y/my notes.pdf")));
+
+        for weird in ["-weird.txt", "--help"] {
+            let prepared = linux::prepare_target(OsStr::new(weird)).expect("dash-prefixed path stays valid");
+            assert!(!prepared.to_string_lossy().starts_with('-'), "should not start with dash: {prepared:?}");
+            assert!(prepared.to_string_lossy().ends_with(weird));
+        }
+
+        assert_eq!(linux::prepare_target(OsStr::new("")), None);
+        assert_eq!(linux::prepare_target(OsStr::new("bad\nline")), None);
+        assert_eq!(linux::prepare_target(OsStr::new("bad\0nul")), None);
     }
 }
