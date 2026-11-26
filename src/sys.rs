@@ -5,7 +5,7 @@
 use std::sync::Mutex;
 #[cfg(any(windows, target_os = "linux"))]
 use std::sync::OnceLock;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(any(windows, target_os = "linux"))]
 use std::sync::mpsc::{self, Sender};
@@ -1008,6 +1008,133 @@ mod linux {
             }
         }
     }
+
+    pub(super) const VK_CAPITAL: i32 = 0x14;
+    pub(super) const VK_NUMLOCK: i32 = 0x90;
+
+    static LOCK_STARTED: AtomicBool = AtomicBool::new(false);
+    static LOCK_READY: AtomicBool = AtomicBool::new(false);
+    static CAPS_ON: AtomicBool = AtomicBool::new(false);
+    static NUM_ON: AtomicBool = AtomicBool::new(false);
+
+    /// Discover `/sys/class/leds/*::capslock/brightness` and `*::numlock/brightness`.
+    pub(super) fn collect_lock_leds(leds_dir: &std::path::Path) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
+        let mut caps = Vec::new();
+        let mut num = Vec::new();
+        let Ok(entries) = std::fs::read_dir(leds_dir) else {
+            return (caps, num);
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with("::capslock") {
+                caps.push(entry.path().join("brightness"));
+            } else if name.ends_with("::numlock") {
+                num.push(entry.path().join("brightness"));
+            }
+        }
+        caps.sort();
+        num.sort();
+        (caps, num)
+    }
+
+    /// Read a group of LED brightness files. Returns `(state, all_readable)`:
+    /// `state` is `None` if no file could be parsed, or `Some(any_nonzero)`.
+    fn read_led_group_status(paths: &[std::path::PathBuf]) -> (Option<bool>, bool) {
+        let mut any_parsed = false;
+        let mut any_on = false;
+        let mut all_ok = true;
+        for path in paths {
+            let Ok(text) = std::fs::read_to_string(path) else {
+                all_ok = false;
+                continue;
+            };
+            if let Ok(val) = text.trim().parse::<u32>() {
+                any_parsed = true;
+                if val > 0 {
+                    any_on = true;
+                }
+            }
+        }
+        (any_parsed.then_some(any_on), all_ok)
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn read_led_group(paths: &[std::path::PathBuf]) -> Option<bool> {
+        read_led_group_status(paths).0
+    }
+
+    pub(super) fn read_lock_states(leds_dir: &std::path::Path) -> (Option<bool>, Option<bool>) {
+        let (caps, num) = collect_lock_leds(leds_dir);
+        (read_led_group(&caps), read_led_group(&num))
+    }
+
+    pub(super) fn install_lock_hook(proxy: Proxy) {
+        if LOCK_STARTED.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        thread::spawn(move || {
+            let leds_dir = std::path::PathBuf::from("/sys/class/leds");
+            let (mut caps_paths, mut num_paths) = collect_lock_leds(&leds_dir);
+            let (mut prev_caps, mut caps_ok) = read_led_group_status(&caps_paths);
+            let (mut prev_num, mut num_ok) = read_led_group_status(&num_paths);
+            if let Some(on) = prev_caps {
+                CAPS_ON.store(on, Ordering::Relaxed);
+            }
+            if let Some(on) = prev_num {
+                NUM_ON.store(on, Ordering::Relaxed);
+            }
+            LOCK_READY.store(true, Ordering::Release);
+
+            let mut ticks = 0u32;
+            loop {
+                thread::sleep(Duration::from_millis(80));
+                ticks = ticks.wrapping_add(1);
+                if ticks.is_multiple_of(32) || caps_paths.is_empty() || num_paths.is_empty() || !caps_ok || !num_ok {
+                    let refreshed = collect_lock_leds(&leds_dir);
+                    caps_paths = refreshed.0;
+                    num_paths = refreshed.1;
+                }
+                let (caps, c_ok) = read_led_group_status(&caps_paths);
+                let (num, n_ok) = read_led_group_status(&num_paths);
+                caps_ok = c_ok;
+                num_ok = n_ok;
+
+                if let Some(now) = caps {
+                    let changed = prev_caps.is_some_and(|old| old != now);
+                    CAPS_ON.store(now, Ordering::Relaxed);
+                    prev_caps = Some(now);
+                    if changed && proxy.send_event(UserEvent::LockKey { name: "Caps Lock", vk: VK_CAPITAL }).is_err() {
+                        break;
+                    }
+                }
+                if let Some(now) = num {
+                    let changed = prev_num.is_some_and(|old| old != now);
+                    NUM_ON.store(now, Ordering::Relaxed);
+                    prev_num = Some(now);
+                    if changed && proxy.send_event(UserEvent::LockKey { name: "Num Lock", vk: VK_NUMLOCK }).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    pub(super) fn key_toggled(vk: i32) -> bool {
+        if LOCK_READY.load(Ordering::Acquire) {
+            return match vk {
+                VK_CAPITAL => CAPS_ON.load(Ordering::Relaxed),
+                VK_NUMLOCK => NUM_ON.load(Ordering::Relaxed),
+                _ => false,
+            };
+        }
+        let (caps, num) = read_lock_states(std::path::Path::new("/sys/class/leds"));
+        match vk {
+            VK_CAPITAL => caps.unwrap_or(false),
+            VK_NUMLOCK => num.unwrap_or(false),
+            _ => false,
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1382,7 +1509,9 @@ pub fn install_lock_hook(proxy: Proxy) {
             }
         });
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    linux::install_lock_hook(proxy);
+    #[cfg(not(any(windows, target_os = "linux")))]
     let _ = proxy;
 }
 
@@ -1392,7 +1521,11 @@ pub fn key_toggled(vk: i32) -> bool {
     unsafe {
         GetKeyState(vk) & 1 != 0
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::key_toggled(vk)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = vk;
         false
@@ -1730,5 +1863,44 @@ enp2s0\t00000000\t0100A8C0\t0003\t0\t0\t700\t00000000\t0\t0\t0
         let c = linux::NetState { connected: false, name: String::new(), wifi: false };
         assert!(!linux::net_state_changed(&a, &b));
         assert!(linux::net_state_changed(&a, &c));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn lock_led_reader_detects_capslock_and_numlock_across_keyboards() {
+        let root = fresh_temp_dir("leds");
+        assert_eq!(linux::read_lock_states(&root), (None, None));
+
+        for unrelated in ["input3::scrolllock", "platform::mute", "enp2s0-0::lan"] {
+            let dir = root.join(unrelated);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("brightness"), "1\n").unwrap();
+        }
+        assert_eq!(linux::read_lock_states(&root), (None, None), "unrelated LEDs are ignored");
+
+        let kbd3_caps = root.join("input3::capslock");
+        let kbd3_num = root.join("input3::numlock");
+        let kbd13_caps = root.join("input13::capslock");
+        for d in [&kbd3_caps, &kbd3_num, &kbd13_caps] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(kbd3_caps.join("brightness"), "0\n").unwrap();
+        std::fs::write(kbd13_caps.join("brightness"), "0\n").unwrap();
+        std::fs::write(kbd3_num.join("brightness"), "1\n").unwrap();
+        assert_eq!(linux::read_lock_states(&root), (Some(false), Some(true)));
+
+        // If any attached keyboard reports LED on, the lock state is active.
+        std::fs::write(kbd13_caps.join("brightness"), "1\n").unwrap();
+        assert_eq!(linux::read_lock_states(&root), (Some(true), Some(true)));
+
+        // Non-numeric brightness content is ignored cleanly without panicking.
+        std::fs::write(kbd3_caps.join("brightness"), "not-a-number\n").unwrap();
+        std::fs::write(kbd13_caps.join("brightness"), "0\n").unwrap();
+        assert_eq!(linux::read_lock_states(&root), (Some(false), Some(true)));
+
+        std::fs::write(kbd13_caps.join("brightness"), "invalid\n").unwrap();
+        assert_eq!(linux::read_lock_states(&root), (None, Some(true)));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
