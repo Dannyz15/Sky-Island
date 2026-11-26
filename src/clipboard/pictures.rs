@@ -7,7 +7,7 @@ use super::Image;
 /// Pictures with more pixels than this are not kept (an 8K screenshot has 33 million).
 const MAX_PIXELS: usize = 40 * 1024 * 1024;
 /// The most bytes of a picture read from the clipboard: that many pixels as an uncompressed bitmap.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub(super) const MAX_PICTURE_BYTES: usize = MAX_PIXELS * 4 + 4096;
 /// The most memory the decoding of a picture from another app may take: that many pixels at four bytes, and some room.
 const MAX_DECODE_BYTES: u64 = MAX_PIXELS as u64 * 4 + 32 * 1024 * 1024;
@@ -59,6 +59,7 @@ fn fit(w: u32, h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
 
 /// Pixels of a Windows device-independent bitmap (what `CF_DIB` holds), as straight RGBA with full
 /// opacity. Handles the common 24 and 32 bit uncompressed forms.
+#[cfg(any(windows, test))]
 pub(super) fn dib_to_rgba(dib: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let u32_at = |i: usize| dib.get(i..i + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
     let header = u32_at(0)? as usize;
@@ -101,6 +102,7 @@ pub(super) fn dib_to_rgba(dib: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 }
 
 /// The reverse: a 32 bit bottom-up `CF_DIB` for straight RGBA pixels.
+#[cfg(any(windows, test))]
 pub(super) fn rgba_to_dib(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
     let (w, h) = (width as usize, height as usize);
     let mut dib = Vec::with_capacity(40 + w * h * 4);
@@ -131,6 +133,7 @@ pub(super) fn png_fits(head: &[u8]) -> bool {
 }
 
 /// The same for the start of a Windows bitmap.
+#[cfg(any(windows, test))]
 pub(super) fn dib_fits(head: &[u8]) -> bool {
     let value = |at: usize| head.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
     match (value(0), value(4), value(8)) {

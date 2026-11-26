@@ -3,27 +3,31 @@
 //! `pinned.json`. Also holds the Windows clipboard calls the app needs.
 
 mod history;
-#[cfg(any(windows, test))]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(any(windows, target_os = "linux", test))]
 mod pictures;
 #[cfg(windows)]
 mod win;
 
 pub use history::{History, VISIBLE, preview, read_pinned, save_pinned};
+#[cfg(target_os = "linux")]
+pub use linux::{empty, set_content, set_enabled, spawn_watcher};
 #[cfg(windows)]
 pub use win::{empty, set_content, set_enabled, spawn_watcher};
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn spawn_watcher(_proxy: winit::event_loop::EventLoopProxy<crate::UserEvent>) {}
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn set_enabled(_on: bool) {}
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn set_content(_content: &Content) -> bool {
     false
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn empty() {}
 
 /// Longer text is cut to this many characters.
