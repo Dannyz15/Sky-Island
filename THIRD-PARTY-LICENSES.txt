@@ -67,7 +67,7 @@ rustls-webpki 0.103.17  [ISC]  https://github.com/rustls/webpki
 serde 1.0.229  [MIT OR Apache-2.0]  https://github.com/serde-rs/serde
 serde_core 1.0.229  [MIT OR Apache-2.0]  https://github.com/serde-rs/serde
 serde_json 1.0.154  [MIT OR Apache-2.0]  https://github.com/serde-rs/json
-sha2 0.11.1  [MIT OR Apache-2.0]  https://github.com/RustCrypto/hashes
+sha2 0.11.2  [MIT OR Apache-2.0]  https://github.com/RustCrypto/hashes
 simd-adler32 0.3.10  [MIT]  https://github.com/mcountryman/simd-adler32
 smol_str 0.2.2  [MIT OR Apache-2.0]  https://github.com/rust-analyzer/smol_str
 softbuffer 0.4.8  [MIT OR Apache-2.0]  https://github.com/rust-windowing/softbuffer
@@ -872,7 +872,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ================================================================================
-Used by: block-buffer 0.12.1, const-oid 0.10.3, cpufeatures 0.3.1, crypto-common 0.2.2, digest 0.11.3, hybrid-array 0.4.15, sha2 0.11.1
+Used by: block-buffer 0.12.1, const-oid 0.10.3, cpufeatures 0.3.1, crypto-common 0.2.2, digest 0.11.3, hybrid-array 0.4.15, sha2 0.11.2
 ================================================================================
 
 Apache License
@@ -4884,7 +4884,7 @@ The files under third-party/chromium are licensed as described in
 third-party/chromium/LICENSE.
 
 ================================================================================
-Used by: sha2 0.11.1
+Used by: sha2 0.11.2
 ================================================================================
 
 Copyright (c) 2016-2026 The RustCrypto Project Developers
