@@ -1,11 +1,11 @@
 //! Short chime sounds, synthesized in code and played straight from memory, so the app needs no
 //! sound files. They replace the harsh system beep.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::collections::HashMap;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 use std::f32::consts::TAU;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::sync::Mutex;
 
 use std::path::Path;
@@ -17,7 +17,7 @@ use windows::Win32::Media::Multimedia::mciSendStringW;
 #[cfg(windows)]
 use windows::core::PCWSTR;
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 const RATE: u32 = 44_100;
 
 #[derive(Clone, Copy)]
@@ -99,7 +99,9 @@ pub fn play(chime: Chime, volume: u32) {
             let _ = PlaySoundW(PCWSTR(wav.as_ptr() as *const u16), None, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    linux::play(chime, volume);
+    #[cfg(not(any(windows, target_os = "linux")))]
     let _ = (chime, volume);
 }
 
@@ -182,7 +184,11 @@ pub fn play_file(slot: Slot, path: &Path, volume: u32) -> bool {
             false
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::play_file(slot, path, volume)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (slot, path, volume);
         false
@@ -193,13 +199,149 @@ pub fn play_file(slot: Slot, path: &Path, volume: u32) -> bool {
 pub fn stop_file(slot: Slot) {
     #[cfg(windows)]
     mci(&format!("close {}", slot.alias()));
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    linux::stop_file(slot);
+    #[cfg(not(any(windows, target_os = "linux")))]
     let _ = slot;
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::*;
+    use std::io::Write;
+    use std::process::{Child, Command, Stdio};
+
+    #[derive(Clone, Copy)]
+    enum Player {
+        Paplay,
+        PwPlay,
+        Ffplay,
+        Mpv,
+    }
+
+    pub(super) fn pa_volume(percent: u32) -> u32 {
+        (percent.min(100) * 65_536 + 50) / 100
+    }
+
+    pub(super) fn prefers_libsndfile(path: &Path) -> bool {
+        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            return false;
+        };
+        matches!(ext.to_ascii_lowercase().as_str(), "wav" | "ogg" | "oga" | "flac" | "mp3" | "opus" | "aiff" | "aif" | "au" | "caf")
+    }
+
+    pub(super) fn cached_chime(chime: Chime, volume: u32) -> &'static [u8] {
+        type Cache = HashMap<(u8, u32), &'static [u8]>;
+        static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+        let volume = ((volume + 5) / 10 * 10).clamp(10, 100);
+        let key = (chime as u8, volume);
+        #[allow(clippy::explicit_auto_deref)]
+        let wav_bytes: &'static [u8] = {
+            let Ok(mut cache) = CACHE.lock() else { return &[] };
+            let map = cache.get_or_insert_with(HashMap::new);
+            *map.entry(key).or_insert_with(|| {
+                let data = match chime {
+                    Chime::TimerDone => wav(&[(659.3, 0.0, 0.9), (987.8, 0.16, 1.0)], 1.3, volume as f32 / 100.0),
+                    Chime::Reminder => wav(&[(784.0, 0.0, 0.9)], 1.0, volume as f32 / 100.0),
+                };
+                Box::leak(data.into_boxed_slice())
+            })
+        };
+        wav_bytes
+    }
+
+    fn pipe_to_player(program: &str, args: &[&str], data: &[u8]) -> bool {
+        let Ok(mut child) = Command::new(program).args(args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
+            return false;
+        };
+        if let Some(mut stdin) = child.stdin.take()
+            && stdin.write_all(data).is_err()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return false;
+        }
+        child.wait().is_ok_and(|s| s.success())
+    }
+
+    pub(super) fn play(chime: Chime, volume: u32) {
+        let data = cached_chime(chime, volume);
+        if data.len() <= 44 {
+            return;
+        }
+        let pcm = &data[44..];
+        let _ = std::thread::Builder::new().name("chime".into()).spawn(move || {
+            let _ = pipe_to_player("paplay", &["--raw", "--rate=44100", "--format=s16le", "--channels=1", "--client-name=Sky Island", "--stream-name=Chime"], pcm)
+                || pipe_to_player("pw-play", &["--rate", "44100", "--channels", "1", "--format", "s16", "-"], pcm)
+                || pipe_to_player("aplay", &["-q", "-t", "wav", "-"], data);
+        });
+    }
+
+    static SLOTS: Mutex<[Option<Child>; 4]> = Mutex::new([const { None }; 4]);
+
+    fn spawn_player(player: Player, path: &Path, volume: u32) -> Option<Child> {
+        let vol = volume.min(100);
+        let mut cmd = match player {
+            Player::Paplay => {
+                let mut c = Command::new("paplay");
+                c.args(["--client-name=Sky Island", "--stream-name=Alarm", &format!("--volume={}", pa_volume(vol)), "--"]).arg(path);
+                c
+            }
+            Player::PwPlay => {
+                let mut c = Command::new("pw-play");
+                c.args([&format!("--volume={:.2}", vol as f32 / 100.0), "--"]).arg(path);
+                c
+            }
+            Player::Ffplay => {
+                let mut c = Command::new("ffplay");
+                c.args(["-nodisp", "-autoexit", "-loglevel", "quiet", "-volume", &vol.to_string(), "-i"]).arg(path);
+                c
+            }
+            Player::Mpv => {
+                let mut c = Command::new("mpv");
+                c.args(["--no-video", "--no-terminal", &format!("--volume={vol}"), "--"]).arg(path);
+                c
+            }
+        };
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        crate::sys::kill_on_parent_exit(&mut cmd);
+        cmd.spawn().ok()
+    }
+
+    pub(super) fn play_file(slot: Slot, path: &Path, volume: u32) -> bool {
+        let Ok(mut slots) = SLOTS.lock() else { return false };
+        if let Some(child) = slots[slot.index()].as_mut() {
+            match child.try_wait() {
+                Ok(None) => return true,
+                _ => slots[slot.index()] = None,
+            }
+        }
+        if !safe_path(&path.display().to_string()) || !path.is_file() {
+            return false;
+        }
+        let order =
+            if prefers_libsndfile(path) { [Player::Paplay, Player::PwPlay, Player::Ffplay, Player::Mpv] } else { [Player::Ffplay, Player::Mpv, Player::Paplay, Player::PwPlay] };
+        for player in order {
+            if let Some(child) = spawn_player(player, path, volume) {
+                slots[slot.index()] = Some(child);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(super) fn stop_file(slot: Slot) {
+        let Ok(mut slots) = SLOTS.lock() else { return };
+        if let Some(mut child) = slots[slot.index()].take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 /// A 16-bit mono WAV file of bell-like notes: a sine with two quieter overtones that fades out.
 /// `loudness` is 1.0 for the normal level.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 fn wav(notes: &[(f32, f32, f32)], total: f32, loudness: f32) -> Vec<u8> {
     let count = (total * RATE as f32) as usize;
     let mut samples = vec![0f32; count];
@@ -318,5 +460,43 @@ mod tests {
         let peak = data[44..].as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs()).max().unwrap();
         assert!(peak > 5_000, "too quiet: {peak}");
         assert!(peak < 20_000, "too loud: {peak}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_volume_scaling_and_format_preference() {
+        assert_eq!(linux::pa_volume(0), 0);
+        assert_eq!(linux::pa_volume(50), 32_768);
+        assert_eq!(linux::pa_volume(100), 65_536);
+        assert_eq!(linux::pa_volume(150), 65_536);
+
+        assert!(linux::prefers_libsndfile(Path::new("/tmp/bell.wav")));
+        assert!(linux::prefers_libsndfile(Path::new("/tmp/bell.MP3")));
+        assert!(linux::prefers_libsndfile(Path::new("/tmp/bell.ogg")));
+        assert!(linux::prefers_libsndfile(Path::new("/tmp/bell.flac")));
+        assert!(!linux::prefers_libsndfile(Path::new("/tmp/bell.m4a")));
+        assert!(!linux::prefers_libsndfile(Path::new("/tmp/bell.aac")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_cached_chime_produces_valid_wav() {
+        let a = linux::cached_chime(Chime::TimerDone, 73);
+        let b = linux::cached_chime(Chime::TimerDone, 70);
+        assert!(std::ptr::eq(a.as_ptr(), b.as_ptr()), "rounded step reuses cached buffer");
+        assert_eq!(&a[0..4], b"RIFF");
+        assert_eq!(&a[8..12], b"WAVE");
+
+        let c = linux::cached_chime(Chime::Reminder, 5);
+        assert_eq!(&c[0..4], b"RIFF");
+        assert!(c.len() > 44);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_play_file_rejects_unsafe_or_missing_paths() {
+        assert!(!play_file(Slot::Timer, Path::new("/no/such/sky-island-sound.wav"), 50));
+        assert!(!play_file(Slot::Todo, Path::new("/tmp/bad\"name.wav"), 50));
+        assert!(!play_file(Slot::Water, Path::new("/tmp/bad\nname.wav"), 50));
     }
 }
