@@ -98,6 +98,9 @@ fn is_linux_managed(exe: Option<&std::path::Path>, flatpak: bool, snap: bool, ap
         return false;
     };
     let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if resolved.starts_with("/usr/local") {
+        return false;
+    }
     const SYSTEM_PREFIXES: [&str; 7] = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt", "/nix/store"];
     SYSTEM_PREFIXES.iter().any(|prefix| resolved.starts_with(prefix))
 }
@@ -144,9 +147,10 @@ mod tests {
 
     #[test]
     fn linux_package_managed_detection_covers_system_paths_flatpak_snap_and_appimage() {
-        for system_path in ["/usr/bin/sky-island", "/usr/local/bin/sky-island", "/opt/sky-island/sky-island", "/nix/store/abc-sky-island/bin/sky-island"] {
+        for system_path in ["/usr/bin/sky-island", "/opt/sky-island/sky-island", "/nix/store/abc-sky-island/bin/sky-island"] {
             assert!(is_linux_managed(Some(Path::new(system_path)), false, false, false), "{system_path}");
         }
+        assert!(!is_linux_managed(Some(Path::new("/usr/local/bin/sky-island")), false, false, false), "manual local install stays self-updatable");
         assert!(is_linux_managed(Some(Path::new("/home/user/sky-island")), true, false, false), "flatpak");
         assert!(is_linux_managed(Some(Path::new("/home/user/sky-island")), false, true, false), "snap");
         assert!(!is_linux_managed(Some(Path::new("/tmp/.mount_SkyIsl/usr/bin/sky-island")), false, false, true), "appimage stays self-updatable");

@@ -897,15 +897,50 @@ mod linux {
 
     pub(super) fn escape_exec_arg(path: &Path) -> String {
         let raw = path.to_string_lossy();
-        let mut out = String::with_capacity(raw.len());
+        let mut quoted = String::with_capacity(raw.len());
         for ch in raw.chars() {
             match ch {
                 '\\' | '"' | '`' | '$' => {
-                    out.push('\\');
-                    out.push(ch);
+                    quoted.push('\\');
+                    quoted.push(ch);
                 }
-                '%' => out.push_str("%%"),
+                '%' => quoted.push_str("%%"),
+                c => quoted.push(c),
+            }
+        }
+        // Desktop Entry string values unescape `\` before Exec argument parsing runs.
+        let mut out = String::with_capacity(quoted.len());
+        for ch in quoted.chars() {
+            match ch {
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\t' => out.push_str("\\t"),
+                '\r' => out.push_str("\\r"),
                 c => out.push(c),
+            }
+        }
+        out
+    }
+
+    fn unescape_desktop_string(raw: &str) -> String {
+        let mut out = String::with_capacity(raw.len());
+        let mut chars = raw.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('s') => out.push(' '),
+                    Some('n') => out.push('\n'),
+                    Some('t') => out.push('\t'),
+                    Some('r') => out.push('\r'),
+                    Some('\\') => out.push('\\'),
+                    Some(other) => {
+                        out.push('\\');
+                        out.push(other);
+                    }
+                    None => out.push('\\'),
+                }
+            } else {
+                out.push(c);
             }
         }
         out
@@ -934,10 +969,11 @@ mod linux {
     }
 
     pub(super) fn parse_exec_target(contents: &str) -> Option<PathBuf> {
-        let val = in_desktop_entry_lines(contents).find_map(|line| {
+        let raw_val = in_desktop_entry_lines(contents).find_map(|line| {
             let (k, v) = line.split_once('=')?;
             (k.trim() == "Exec").then_some(v.trim())
         })?;
+        let val = unescape_desktop_string(raw_val);
         let mut out = String::new();
         let mut chars = val.chars().peekable();
         if chars.peek() == Some(&'"') {
@@ -1225,7 +1261,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_desktop_entry_roundtrips_special_characters_and_flags() {
-        let exe = std::path::Path::new(r#"/home/user/My Apps/100% $Sky "Island"/sky-island"#);
+        let exe = std::path::Path::new(r#"/home/user/My Apps/a\b/100% $Sky "Island" `x`/sky-island"#);
+        assert_eq!(linux::escape_exec_arg(exe), r#"/home/user/My Apps/a\\\\b/100%% \\$Sky \\"Island\\" \\`x\\`/sky-island"#);
         let entry = linux::desktop_entry(exe);
         assert_eq!(linux::parse_exec_target(&entry).as_deref(), Some(exe));
         assert!(linux::entry_enabled(&entry));

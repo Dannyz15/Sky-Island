@@ -118,7 +118,7 @@ pub fn load(path: &Path) -> Option<Pixmap> {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use super::{Pixmap, PremultipliedColorU8, SIZE_PX, buffer_len};
+    use super::{MAX_SIDE, Pixmap, PremultipliedColorU8, SIZE_PX, buffer_len};
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -494,8 +494,13 @@ mod linux {
         *HAS_RSVG.get_or_init(|| Command::new("rsvg-convert").arg("--version").output().is_ok_and(|o| o.status.success()))
     }
 
+    const MAX_ICON_DECODE_BYTES: u64 = 16 * 1024 * 1024;
+
     pub(super) fn decode_png_to_pixmap(bytes: &[u8]) -> Option<Pixmap> {
-        let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png).ok()?;
+        if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+            return None;
+        }
+        let img = crate::gfx::decode_limited(bytes, MAX_SIDE as u32, MAX_ICON_DECODE_BYTES)?;
         let (w, h) = (img.width() as i32, img.height() as i32);
         let _ = buffer_len(w, h)?;
         let resized = if w > SIZE_PX || h > SIZE_PX { img.resize(SIZE_PX as u32, SIZE_PX as u32, image::imageops::FilterType::Triangle) } else { img };
@@ -659,6 +664,12 @@ mod tests {
         use std::io::Cursor;
 
         assert!(linux::decode_png_to_pixmap(b"not a png").is_none());
+
+        let mut oversized = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        oversized.extend_from_slice(&2048u32.to_be_bytes());
+        oversized.extend_from_slice(&2048u32.to_be_bytes());
+        oversized.extend_from_slice(&[8, 6, 0, 0, 0]);
+        assert!(linux::decode_png_to_pixmap(&oversized).is_none());
 
         let img = RgbaImage::from_pixel(16, 16, Rgba([200, 100, 50, 128]));
         let mut bytes = Vec::new();
