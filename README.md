@@ -5,8 +5,8 @@
 <h1 align="center">Sky Island</h1>
 
 <p align="center">
-  <b>A notch for the top of your Windows screen.</b><br>
-  Like the Dynamic Island on the iPhone, but for Windows.
+  <b>A notch for the top of your screen.</b><br>
+  Like the Dynamic Island on the iPhone, for Windows and Linux.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 <p align="center">
   <img src="https://img.shields.io/github/v/release/Dannyz15/Sky-Island?label=release&color=3D5FE0" alt="Latest release">
   <img src="https://img.shields.io/github/downloads/Dannyz15/Sky-Island/total?color=3D5FE0" alt="Downloads">
-  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6" alt="Windows 10 and 11">
+  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Linux-0078D6" alt="Windows 10, Windows 11, and Linux">
   <img src="https://img.shields.io/badge/built%20with-Rust-DEA584" alt="Built with Rust">
   <img src="https://img.shields.io/badge/license-MIT-3D5FE0" alt="MIT license">
 </p>
@@ -25,6 +25,7 @@
 <p align="center">
   <a href="#tabs">Tabs</a> ·
   <a href="#installation">Installation</a> ·
+  <a href="#linux">Linux</a> ·
   <a href="#using-it">Using it</a> ·
   <a href="#questions">Questions</a> ·
   <a href="#privacy">Privacy</a> ·
@@ -85,6 +86,47 @@ Every tab can be switched off in Settings > Tabs. Weather and Prayer need your c
 3. The notch appears at the top of the screen, and a tray icon appears near the clock.
 
 To update, run a newer setup, or use **Check for updates** in Settings > About. Your data is kept. To uninstall, use Windows Settings > Apps.
+
+## Linux
+
+Sky Island runs on Wayland compositors with `zwlr_layer_shell_v1` (built and tested primarily on Hyprland on [Omarchy](https://omarchy.org); also works on Sway and KDE Plasma) and has an X11 fallback. GNOME on Wayland is not supported because it does not implement `zwlr_layer_shell_v1`.
+
+**Packages and install:**
+
+- **AppImage (Arch / Omarchy and general Linux):** make `sky-island_<version>_x86_64.AppImage` executable (`chmod +x`) and run it, or move it into `~/.local/bin/`. Removing it uninstalls the app.
+- **Pacman (Arch) / `.deb` (Ubuntu and Debian):** built with `cargo-packager` (`./scripts/package-linux.sh --formats appimage`, `deb`, or `pacman`). Package-managed installs in `/usr`, `/opt`, `/nix/store`, Flatpak, or Snap leave updates to the package manager and switch off in-app GitHub update checks automatically.
+
+**Runtime dependencies:**
+
+- **Required (`libpulse` / `pulseaudio-utils`, `xdg-utils`, `fontconfig`, `freetype2`):** `pactl` and `parec` (from `libpulse` on Arch) drive volume control, audio notices and the sound bars; `paplay` / `pw-play` / `aplay` play timer and reminder chimes; `xdg-open` opens shelf files and links; `fontconfig` and `freetype2` provide Korean, Japanese, Chinese, Thai, Hindi, symbol and emoji fallback glyphs. AppImage users should have `libpulse` installed on the host.
+- **Optional:** `librsvg` (`rsvg-convert`) for SVG shelf icons, `wl-clipboard` or `xclip`/`xsel` as clipboard fallbacks alongside Wayland `ext_data_control_v1`, and `geoclue` for city-level **Detect my location** (falls back to `ipwho.is` if unavailable).
+
+**Waybar and top bars (Omarchy / Hyprland):**
+
+Sky Island puts its notch on the `Top` layer with `exclusive_zone = 0`. If Waybar (or `omarchy-bar`) sits at the top edge and reserves space, the notch appears directly below it; moving the bar to the bottom edge or hiding it lets the notch sit flush with the top of the screen. Switching **Notch look** to **Pill** in Settings > Appearance also pairs cleanly under a top bar.
+
+**Global hotkey:**
+
+Wayland compositors handle global shortcuts in their own config instead of letting apps grab keys directly. Bind a key in `~/.config/hypr/hyprland.conf` to toggle the notch:
+
+```conf
+bind = SUPER, N, exec, sky-island --toggle
+```
+
+On X11, turning on **Open with a key** in Settings > General grabs the chosen combination directly.
+
+**Data folder and isolated testing:**
+
+Settings, tasks, reminders and the shelf live in `~/.config/sky-island` (or `$XDG_CONFIG_HOME/sky-island`). To try a build without touching your real setup:
+
+```bash
+XDG_CONFIG_HOME=/tmp/sky-test ./target/release/sky-island
+```
+
+**Building from source on Linux:**
+
+1. Install [Rust](https://rustup.rs/) via `rustup` (`rust-toolchain.toml` pins the compiler version).
+2. Run `cargo build --release --locked` (outputs `target/release/sky-island`), or `./scripts/package-linux.sh` to build an AppImage (`--formats deb` or `--formats pacman` for those formats; requires `cargo install cargo-packager --locked`).
 
 ## Using it
 
@@ -155,30 +197,32 @@ Your data stays on your computer. There are no accounts and no tracking. The ful
 <details>
 <summary>What is stored and what is sent</summary>
 
-Everything is saved in `%APPDATA%\Sky-Island`. The clipboard history is kept in memory only, except text you pin (up to 10).
+Everything is saved in `%APPDATA%\Sky-Island` on Windows, or `~/.config/sky-island` (`$XDG_CONFIG_HOME/sky-island`) on Linux. The clipboard history is kept in memory only, except text you pin (up to 10).
 
 Network requests, and why:
 
 - **Weather:** Open-Meteo, with your city's coordinates.
 - **Prayer times:** Aladhan, with your city's coordinates. In Malaysia, JAKIM's e-Solat is asked instead, with only the code of your zone (for example SGR01).
 - **Your city** (only when you type it and press Enter): OpenStreetMap's Nominatim, with the name you typed.
-- **Detect my location** (only when you press it): Windows Location, then OpenStreetMap's Nominatim to name the place. The position is rounded to about a kilometre first, so it is never more exact than your area, and that is also all that is saved and sent for the weather and prayer times. If Windows Location is off, ipwho.is is asked instead and sees your IP address.
+- **Detect my location** (only when you press it): Windows Location (Windows) or GeoClue2 (Linux), then OpenStreetMap's Nominatim to name the place. The position is rounded to about a kilometre first, so it is never more exact than your area, and that is also all that is saved and sent for the weather and prayer times. If system location is off or unavailable, ipwho.is is asked instead and sees your IP address.
 - **Lyrics:** LRCLIB, with the title, artist and length of what plays, also from a browser tab. Switch it off with **Find lyrics online** in Settings > Music; then only lyrics already saved on this PC show.
-- **Updates:** GitHub, to look for a newer version at start and every 6 hours (switch off in Settings > Notices). Nothing is downloaded until you press Download.
+- **Album art (Linux):** on Linux, media players reporting via MPRIS may give the album cover as an `https://` URL, which Sky Island fetches over HTTPS to display the cover.
+- **Updates:** GitHub, to look for a newer version at start and every 6 hours (switch off in Settings > Notices; off automatically in the Microsoft Store build and package-managed Linux installs). Nothing is downloaded until you press Download.
 
-**Sound:** while a song plays and the closed notch shows its bars, Sky Island listens to the sound your PC sends to the speakers or headphones (Windows calls it loopback) to make the bars follow the music. It only measures how loud each pitch is, about 45 times a second. Nothing is recorded, saved or sent, the microphone is not used, and it stops a moment after the bars go away. Switch it off with **Bars follow the sound** in Settings > Closed notch. It hears everything the PC plays, not only the song.
+**Sound:** while a song plays and the closed notch shows its bars, Sky Island listens to the sound your PC sends to the speakers or headphones (Windows loopback or PipeWire/PulseAudio monitor via `parec`) to make the bars follow the music. It only measures how loud each pitch is, about 45 times a second. Nothing is recorded, saved or sent, the microphone is not used, and it stops a moment after the bars go away. Switch it off with **Bars follow the sound** in Settings > Closed notch. It hears everything the PC plays, not only the song.
 
-**Glass:** with Clear or Smoky glass, Sky Island copies the part of the screen right around the notch a few times a second (up to about fifteen while the notch is moving), to show it blurred through the glass. The copy is kept in memory only; it is never saved or sent. Nothing is copied with Black glass or no glass.
+**Glass:** on Windows with Clear or Smoky glass, Sky Island copies the part of the screen right around the notch a few times a second (up to about fifteen while the notch is moving), to show it blurred through the glass. The copy is kept in memory only; it is never saved or sent. Nothing is copied with Black glass or no glass.
 
-To show Caps Lock and Num Lock notices, a Windows keyboard hook checks only whether one of those two keys was pressed. It never records or sends what you type. **Start with Windows** adds one startup entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. The Microsoft Store version never looks for updates on GitHub (the Store updates it), and its **Start with Windows** uses a Windows startup task instead of that entry.
+To show Caps Lock and Num Lock notices, a keyboard hook (Windows) or `/sys/class/leds/*::{capslock,numlock}` (Linux) checks only lock-key state; it never records or sends what you type. **Start with Windows / autostart** writes one HKCU `Run` value on Windows, uses a Store startup task on the Microsoft Store build, or writes `~/.config/autostart/sky-island.desktop` on Linux.
 </details>
 
 ## Known limitations
 
-- Windows only.
+- **Clear and Smoky glass (Windows only):** Wayland does not allow windows to copy pixels behind other windows, so these glass looks stay Windows-only.
+- **Linux desktops:** Wayland notch placement requires `zwlr_layer_shell_v1` (Hyprland, Sway, KDE Plasma; GNOME on Wayland is unsupported) and full-screen auto-hiding currently supports Hyprland only.
 - Brightness notices work only on laptop screens whose driver reports the brightness.
 - Lyrics depend on what LRCLIB has.
-- Song titles and lyrics in Korean, Japanese, Chinese, Thai, Hindi and other scripts are drawn with the fonts Windows already has, so a script needs its Windows font. Emoji are drawn in one colour.
+- Song titles and lyrics in Korean, Japanese, Chinese, Thai, Hindi and other scripts rely on installed system fonts (Windows GDI fonts or Linux `fontconfig`/`freetype2` fonts). Emoji are drawn in one colour.
 - The bars on the closed notch follow all the sound the PC plays, not only the song, so a video or a notification moves them too. Some players that take the sound device for themselves (exclusive mode) cannot be listened to, and then the bars move to a made-up beat.
 - Weather and prayer times need an internet connection to refresh; the last ones are kept for offline use.
 
@@ -207,6 +251,7 @@ cargo run --release
 | Check the crates for known problems, licences and sources | `cargo install cargo-deny --locked`, then `cargo deny check` (settings in `deny.toml`) |
 | Make the setup program, `dist\Sky-Island-Setup-<version>.exe` | `powershell -ExecutionPolicy Bypass -File scripts\package.ps1` |
 | Make the Microsoft Store package, `dist\Sky-Island-<version>.0.msix` (unsigned; the Store signs it) | `powershell -ExecutionPolicy Bypass -File scripts\package-store.ps1` |
+| Make a Linux package (`AppImage`, `.deb`, or `pacman` in `dist/`) | `./scripts/package-linux.sh` |
 
 To try a build without touching your own settings, shelf and to-do list, start it with another data folder: in a terminal run `set APPDATA=C:\temp\sky-test` and then the program. Its data goes in `C:\temp\sky-test\Sky-Island`, and it can run next to the copy you normally use.
 
