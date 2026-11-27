@@ -178,7 +178,7 @@ pub fn notes_of(body: &str) -> Vec<Note> {
 
 /// Ask GitHub on a background thread; the answer arrives as `UserEvent::Update`.
 pub fn spawn_check(proxy: EventLoopProxy<UserEvent>) {
-    if crate::package::is_store() {
+    if crate::package::updates_managed() {
         return;
     }
     thread::spawn(move || {
@@ -195,8 +195,8 @@ const AUTO_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// Start looking for a new version by itself: once soon after start, then every few hours, while `on`. The
 /// answers arrive as `UserEvent::AutoUpdate`. (Call once.)
 pub fn spawn_auto(on: bool, proxy: EventLoopProxy<UserEvent>) {
-    // The Store build is updated by the Store: it never looks on GitHub for a new version.
-    if crate::package::is_store() {
+    // Store and package-managed builds are updated by their store/package manager: never look on GitHub.
+    if crate::package::updates_managed() {
         return;
     }
     AUTO.store(on, Ordering::Relaxed);
@@ -213,7 +213,7 @@ pub fn spawn_auto(on: bool, proxy: EventLoopProxy<UserEvent>) {
 
 /// The notice was switched on or off. Switching it off stops the checks; switching it on looks at once.
 pub fn set_auto(on: bool, proxy: &EventLoopProxy<UserEvent>) {
-    if crate::package::is_store() {
+    if crate::package::updates_managed() {
         return;
     }
     if AUTO.swap(on, Ordering::Relaxed) == on || !on {
@@ -247,7 +247,12 @@ fn check() -> Status {
         .call()
         .ok()
         .and_then(|mut r| r.body_mut().read_limited_json().ok());
-    json.as_ref().and_then(|v| judge(v, env!("CARGO_PKG_VERSION"))).unwrap_or(Status::Failed)
+    let status = json.as_ref().and_then(|v| judge(v, env!("CARGO_PKG_VERSION"))).unwrap_or(Status::Failed);
+    #[cfg(not(windows))]
+    if let Status::Available { version, page, .. } = status {
+        return Status::Available { version, page, asset: None };
+    }
+    status
 }
 
 /// Read GitHub's answer for the latest release and compare it with the running version. A release is only
@@ -425,6 +430,7 @@ pub fn launch(path: &std::path::Path, asset: &Asset) -> bool {
 /// the download was cut short. A setup that is still running can't be deleted, so it is tried again
 /// for a while; a newer setup that was downloaded but not installed is kept.
 pub fn clean_up_downloads() {
+    #[cfg(windows)]
     thread::spawn(|| {
         for _ in 0..12 {
             let Ok(entries) = fs::read_dir(std::env::temp_dir()) else { return };
@@ -444,6 +450,7 @@ pub fn clean_up_downloads() {
 }
 
 /// Whether a file name in the temporary folder is a download of ours that is no longer needed.
+#[cfg(any(windows, test))]
 fn stale(name: &str, current: &str) -> bool {
     let Some(rest) = name.strip_prefix("Sky-Island-Setup-") else { return false };
     if rest.ends_with(".part") {

@@ -74,8 +74,50 @@ mod win {
 #[cfg(windows)]
 pub use win::{is_store, set_startup, startup_enabled};
 
+/// Whether updates come from a package manager or app store rather than GitHub releases.
+#[cfg(windows)]
+pub fn updates_managed() -> bool {
+    is_store()
+}
+
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn is_store() -> bool {
+    false
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_linux_managed(exe: Option<&std::path::Path>, flatpak: bool, snap: bool, appimage: bool) -> bool {
+    if appimage {
+        return false;
+    }
+    if flatpak || snap {
+        return true;
+    }
+    let Some(path) = exe else {
+        return false;
+    };
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    const SYSTEM_PREFIXES: [&str; 7] = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt", "/nix/store"];
+    SYSTEM_PREFIXES.iter().any(|prefix| resolved.starts_with(prefix))
+}
+
+#[cfg(target_os = "linux")]
+pub fn updates_managed() -> bool {
+    use std::path::Path;
+    use std::sync::OnceLock;
+
+    static MANAGED: OnceLock<bool> = OnceLock::new();
+    *MANAGED.get_or_init(|| {
+        let flatpak = std::env::var_os("FLATPAK_ID").is_some_and(|v| !v.is_empty()) || Path::new("/.flatpak-info").exists();
+        let snap = std::env::var_os("SNAP").is_some_and(|v| !v.is_empty());
+        let appimage = std::env::var_os("APPIMAGE").is_some_and(|v| !v.is_empty());
+        is_linux_managed(std::env::current_exe().ok().as_deref(), flatpak, snap, appimage)
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn updates_managed() -> bool {
     false
 }
 
@@ -92,9 +134,24 @@ pub fn set_startup(_on: bool) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn a_plain_exe_is_not_the_store_build() {
         assert!(!is_store(), "the tests do not run from a package");
+        assert!(!updates_managed(), "cargo test builds are not package-managed");
+    }
+
+    #[test]
+    fn linux_package_managed_detection_covers_system_paths_flatpak_snap_and_appimage() {
+        for system_path in ["/usr/bin/sky-island", "/usr/local/bin/sky-island", "/opt/sky-island/sky-island", "/nix/store/abc-sky-island/bin/sky-island"] {
+            assert!(is_linux_managed(Some(Path::new(system_path)), false, false, false), "{system_path}");
+        }
+        assert!(is_linux_managed(Some(Path::new("/home/user/sky-island")), true, false, false), "flatpak");
+        assert!(is_linux_managed(Some(Path::new("/home/user/sky-island")), false, true, false), "snap");
+        assert!(!is_linux_managed(Some(Path::new("/tmp/.mount_SkyIsl/usr/bin/sky-island")), false, false, true), "appimage stays self-updatable");
+        assert!(!is_linux_managed(Some(Path::new("/home/user/Work/Sky-Island/target/release/sky-island")), false, false, false), "cargo build");
+        assert!(!is_linux_managed(Some(Path::new("/home/user/.local/bin/sky-island")), false, false, false), "user bin");
+        assert!(!is_linux_managed(None, false, false, false));
     }
 }
