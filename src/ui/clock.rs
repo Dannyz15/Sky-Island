@@ -13,7 +13,8 @@ pub(crate) fn today() -> u32 {
     }
     #[cfg(not(windows))]
     {
-        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
+        let utc = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let secs = utc as i64 + Zone::System.at_utc(utc);
         let (year, month, day) = calendar::civil_from_days(secs.div_euclid(86_400));
         year as u32 * 10000 + month * 100 + day
     }
@@ -36,7 +37,9 @@ pub(crate) fn local_time() -> (u32, u32, u32, u32) {
     #[cfg(not(windows))]
     {
         let dur = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-        let rest = (dur.as_secs() % 86_400) as u32;
+        let utc = dur.as_secs();
+        let local = utc as i64 + Zone::System.at_utc(utc);
+        let rest = local.rem_euclid(86_400) as u32;
         (rest / 3600, rest % 3600 / 60, rest % 60, dur.subsec_millis())
     }
 }
