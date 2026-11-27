@@ -3,6 +3,7 @@
 //! `wl-clipboard`, `xclip`, or `xsel` when `ext_data_control_manager_v1` is absent or running under X11.
 
 use std::collections::HashMap;
+use std::ffi::{c_char, c_int, c_long, c_ulong, c_void};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsFd;
 use std::process::{Command, Stdio};
@@ -27,7 +28,7 @@ use super::{Content, MAX_CHARS};
 use crate::UserEvent;
 
 const MAX_TEXT_BYTES: usize = MAX_CHARS * 4 + 1024;
-const X11_POLL: Duration = Duration::from_millis(600);
+const X11_FALLBACK_POLL: Duration = Duration::from_secs(2);
 
 static ENABLED: AtomicBool = AtomicBool::new(true);
 static WATCH_PROXY: OnceLock<EventLoopProxy<UserEvent>> = OnceLock::new();
@@ -595,11 +596,11 @@ fn clear_cli_content(cli: CliBackend) {
     }
 }
 
-fn poll_cli_once(cli: CliBackend, proxy: &EventLoopProxy<UserEvent>, emit: bool) {
+fn poll_cli_once(cli: CliBackend, proxy: &EventLoopProxy<UserEvent>, emit: bool) -> bool {
     if !ENABLED.load(Ordering::Relaxed) {
-        return;
+        return true;
     }
-    let Some(content) = read_cli_content(cli) else { return };
+    let Some(content) = read_cli_content(cli) else { return true };
     let digest = content_digest(&content);
     let changed = if let Ok(mut guard) = LAST_CLI_HASH.lock() {
         if *guard == Some(digest) {
@@ -612,8 +613,151 @@ fn poll_cli_once(cli: CliBackend, proxy: &EventLoopProxy<UserEvent>, emit: bool)
         false
     };
     if emit && changed {
-        let _ = proxy.send_event(UserEvent::Clip(content));
+        return proxy.send_event(UserEvent::Clip(content)).is_ok();
     }
+    true
+}
+
+const RTLD_LAZY: c_int = 1;
+const XFIXES_SELECTION_NOTIFY: c_int = 0;
+const XFIXES_SET_SELECTION_OWNER_NOTIFY_MASK: c_ulong = 1;
+
+unsafe extern "C" {
+    fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void;
+    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    fn dlclose(handle: *mut c_void) -> c_int;
+}
+
+#[repr(C)]
+union XEvent {
+    kind: c_int,
+    _pad: [c_long; 24],
+}
+
+type FnOpenDisplay = unsafe extern "C" fn(*const c_char) -> *mut c_void;
+type FnCloseDisplay = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FnDefaultRootWindow = unsafe extern "C" fn(*mut c_void) -> c_ulong;
+type FnInternAtom = unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_ulong;
+type FnFlush = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FnNextEvent = unsafe extern "C" fn(*mut c_void, *mut XEvent) -> c_int;
+type FnXFixesQueryExtension = unsafe extern "C" fn(*mut c_void, *mut c_int, *mut c_int) -> c_int;
+type FnXFixesSelectSelectionInput = unsafe extern "C" fn(*mut c_void, c_ulong, c_ulong, c_ulong);
+
+unsafe fn sym<T>(handle: *mut c_void, name: &std::ffi::CStr) -> Option<T> {
+    let ptr = unsafe { dlsym(handle, name.as_ptr()) };
+    if ptr.is_null() { None } else { Some(unsafe { std::mem::transmute_copy::<*mut c_void, T>(&ptr) }) }
+}
+
+struct LibHandle(*mut c_void);
+
+impl Drop for LibHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                dlclose(self.0);
+            }
+        }
+    }
+}
+
+struct XFixesLib {
+    _x11: LibHandle,
+    _xfixes: LibHandle,
+    open_display: FnOpenDisplay,
+    close_display: FnCloseDisplay,
+    default_root_window: FnDefaultRootWindow,
+    intern_atom: FnInternAtom,
+    flush: FnFlush,
+    next_event: FnNextEvent,
+    query_extension: FnXFixesQueryExtension,
+    select_selection_input: FnXFixesSelectSelectionInput,
+}
+
+impl XFixesLib {
+    fn load() -> Option<Self> {
+        unsafe {
+            let x11_ptr = dlopen(c"libX11.so.6".as_ptr(), RTLD_LAZY);
+            if x11_ptr.is_null() {
+                return None;
+            }
+            let x11 = LibHandle(x11_ptr);
+            let xfixes_ptr = dlopen(c"libXfixes.so.3".as_ptr(), RTLD_LAZY);
+            if xfixes_ptr.is_null() {
+                return None;
+            }
+            let xfixes = LibHandle(xfixes_ptr);
+            let open_display = sym(x11.0, c"XOpenDisplay")?;
+            let close_display = sym(x11.0, c"XCloseDisplay")?;
+            let default_root_window = sym(x11.0, c"XDefaultRootWindow")?;
+            let intern_atom = sym(x11.0, c"XInternAtom")?;
+            let flush = sym(x11.0, c"XFlush")?;
+            let next_event = sym(x11.0, c"XNextEvent")?;
+            let query_extension = sym(xfixes.0, c"XFixesQueryExtension")?;
+            let select_selection_input = sym(xfixes.0, c"XFixesSelectSelectionInput")?;
+            Some(Self { _x11: x11, _xfixes: xfixes, open_display, close_display, default_root_window, intern_atom, flush, next_event, query_extension, select_selection_input })
+        }
+    }
+}
+
+struct XDisplay<'a> {
+    api: &'a XFixesLib,
+    ptr: *mut c_void,
+}
+
+impl Drop for XDisplay<'_> {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe {
+                (self.api.close_display)(self.ptr);
+            }
+        }
+    }
+}
+
+fn is_xfixes_selection_notify(event_type: c_int, event_base: c_int) -> bool {
+    event_type == event_base + XFIXES_SELECTION_NOTIFY
+}
+
+fn run_x11_xfixes_watcher(cli: CliBackend, proxy: &EventLoopProxy<UserEvent>) -> bool {
+    if !std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty()) {
+        return false;
+    }
+    let Some(api) = XFixesLib::load() else {
+        return false;
+    };
+    let dpy_ptr = unsafe { (api.open_display)(std::ptr::null()) };
+    if dpy_ptr.is_null() {
+        return false;
+    }
+    let dpy = XDisplay { api: &api, ptr: dpy_ptr };
+
+    let mut event_base: c_int = 0;
+    let mut error_base: c_int = 0;
+    if unsafe { (api.query_extension)(dpy.ptr, &mut event_base, &mut error_base) } == 0 {
+        return false;
+    }
+    let clipboard_atom = unsafe { (api.intern_atom)(dpy.ptr, c"CLIPBOARD".as_ptr(), 0) };
+    if clipboard_atom == 0 {
+        return false;
+    }
+    let root = unsafe { (api.default_root_window)(dpy.ptr) };
+    unsafe {
+        (api.select_selection_input)(dpy.ptr, root, clipboard_atom, XFIXES_SET_SELECTION_OWNER_NOTIFY_MASK);
+        (api.flush)(dpy.ptr);
+    }
+
+    poll_cli_once(cli, proxy, false);
+
+    loop {
+        let mut ev = XEvent { _pad: [0; 24] };
+        unsafe {
+            (api.next_event)(dpy.ptr, &mut ev);
+        }
+        if is_xfixes_selection_notify(unsafe { ev.kind }, event_base) && !poll_cli_once(cli, proxy, true) {
+            break;
+        }
+    }
+    true
 }
 
 fn run_cli_watcher(cli: CliBackend, proxy: EventLoopProxy<UserEvent>) {
@@ -644,9 +788,15 @@ fn run_cli_watcher(cli: CliBackend, proxy: EventLoopProxy<UserEvent>) {
         return;
     }
 
+    if matches!(cli, CliBackend::Xclip | CliBackend::Xsel) && run_x11_xfixes_watcher(cli, &proxy) {
+        return;
+    }
+
     loop {
-        thread::sleep(X11_POLL);
-        poll_cli_once(cli, &proxy, true);
+        thread::sleep(X11_FALLBACK_POLL);
+        if !poll_cli_once(cli, &proxy, true) {
+            break;
+        }
     }
 }
 
@@ -714,5 +864,13 @@ mod tests {
             panic!("expected jpeg converted to Content::Image");
         };
         assert_eq!((img.width, img.height), (16, 12));
+    }
+
+    #[test]
+    fn xfixes_event_helpers_and_loader_behave_safely() {
+        assert!(is_xfixes_selection_notify(87, 87));
+        assert!(!is_xfixes_selection_notify(88, 87));
+        assert!(std::mem::size_of::<XEvent>() >= 24 * std::mem::size_of::<c_long>());
+        let _ = XFixesLib::load();
     }
 }
