@@ -803,7 +803,11 @@ pub fn autostart_enabled() -> bool {
         }
         RegKey::predef(HKEY_CURRENT_USER).open_subkey(RUN_KEY).and_then(|k| k.get_value::<String, _>(RUN_NAME)).is_ok()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::autostart_enabled()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         false
     }
@@ -842,7 +846,11 @@ pub fn repair_autostart() -> bool {
         }
         true
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::repair_autostart()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         false
     }
@@ -865,8 +873,175 @@ pub fn set_autostart(on: bool) {
             let _ = key.delete_value(RUN_NAME);
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    linux::set_autostart(on);
+    #[cfg(not(any(windows, target_os = "linux")))]
     let _ = on;
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::path::{Path, PathBuf};
+
+    pub(super) fn autostart_path() -> Option<PathBuf> {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").filter(|v| !v.is_empty()).map(|h| PathBuf::from(h).join(".config")))?;
+        Some(base.join("autostart").join("sky-island.desktop"))
+    }
+
+    fn current_target() -> Option<PathBuf> {
+        std::env::var_os("APPIMAGE").filter(|v| !v.is_empty()).map(PathBuf::from).or_else(|| std::env::current_exe().ok())
+    }
+
+    pub(super) fn escape_exec_arg(path: &Path) -> String {
+        let raw = path.to_string_lossy();
+        let mut out = String::with_capacity(raw.len());
+        for ch in raw.chars() {
+            match ch {
+                '\\' | '"' | '`' | '$' => {
+                    out.push('\\');
+                    out.push(ch);
+                }
+                '%' => out.push_str("%%"),
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    pub(super) fn desktop_entry(exe: &Path) -> String {
+        format!(
+            "[Desktop Entry]\nType=Application\nName=Sky Island\nComment=A notch for the top of your screen\nExec=\"{}\"\nIcon=sky-island\nTerminal=false\nCategories=Utility;\nX-GNOME-Autostart-enabled=true\n",
+            escape_exec_arg(exe)
+        )
+    }
+
+    fn in_desktop_entry_lines(contents: &str) -> impl Iterator<Item = &str> {
+        let mut in_group = false;
+        contents.lines().filter_map(move |line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                return None;
+            }
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                in_group = trimmed == "[Desktop Entry]";
+                return None;
+            }
+            in_group.then_some(trimmed)
+        })
+    }
+
+    pub(super) fn parse_exec_target(contents: &str) -> Option<PathBuf> {
+        let val = in_desktop_entry_lines(contents).find_map(|line| {
+            let (k, v) = line.split_once('=')?;
+            (k.trim() == "Exec").then_some(v.trim())
+        })?;
+        let mut out = String::new();
+        let mut chars = val.chars().peekable();
+        if chars.peek() == Some(&'"') {
+            chars.next();
+            let mut closed = false;
+            while let Some(c) = chars.next() {
+                if c == '"' {
+                    closed = true;
+                    break;
+                } else if c == '\\' {
+                    if let Some(esc) = chars.next() {
+                        out.push(esc);
+                    }
+                } else if c == '%' && chars.peek() == Some(&'%') {
+                    chars.next();
+                    out.push('%');
+                } else {
+                    out.push(c);
+                }
+            }
+            if !closed {
+                return None;
+            }
+        } else {
+            while let Some(c) = chars.next() {
+                if c.is_whitespace() {
+                    break;
+                } else if c == '\\' {
+                    if let Some(esc) = chars.next() {
+                        out.push(esc);
+                    }
+                } else if c == '%' && chars.peek() == Some(&'%') {
+                    chars.next();
+                    out.push('%');
+                } else {
+                    out.push(c);
+                }
+            }
+        }
+        (!out.is_empty()).then(|| PathBuf::from(out))
+    }
+
+    pub(super) fn entry_enabled(contents: &str) -> bool {
+        for line in in_desktop_entry_lines(contents) {
+            let Some((k, v)) = line.split_once('=') else { continue };
+            let (k, v) = (k.trim(), v.trim());
+            if k == "Hidden" && v.eq_ignore_ascii_case("true") {
+                return false;
+            }
+            if k == "X-GNOME-Autostart-enabled" && v.eq_ignore_ascii_case("false") {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub(super) fn autostart_enabled_at(path: &Path) -> bool {
+        std::fs::read_to_string(path).is_ok_and(|c| entry_enabled(&c))
+    }
+
+    pub(super) fn repair_autostart_at(path: &Path) -> bool {
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        if let Some(target) = parse_exec_target(&contents)
+            && target.is_absolute()
+            && !target.exists()
+        {
+            let _ = std::fs::remove_file(path);
+            return false;
+        }
+        entry_enabled(&contents)
+    }
+
+    pub(super) fn set_autostart_at(path: &Path, exe: Option<&Path>, on: bool) {
+        if on {
+            let Some(exe) = exe else { return };
+            if let Some(parent) = path.parent()
+                && std::fs::create_dir_all(parent).is_ok()
+            {
+                let _ = std::fs::write(path, desktop_entry(exe));
+            }
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    pub(super) fn autostart_enabled() -> bool {
+        autostart_path().is_some_and(|p| autostart_enabled_at(&p))
+    }
+
+    pub(super) fn repair_autostart() -> bool {
+        autostart_path().is_some_and(|p| repair_autostart_at(&p))
+    }
+
+    pub(super) fn set_autostart(on: bool) {
+        let Some(path) = autostart_path() else { return };
+        if on {
+            let target = current_target();
+            set_autostart_at(&path, target.as_deref(), true);
+        } else {
+            set_autostart_at(&path, None, false);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1045,5 +1220,50 @@ mod tests {
     fn the_first_light_theme_switch_still_means_follow_windows() {
         assert_eq!(Settings::from_json(&json!({ "follow_theme": true })).theme, ThemeMode::System);
         assert_eq!(Settings::from_json(&json!({ "follow_theme": true, "theme": "light" })).theme, ThemeMode::Light);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_desktop_entry_roundtrips_special_characters_and_flags() {
+        let exe = std::path::Path::new(r#"/home/user/My Apps/100% $Sky "Island"/sky-island"#);
+        let entry = linux::desktop_entry(exe);
+        assert_eq!(linux::parse_exec_target(&entry).as_deref(), Some(exe));
+        assert!(linux::entry_enabled(&entry));
+
+        assert!(!linux::entry_enabled("[Desktop Entry]\nExec=/usr/bin/sky-island\nHidden=true\n"));
+        assert!(!linux::entry_enabled("[Desktop Entry]\nExec=/usr/bin/sky-island\nX-GNOME-Autostart-enabled=false\n"));
+        assert!(linux::entry_enabled("[Desktop Action Foo]\nHidden=true\n[Desktop Entry]\nExec=/usr/bin/sky-island\n"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_autostart_at_writes_reads_repairs_and_removes() {
+        let root = std::env::temp_dir().join(format!("sky-island-autostart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let desktop = root.join("autostart").join("sky-island.desktop");
+        let exe = root.join("sky-island-bin");
+        std::fs::write(&exe, b"bin").unwrap();
+
+        assert!(!linux::autostart_enabled_at(&desktop));
+        linux::set_autostart_at(&desktop, Some(&exe), true);
+        assert!(desktop.is_file());
+        assert!(linux::autostart_enabled_at(&desktop));
+        assert!(linux::repair_autostart_at(&desktop));
+        assert!(desktop.is_file());
+
+        // Removing the target binary makes repair_autostart_at drop the stale desktop entry.
+        std::fs::remove_file(&exe).unwrap();
+        assert!(!linux::repair_autostart_at(&desktop));
+        assert!(!desktop.exists());
+
+        std::fs::write(&exe, b"bin").unwrap();
+        linux::set_autostart_at(&desktop, Some(&exe), true);
+        assert!(desktop.is_file());
+        linux::set_autostart_at(&desktop, None, false);
+        assert!(!desktop.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
