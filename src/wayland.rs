@@ -3,12 +3,19 @@
 //! without appearing in taskbars or stealing keyboard focus unless explicitly editing text.
 
 use std::collections::HashMap;
+use std::io::Read;
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use calloop::channel::{self, Sender};
 use calloop::{EventLoop, LoopHandle, LoopSignal};
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
+use smithay_client_toolkit::data_device_manager::data_device::{DataDevice, DataDeviceHandler};
+use smithay_client_toolkit::data_device_manager::data_offer::{DataOfferHandler, DragOffer};
+use smithay_client_toolkit::data_device_manager::data_source::{DataSourceHandler, DragSource};
+use smithay_client_toolkit::data_device_manager::{DataDeviceManagerState, WritePipe};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
@@ -18,10 +25,15 @@ use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure};
 use smithay_client_toolkit::shm::slot::SlotPool;
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
-use smithay_client_toolkit::{delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry, delegate_seat, delegate_shm, registry_handlers};
+use smithay_client_toolkit::{
+    delegate_compositor, delegate_data_device, delegate_layer, delegate_output, delegate_pointer, delegate_registry, delegate_seat, delegate_shm, registry_handlers,
+};
 use tiny_skia::Pixmap;
 use wayland_client::backend::ObjectId;
 use wayland_client::globals::{GlobalList, registry_queue_init};
+use wayland_client::protocol::wl_data_device;
+use wayland_client::protocol::wl_data_device_manager::DndAction;
+use wayland_client::protocol::wl_data_source;
 use wayland_client::protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
@@ -73,6 +85,9 @@ pub enum Event {
     ScaleChanged(f64),
     KeyPressed { key: Key, text: Option<String> },
     Focused(bool),
+    DragHovered,
+    DragLeft,
+    DroppedFiles(Vec<PathBuf>),
     OutputsChanged,
     Closed,
 }
@@ -85,6 +100,7 @@ enum Cmd {
     SyncMirrors(Vec<(u32, MirrorRole)>),
     PresentMirror(u32, Frame),
     HideMirror(u32),
+    StartDrag { paths: Vec<PathBuf>, done: std::sync::mpsc::SyncSender<(bool, bool)> },
     Shutdown,
 }
 
@@ -109,6 +125,7 @@ impl Handle {
         let seat_state = SeatState::new(&globals, &qh);
         let fractional_mgr = globals.bind::<WpFractionalScaleManagerV1, _, _>(&qh, 1..=1, ()).ok();
         let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
+        let data_device_manager = DataDeviceManagerState::bind(&globals, &qh).ok();
 
         let (tx, rx) = channel::channel::<Cmd>();
         let shared_outputs = Arc::new(Mutex::new(Vec::new()));
@@ -123,6 +140,8 @@ impl Handle {
             shm,
             output_state,
             seat_state,
+            data_device_manager,
+            data_device: None,
             fractional_mgr,
             viewporter,
             pool: SlotPool::new(512 * 300 * 4, &shm_bind_ref(&globals, &qh)?).map_err(|e| format!("wl_shm pool: {e}"))?,
@@ -136,6 +155,9 @@ impl Handle {
             pointer: None,
             keyboard: None,
             shift_down: false,
+            last_press_serial: None,
+            drag_hovering_primary: false,
+            active_drag: None,
             loop_signal: None,
             closed: false,
         };
@@ -182,6 +204,15 @@ impl Handle {
 
     pub fn hide_mirror(&self, output_id: u32) {
         let _ = self.tx.send(Cmd::HideMirror(output_id));
+    }
+
+    /// Start an outgoing Wayland file drag; returns `(dropped, dropped_on_notch)`.
+    pub fn start_drag(&self, paths: Vec<PathBuf>) -> (bool, bool) {
+        let (done, rx) = std::sync::mpsc::sync_channel(1);
+        if self.tx.send(Cmd::StartDrag { paths, done }).is_err() {
+            return (false, false);
+        }
+        rx.recv().unwrap_or((false, false))
     }
 
     pub fn shutdown(&self) {
@@ -259,6 +290,22 @@ struct MirrorSurface {
     hidden: bool,
 }
 
+struct ActiveDrag {
+    source: DragSource,
+    payload: Vec<u8>,
+    done: Option<std::sync::mpsc::SyncSender<(bool, bool)>>,
+    dropped: bool,
+    self_dropped: bool,
+}
+
+impl ActiveDrag {
+    fn finish(&mut self, result: (bool, bool)) {
+        if let Some(done) = self.done.take() {
+            let _ = done.send(result);
+        }
+    }
+}
+
 struct WaylandState {
     conn: Connection,
     qh: QueueHandle<Self>,
@@ -269,6 +316,8 @@ struct WaylandState {
     shm: Shm,
     output_state: OutputState,
     seat_state: SeatState,
+    data_device_manager: Option<DataDeviceManagerState>,
+    data_device: Option<DataDevice>,
     fractional_mgr: Option<WpFractionalScaleManagerV1>,
     viewporter: Option<WpViewporter>,
     pool: SlotPool,
@@ -282,6 +331,9 @@ struct WaylandState {
     pointer: Option<wl_pointer::WlPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     shift_down: bool,
+    last_press_serial: Option<u32>,
+    drag_hovering_primary: bool,
+    active_drag: Option<ActiveDrag>,
     loop_signal: Option<LoopSignal>,
     closed: bool,
 }
@@ -436,7 +488,40 @@ impl WaylandState {
                     let _ = self.conn.flush();
                 }
             }
+            Cmd::StartDrag { paths, done } => {
+                if let Some(mut prev) = self.active_drag.take() {
+                    prev.finish((false, false));
+                }
+                let Some(ddm) = &self.data_device_manager else {
+                    let _ = done.send((false, false));
+                    return;
+                };
+                let Some(device) = &self.data_device else {
+                    let _ = done.send((false, false));
+                    return;
+                };
+                let Some(primary) = &self.primary else {
+                    let _ = done.send((false, false));
+                    return;
+                };
+                let Some(serial) = self.last_press_serial else {
+                    let _ = done.send((false, false));
+                    return;
+                };
+                if paths.is_empty() {
+                    let _ = done.send((false, false));
+                    return;
+                }
+                let payload = crate::dragdrop::encode_uri_list(&paths).into_bytes();
+                let source = ddm.create_drag_and_drop_source(&self.qh, ["text/uri-list", "text/plain;charset=utf-8"], DndAction::Copy | DndAction::Move);
+                source.start_drag(device, primary.layer.wl_surface(), None, serial);
+                let _ = self.conn.flush();
+                self.active_drag = Some(ActiveDrag { source, payload, done: Some(done), dropped: false, self_dropped: false });
+            }
             Cmd::Shutdown => {
+                if let Some(mut drag) = self.active_drag.take() {
+                    drag.finish((false, false));
+                }
                 self.primary = None;
                 self.mirrors.clear();
                 let _ = self.conn.flush();
@@ -726,6 +811,9 @@ impl OutputHandler for WaylandState {
 impl LayerShellHandler for WaylandState {
     fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, layer: &LayerSurface) {
         if self.primary.as_ref().is_some_and(|p| p.layer.wl_surface() == layer.wl_surface()) {
+            if let Some(mut drag) = self.active_drag.take() {
+                drag.finish((false, false));
+            }
             self.primary = None;
             self.closed = true;
             self.emit(Event::Closed);
@@ -775,7 +863,13 @@ impl SeatHandler for WaylandState {
         &mut self.seat_state
     }
 
-    fn new_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {}
+    fn new_seat(&mut self, _conn: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
+        if self.data_device.is_none()
+            && let Some(ddm) = &self.data_device_manager
+        {
+            self.data_device = Some(ddm.get_data_device(qh, &seat));
+        }
+    }
 
     fn new_capability(&mut self, _conn: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat, capability: Capability) {
         if capability == Capability::Pointer && self.pointer.is_none() {
@@ -810,7 +904,10 @@ impl PointerHandler for WaylandState {
                 PointerEventKind::Enter { .. } => self.emit(Event::CursorEntered { output_id, mirror, x: ev.position.0, y: ev.position.1 }),
                 PointerEventKind::Leave { .. } => self.emit(Event::CursorLeft { output_id, mirror }),
                 PointerEventKind::Motion { .. } => self.emit(Event::CursorMoved { output_id, mirror, x: ev.position.0, y: ev.position.1 }),
-                PointerEventKind::Press { button, .. } if *button == BTN_LEFT && !mirror => self.emit(Event::MouseInput { pressed: true }),
+                PointerEventKind::Press { button, serial, .. } if *button == BTN_LEFT && !mirror => {
+                    self.last_press_serial = Some(*serial);
+                    self.emit(Event::MouseInput { pressed: true });
+                }
                 PointerEventKind::Release { button, .. } if *button == BTN_LEFT && !mirror => self.emit(Event::MouseInput { pressed: false }),
                 PointerEventKind::Axis { vertical, .. } if !mirror => {
                     if let Some(delta) = wayland_scroll_delta(vertical.discrete, vertical.absolute) {
@@ -901,12 +998,158 @@ impl Dispatch<WpViewport, ()> for WaylandState {
     fn event(_state: &mut Self, _proxy: &WpViewport, _event: <WpViewport as Proxy>::Event, _data: &(), _conn: &Connection, _qh: &QueueHandle<Self>) {}
 }
 
+impl DataDeviceHandler for WaylandState {
+    fn enter(&mut self, conn: &Connection, _qh: &QueueHandle<Self>, data_device: &wl_data_device::WlDataDevice, _x: f64, _y: f64, wl_surface: &wl_surface::WlSurface) {
+        let on_primary = self.primary.as_ref().is_some_and(|p| p.layer.wl_surface() == wl_surface);
+        if !on_primary {
+            return;
+        }
+        let Some(offer) = data_device.data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>().and_then(|d| d.drag_offer()) else {
+            return;
+        };
+        let accepts = offer.with_mime_types(|mimes| mimes.iter().any(|m| m == "text/uri-list"));
+        if accepts {
+            offer.accept_mime_type(offer.serial, Some("text/uri-list".into()));
+            offer.set_actions(DndAction::Copy | DndAction::Move, DndAction::Copy);
+            self.drag_hovering_primary = true;
+            if self.active_drag.is_none() {
+                self.emit(Event::DragHovered);
+            }
+            let _ = conn.flush();
+        }
+    }
+
+    fn leave(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _data_device: &wl_data_device::WlDataDevice) {
+        if self.drag_hovering_primary {
+            self.drag_hovering_primary = false;
+            if self.active_drag.is_none() {
+                self.emit(Event::DragLeft);
+            }
+        }
+    }
+
+    fn motion(&mut self, conn: &Connection, _qh: &QueueHandle<Self>, data_device: &wl_data_device::WlDataDevice, _x: f64, _y: f64) {
+        let Some(offer) = data_device.data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>().and_then(|d| d.drag_offer()) else {
+            return;
+        };
+        let on_primary = self.primary.as_ref().is_some_and(|p| p.layer.wl_surface() == &offer.surface);
+        if on_primary && offer.with_mime_types(|mimes| mimes.iter().any(|m| m == "text/uri-list")) {
+            offer.accept_mime_type(offer.serial, Some("text/uri-list".into()));
+            if !self.drag_hovering_primary {
+                self.drag_hovering_primary = true;
+                if self.active_drag.is_none() {
+                    self.emit(Event::DragHovered);
+                }
+            }
+            let _ = conn.flush();
+        }
+    }
+
+    fn selection(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _data_device: &wl_data_device::WlDataDevice) {}
+
+    fn drop_performed(&mut self, conn: &Connection, _qh: &QueueHandle<Self>, data_device: &wl_data_device::WlDataDevice) {
+        let was_hovering = self.drag_hovering_primary;
+        self.drag_hovering_primary = false;
+        let Some(offer) = data_device.data::<smithay_client_toolkit::data_device_manager::data_device::DataDeviceData>().and_then(|d| d.drag_offer()) else {
+            if was_hovering {
+                self.emit(Event::DragLeft);
+            }
+            return;
+        };
+        if let Some(drag) = &mut self.active_drag
+            && was_hovering
+        {
+            drag.self_dropped = true;
+            drag.dropped = true;
+            offer.finish();
+            offer.destroy();
+            let _ = conn.flush();
+            return;
+        }
+        if !was_hovering || !offer.with_mime_types(|mimes| mimes.iter().any(|m| m == "text/uri-list")) {
+            offer.destroy();
+            let _ = conn.flush();
+            if was_hovering {
+                self.emit(Event::DragLeft);
+            }
+            return;
+        }
+        let Ok(mut pipe) = offer.receive("text/uri-list".into()) else {
+            offer.destroy();
+            let _ = conn.flush();
+            self.emit(Event::DragLeft);
+            return;
+        };
+        let _ = conn.flush();
+        let proxy = self.proxy.clone();
+        let conn = conn.clone();
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let mut limited = (&mut pipe).take(1024 * 1024);
+            let _ = limited.read_to_end(&mut buf);
+            offer.finish();
+            offer.destroy();
+            let _ = conn.flush();
+            let paths = crate::dragdrop::parse_uri_list(&String::from_utf8_lossy(&buf));
+            let ev = if paths.is_empty() { Event::DragLeft } else { Event::DroppedFiles(paths) };
+            let _ = proxy.send_event(UserEvent::Wayland(ev));
+        });
+    }
+}
+
+impl DataOfferHandler for WaylandState {
+    fn source_actions(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _offer: &mut DragOffer, _actions: DndAction) {}
+    fn selected_action(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _offer: &mut DragOffer, _actions: DndAction) {}
+}
+
+impl DataSourceHandler for WaylandState {
+    fn accept_mime(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _source: &wl_data_source::WlDataSource, _mime: Option<String>) {}
+
+    fn send_request(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, source: &wl_data_source::WlDataSource, _mime: String, mut fd: WritePipe) {
+        let Some(drag) = &self.active_drag else { return };
+        if drag.source.inner() != source {
+            return;
+        }
+        let payload = drag.payload.clone();
+        thread::spawn(move || {
+            let _ = fd.write_all(&payload);
+        });
+    }
+
+    fn cancelled(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, source: &wl_data_source::WlDataSource) {
+        let matches = self.active_drag.as_ref().is_some_and(|d| d.source.inner() == source);
+        if matches && let Some(mut drag) = self.active_drag.take() {
+            let result = (drag.dropped, drag.self_dropped);
+            drag.finish(result);
+        }
+    }
+
+    fn dnd_dropped(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, source: &wl_data_source::WlDataSource) {
+        if let Some(drag) = &mut self.active_drag
+            && drag.source.inner() == source
+        {
+            drag.dropped = true;
+        }
+    }
+
+    fn dnd_finished(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, source: &wl_data_source::WlDataSource) {
+        let matches = self.active_drag.as_ref().is_some_and(|d| d.source.inner() == source);
+        if matches && let Some(mut drag) = self.active_drag.take() {
+            let result = (true, drag.self_dropped);
+            drag.finish(result);
+        }
+    }
+
+    fn action(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _source: &wl_data_source::WlDataSource, _action: DndAction) {}
+}
+
 delegate_compositor!(WaylandState);
 delegate_output!(WaylandState);
 delegate_shm!(WaylandState);
 delegate_seat!(WaylandState);
 delegate_pointer!(WaylandState);
 delegate_layer!(WaylandState);
+delegate_data_device!(WaylandState);
 delegate_registry!(WaylandState);
 
 impl ProvidesRegistryState for WaylandState {

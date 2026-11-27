@@ -329,7 +329,11 @@ impl ApplicationHandler<UserEvent> for App {
 impl App {
     fn on_wayland_event(&mut self, event_loop: &ActiveEventLoop, event: wayland::Event) {
         match event {
-            wayland::Event::Closed => event_loop.exit(),
+            wayland::Event::Closed => {
+                self.shelf.flush();
+                self.quit = true;
+                event_loop.exit();
+            }
             wayland::Event::OutputsChanged => self.on_screens(),
             wayland::Event::ScaleChanged(factor) => {
                 self.wayland_preferred_scale = Some(factor);
@@ -406,6 +410,26 @@ impl App {
                 }
             }
             wayland::Event::Focused(true) => {}
+            wayland::Event::DragHovered => {
+                self.shelf_ui.drag_hover = true;
+                self.view = View::Shelf;
+                self.last_tick = Instant::now();
+                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + self.pacing.frame));
+            }
+            wayland::Event::DragLeft => {
+                self.shelf_ui.drag_hover = false;
+                self.last_tick = Instant::now();
+            }
+            wayland::Event::DroppedFiles(paths) => {
+                for path in paths {
+                    self.shelf.add(path);
+                }
+                self.shelf_ui.drag_hover = false;
+                self.pointer.hovered = true;
+                self.pointer.leave_at = None;
+                self.view = View::Shelf;
+                self.request_redraw();
+            }
         }
     }
 }

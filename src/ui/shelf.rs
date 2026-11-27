@@ -65,9 +65,16 @@ impl App {
             self.sync_selection_focus();
             vec![path]
         };
-        let dropped = dragdrop::drag_files(&paths).unwrap_or(false);
-        // No cursor events arrive during the drag, so work out whether it ended over the notch.
-        let back_on_notch = self.cursor_over_window();
+        #[cfg(target_os = "linux")]
+        let (dropped, back_on_notch) = if let Some(wl) = &self.wayland {
+            let (dropped, self_dropped) = wl.start_drag(paths.clone());
+            self.pointer.inside = self_dropped;
+            (dropped, self_dropped)
+        } else {
+            (dragdrop::drag_files(&paths).unwrap_or(false), self.cursor_over_window())
+        };
+        #[cfg(not(target_os = "linux"))]
+        let (dropped, back_on_notch) = (dragdrop::drag_files(&paths).unwrap_or(false), self.cursor_over_window());
         // Files that were dropped somewhere have left the shelf, whether the drop moved or copied them
         // (a copy to another drive or into a chat app leaves the original where it was). Letting go over
         // nothing, cancelling, or dropping them back on the notch keeps them.
