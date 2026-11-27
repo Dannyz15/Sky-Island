@@ -1,0 +1,39 @@
+name = "sky-island"
+productName = "Sky Island"
+version = "1.6.1"
+identifier = "io.github.dannyz15.sky-island"
+description = "A notch for the top of your screen: music with lyrics, timer, water, weather, prayer times, system stats, file shelf, to-do, calendar, clipboard and system notices."
+homepage = "https://github.com/Dannyz15/Sky-Island"
+licenseFile = "LICENSE"
+category = "Utility"
+outDir = "dist"
+binariesDir = "target/release"
+icons = ["assets/logo.png"]
+
+[[binaries]]
+path = "sky-island"
+main = true
+
+[appimage]
+
+[appimage.files]
+"LICENSE" = "/usr/share/licenses/sky-island/LICENSE"
+"THIRD-PARTY-LICENSES.txt" = "/usr/share/licenses/sky-island/THIRD-PARTY-LICENSES.txt"
+
+[deb]
+packageName = "sky-island"
+section = "utils"
+priority = "optional"
+desktopTemplate = "packaging/linux/sky-island.desktop"
+depends = ["libpulse0", "pulseaudio-utils", "xdg-utils", "fontconfig", "libfreetype6"]
+
+[deb.files]
+"LICENSE" = "/usr/share/doc/sky-island/LICENSE"
+"THIRD-PARTY-LICENSES.txt" = "/usr/share/doc/sky-island/THIRD-PARTY-LICENSES.txt"
+
+[pacman]
+depends = ["libpulse", "xdg-utils", "fontconfig", "freetype2"]
+
+[pacman.files]
+"LICENSE" = "/usr/share/licenses/sky-island/LICENSE"
+"THIRD-PARTY-LICENSES.txt" = "/usr/share/licenses/sky-island/THIRD-PARTY-LICENSES.txt"

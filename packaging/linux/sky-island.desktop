@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Sky Island
+Comment=A notch for the top of your screen
+Exec=sky-island
+Icon=sky-island
+Terminal=false
+Categories=Utility;
+StartupNotify=false
