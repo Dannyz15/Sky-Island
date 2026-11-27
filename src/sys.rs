@@ -1069,6 +1069,21 @@ mod linux {
         (read_led_group(&caps), read_led_group(&num))
     }
 
+    const LOCK_POLL_ACTIVE: Duration = Duration::from_millis(200);
+    const LOCK_POLL_IDLE: Duration = Duration::from_secs(10);
+    const LOCK_RESCAN_TICKS: u32 = 50;
+
+    pub(super) fn lock_poll_interval(has_leds: bool) -> Duration {
+        if has_leds { LOCK_POLL_ACTIVE } else { LOCK_POLL_IDLE }
+    }
+
+    pub(super) fn should_rescan_lock_leds(ticks: u32, has_leds: bool, caps_ok: bool, num_ok: bool) -> bool {
+        if !has_leds || !caps_ok || !num_ok {
+            return true;
+        }
+        ticks.is_multiple_of(LOCK_RESCAN_TICKS)
+    }
+
     pub(super) fn install_lock_hook(proxy: Proxy) {
         if LOCK_STARTED.swap(true, Ordering::AcqRel) {
             return;
@@ -1088,9 +1103,10 @@ mod linux {
 
             let mut ticks = 0u32;
             loop {
-                thread::sleep(Duration::from_millis(80));
+                let has_leds = !caps_paths.is_empty() || !num_paths.is_empty();
+                thread::sleep(lock_poll_interval(has_leds));
                 ticks = ticks.wrapping_add(1);
-                if ticks.is_multiple_of(32) || caps_paths.is_empty() || num_paths.is_empty() || !caps_ok || !num_ok {
+                if should_rescan_lock_leds(ticks, has_leds, caps_ok, num_ok) {
                     let refreshed = collect_lock_leds(&leds_dir);
                     caps_paths = refreshed.0;
                     num_paths = refreshed.1;
@@ -1902,5 +1918,19 @@ enp2s0\t00000000\t0100A8C0\t0003\t0\t0\t700\t00000000\t0\t0\t0
         assert_eq!(linux::read_lock_states(&root), (None, Some(true)));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn lock_led_polling_backs_off_when_idle_and_skips_unneeded_rescans() {
+        assert_eq!(linux::lock_poll_interval(true), Duration::from_millis(200));
+        assert_eq!(linux::lock_poll_interval(false), Duration::from_secs(10));
+
+        assert!(!linux::should_rescan_lock_leds(1, true, true, true));
+        assert!(!linux::should_rescan_lock_leds(49, true, true, true));
+        assert!(linux::should_rescan_lock_leds(50, true, true, true));
+        assert!(linux::should_rescan_lock_leds(1, true, false, true));
+        assert!(linux::should_rescan_lock_leds(1, true, true, false));
+        assert!(linux::should_rescan_lock_leds(1, false, true, true));
     }
 }
