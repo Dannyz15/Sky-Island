@@ -464,6 +464,13 @@ fn first_instance() -> bool {
 }
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    if std::env::args().skip(1).any(|arg| arg == "--toggle") {
+        if !hotkey::send_toggle() {
+            std::process::exit(1);
+        }
+        return;
+    }
     if !first_instance() {
         return;
     }
